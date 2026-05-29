@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f7faf9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(238, 247, 244, 0.9), rgba(255, 255, 255, 0.95) 320px),
+    #f7faf9;
+  color: #101820;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.progress-ring {
+  background:
+    conic-gradient(from 180deg, #0f766e var(--progress), #d8e7e3 0),
+    #d8e7e3;
+}
