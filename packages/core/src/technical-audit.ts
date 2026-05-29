@@ -2,6 +2,8 @@ import * as cheerio from "cheerio";
 import tls from "node:tls";
 
 export type TechnicalSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
+export type TechnicalGrade = "A" | "B" | "C" | "D" | "F";
+type TechnicalScope = "page" | "domain";
 
 interface CheckDefinition {
   id: number;
@@ -26,11 +28,15 @@ interface FetchedPage {
 export interface TechnicalCheckResult extends CheckDefinition {
   passed: boolean;
   evidence: string;
+  scope: TechnicalScope;
 }
 
 export interface TechnicalAuditResult {
   score: number;
   rawScore: number;
+  pageScore: number;
+  domainScore: number;
+  grade: TechnicalGrade;
   blockerFailed: boolean;
   checkedAt: string;
   checks: TechnicalCheckResult[];
@@ -52,7 +58,7 @@ const CHECKS: CheckDefinition[] = [
   [13, "Robots.txt & Sitemap", "All sitemap URLs have lastmod element", 4, "MINOR"],
   [14, "Robots.txt & Sitemap", "No noindex pages included in sitemap", 6, "MAJOR"],
   [15, "Robots.txt & Sitemap", "Optional ai-sitemap.xml exists", 2, "ADVISORY"],
-  [16, "Meta Tags", "Title tag exists and non-empty", 8, "BLOCKER"],
+  [16, "Meta Tags", "Title tag exists and non-empty", 8, "MAJOR"],
   [17, "Meta Tags", "Title length 30-60 characters", 5, "MAJOR"],
   [18, "Meta Tags", "Meta description exists and non-empty", 7, "MAJOR"],
   [19, "Meta Tags", "Meta description length 120-160 characters", 4, "MINOR"],
@@ -68,7 +74,7 @@ const CHECKS: CheckDefinition[] = [
   [29, "Canonicalization", "Canonical does not point to noindex page", 7, "BLOCKER"],
   [30, "Canonicalization", "Paginated pages have rel next or prev", 4, "MINOR"],
   [31, "Canonicalization", "No duplicate content at slug and slug slash", 4, "MINOR"],
-  [32, "Indexability & Crawlability", "Page is indexable", 8, "BLOCKER"],
+  [32, "Indexability & Crawlability", "Page is indexable", 8, "MAJOR"],
   [33, "Indexability & Crawlability", "No nosnippet or max-snippet:0", 7, "BLOCKER"],
   [34, "Indexability & Crawlability", "JS content rendering check", 9, "BLOCKER"],
   [35, "Indexability & Crawlability", "0 broken internal links", 7, "MAJOR"],
@@ -94,7 +100,7 @@ const CHECKS: CheckDefinition[] = [
   [55, "Core Web Vitals", "LCP image preloaded", 5, "MINOR"],
   [56, "Core Web Vitals", "Mobile PSI score >= 60", 6, "MAJOR"],
   [57, "Core Web Vitals", "All tap targets adequate", 4, "MINOR"],
-  [58, "Mobile Optimization", "Viewport meta tag correct", 8, "BLOCKER"],
+  [58, "Mobile Optimization", "Viewport meta tag correct", 8, "MAJOR"],
   [59, "Mobile Optimization", "Mobile PSI score >= 60", 6, "MAJOR"],
   [60, "Mobile Optimization", "Tap target size adequate", 4, "MINOR"],
   [61, "Image SEO", "All non-decorative images have alt text", 7, "MAJOR"],
@@ -152,6 +158,16 @@ const CHECKS: CheckDefinition[] = [
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
+const DOMAIN_CHECK_IDS = new Set([3, 4, 7, 10, 11, 12, 13, 14, 15, 22, 23, 35, 37, 38, 45, 56, 59, 67, 68, 69, 70, 80, 81, 83, 91, 98, 99, 106]);
+
+interface LabVitals {
+  lcp?: number;
+  inp?: number;
+  cls?: number;
+  ttfb?: number;
+  performanceScore?: number;
+  tapTargetsPass?: boolean;
+}
 
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -174,6 +190,71 @@ function absolute(url: URL, href: string) {
     return new URL(href, url).toString();
   } catch {
     return "";
+  }
+}
+
+function apiKey(...names: string[]) {
+  return names.map((name) => process.env[name]).find(Boolean);
+}
+
+async function fetchPageSpeedInsights(url: string): Promise<LabVitals | null> {
+  const key = apiKey("PAGESPEED_API_KEY", "GOOGLE_API_KEY");
+  if (!key) return null;
+  const endpoint = new URL("https://www.googleapis.com/pagespeedonline/v5/runPagespeed");
+  endpoint.searchParams.set("url", url);
+  endpoint.searchParams.set("strategy", "mobile");
+  endpoint.searchParams.set("category", "performance");
+  endpoint.searchParams.set("key", key);
+
+  try {
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) return null;
+    const data = await response.json() as {
+      lighthouseResult?: {
+        categories?: { performance?: { score?: number } };
+        audits?: Record<string, { numericValue?: number; score?: number }>;
+      };
+    };
+    const audits = data.lighthouseResult?.audits ?? {};
+    return {
+      lcp: audits["largest-contentful-paint"]?.numericValue,
+      cls: audits["cumulative-layout-shift"]?.numericValue,
+      ttfb: audits["server-response-time"]?.numericValue,
+      performanceScore: data.lighthouseResult?.categories?.performance?.score !== undefined
+        ? Math.round(data.lighthouseResult.categories.performance.score * 100)
+        : undefined,
+      tapTargetsPass: audits["tap-targets"]?.score === undefined ? undefined : audits["tap-targets"]?.score === 1
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCrux(url: string): Promise<LabVitals | null> {
+  const key = apiKey("CRUX_API_KEY", "GOOGLE_API_KEY");
+  if (!key) return null;
+  try {
+    const response = await fetch(`https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${key}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url, formFactor: "PHONE" }),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as {
+      record?: {
+        metrics?: Record<string, { percentiles?: { p75?: number } }>;
+      };
+    };
+    const metrics = data.record?.metrics ?? {};
+    return {
+      lcp: metrics.largest_contentful_paint?.percentiles?.p75,
+      inp: metrics.interaction_to_next_paint?.percentiles?.p75,
+      cls: metrics.cumulative_layout_shift?.percentiles?.p75,
+      ttfb: metrics.experimental_time_to_first_byte?.percentiles?.p75
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -307,8 +388,12 @@ function footerLink(page: FetchedPage, pattern: RegExp) {
   })).find((link) => pattern.test(link.href) || pattern.test(link.text));
 }
 
+function checkScope(id: number): TechnicalScope {
+  return DOMAIN_CHECK_IDS.has(id) ? "domain" : "page";
+}
+
 function pass(def: CheckDefinition, passed: boolean, evidence: string): TechnicalCheckResult {
-  return { ...def, passed, evidence };
+  return { ...def, passed, evidence, scope: checkScope(def.id) };
 }
 
 export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAuditResult> {
@@ -326,6 +411,10 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
   const sitemap = await fetchText(sitemapUrl).catch(() => null);
   const aiSitemap = await fetchText(`${origin}/ai-sitemap.xml`).catch(() => null);
+  const [psi, crux] = await Promise.all([
+    fetchPageSpeedInsights(page.finalUrl),
+    fetchCrux(page.finalUrl)
+  ]);
   const sitemap$ = sitemap?.text ? cheerio.load(sitemap.text, { xmlMode: true }) : null;
   const sitemapUrls = sitemap$ ? sitemap$("url loc").toArray().map((el) => sitemap$(el).text()).slice(0, 20) : [];
   const samplePages = (await Promise.all(sitemapUrls.slice(0, 4).filter(Boolean).map((item) => fetchPage(item).catch(() => null)))).filter(Boolean) as FetchedPage[];
@@ -415,21 +504,28 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(43, page.finalUrl.length <= 75, `${page.finalUrl.length} chars`);
   add(44, url.pathname === url.pathname.toLowerCase(), url.pathname);
   add(45, pages.every((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/")), `${pages.length} pages sampled`);
-  add(46, page.responseTimeMs < 2500, `Local fallback ${page.responseTimeMs}ms`);
-  add(47, headBlockingScripts === 0, "Local fallback from blocking scripts");
-  add(48, page.$("img").length === 0 || images.missingDimensions === 0, "Local fallback from layout-stability image dimensions");
-  add(49, page.responseTimeMs < 800, `${page.responseTimeMs}ms`);
+  const lcp = crux?.lcp ?? psi?.lcp;
+  const inp = crux?.inp ?? psi?.inp;
+  const cls = crux?.cls ?? psi?.cls;
+  const ttfb = crux?.ttfb ?? psi?.ttfb ?? page.responseTimeMs;
+  const mobileScore = psi?.performanceScore;
+  const tapTargetsPass = psi?.tapTargetsPass;
+
+  add(46, lcp !== undefined ? lcp < 2500 : page.responseTimeMs < 2500, lcp !== undefined ? `${Math.round(lcp)}ms via API` : `Local fallback ${page.responseTimeMs}ms`);
+  add(47, inp !== undefined ? inp < 200 : headBlockingScripts === 0, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking scripts");
+  add(48, cls !== undefined ? cls < 0.1 : page.$("img").length === 0 || images.missingDimensions === 0, cls !== undefined ? `${cls} via API` : "Local fallback from layout-stability image dimensions");
+  add(49, ttfb < 800, `${Math.round(ttfb)}ms${psi?.ttfb || crux?.ttfb ? " via API" : ""}`);
   add(50, images.missingDimensions === 0, `${images.missingDimensions} images missing dimensions`);
   add(51, !firstImgLazy, "first image loading attribute");
   add(52, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
   add(53, headBlockingScripts === 0, `${headBlockingScripts} blocking scripts`);
   add(54, page.$("head style").text().trim().length > 0, "head style block");
   add(55, page.$("link[rel='preload'][as='image']").length > 0, "image preload link");
-  add(56, page.responseTimeMs < 2500 && viewport.includes("width=device-width"), "Local PSI fallback");
-  add(57, viewport.includes("width=device-width"), "Local tap-target fallback");
+  add(56, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
+  add(57, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(58, viewport.includes("width=device-width") && viewport.includes("initial-scale=1"), viewport || "missing");
-  add(59, page.responseTimeMs < 2500 && viewport.includes("width=device-width"), "Local PSI fallback");
-  add(60, viewport.includes("width=device-width"), "Local tap-target fallback");
+  add(59, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
+  add(60, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(61, images.missingAlt === 0, `${images.missingAlt} images missing alt`);
   add(62, page.$("img[src*='chart'],img[src*='graph'],img[src*='infographic'],img[src*='data']").toArray().every((el) => wordCount(page.$(el).attr("alt") ?? "") >= 50), "data image alt scan");
   add(63, images.missingDimensions === 0, `${images.missingDimensions} images missing dimensions`);
@@ -487,15 +583,33 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
 }
 
 function scoreChecks(checks: TechnicalCheckResult[]): TechnicalAuditResult {
-  const weightedTotal = checks.reduce((sum, check) => sum + check.weight, 0);
-  const weightedPassed = checks.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
-  const rawScore = Math.round((weightedPassed / weightedTotal) * 100);
+  const weightedScore = (scope: TechnicalScope) => {
+    const scoped = checks.filter((check) => check.scope === scope);
+    const weightedTotal = scoped.reduce((sum, check) => sum + check.weight, 0);
+    const weightedPassed = scoped.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
+    return weightedTotal > 0 ? Math.round((weightedPassed / weightedTotal) * 100) : 0;
+  };
+  const pageScore = weightedScore("page");
+  const domainScore = weightedScore("domain");
+  const rawScore = Math.round(pageScore * 0.7 + domainScore * 0.3);
   const blockerFailed = checks.some((check) => check.severity === "BLOCKER" && !check.passed);
+  const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   return {
-    score: blockerFailed ? Math.min(rawScore, 50) : rawScore,
+    score,
     rawScore,
+    pageScore,
+    domainScore,
+    grade: gradeForScore(score),
     blockerFailed,
     checkedAt: new Date().toISOString(),
     checks
   };
+}
+
+function gradeForScore(score: number): TechnicalGrade {
+  if (score >= 85) return "A";
+  if (score >= 70) return "B";
+  if (score >= 55) return "C";
+  if (score >= 40) return "D";
+  return "F";
 }
