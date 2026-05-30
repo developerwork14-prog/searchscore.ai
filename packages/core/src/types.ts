@@ -20,16 +20,10 @@ export interface ScoringPillars {
 
 export interface VisibilityBreakdown {
   aiDecisionCoverage: number;
-  competitiveLandscape: number;
+  categoryVisibility: number;
   brandAuthority: number;
   entityStrength: number;
   searchReadiness: number;
-}
-
-export interface CompetitorVisibility {
-  name: string;
-  visibility: number;
-  isYou?: boolean;
 }
 
 export interface LosingPrompt {
@@ -55,9 +49,29 @@ export interface BrandPerception {
   weaknesses: string[];
 }
 
-export interface RecommendationGroup {
-  priority: "High Priority" | "Medium Priority" | "Low Priority";
-  items: string[];
+export interface AiMarketPosition {
+  industry: string;
+  subIndustry: string;
+  businessModel: string;
+  classificationConfidence: number;
+  evidenceKeywords: string[];
+  rejectedCategories: Array<{
+    category: string;
+    reason: string;
+  }>;
+  categoryVisibility: number;
+  aiPresenceLevel: VisibilityLevel;
+  authorityStrength: "Low" | "Moderate" | "Strong" | "Excellent";
+  marketPosition: string;
+}
+
+export type RecommendationPriority = "High Priority" | "Medium Priority" | "Low Priority";
+
+export interface Recommendation {
+  priority: RecommendationPriority;
+  recommendation: string;
+  reason: string;
+  expectedAiVisibilityImpact: string;
 }
 
 export interface RiskAssessment {
@@ -76,7 +90,7 @@ export interface AiVisibilityReport {
   visibilityLevel: VisibilityLevel;
   pillars: ScoringPillars;
   breakdown: VisibilityBreakdown;
-  competitors: CompetitorVisibility[];
+  aiMarketPosition: AiMarketPosition;
   losingPrompts: LosingPrompt[];
   opportunities: PromptOpportunity[];
   perception: BrandPerception;
@@ -85,7 +99,7 @@ export interface AiVisibilityReport {
     explanation: string;
   };
   risk: RiskAssessment;
-  recommendations: RecommendationGroup[];
+  recommendations: Recommendation[];
   shareUrl: string;
 }
 

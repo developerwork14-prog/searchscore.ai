@@ -3,3 +3,4 @@ export * from "./report-generator.js";
 export * from "./playground.js";
 export * from "./exporters.js";
 export * from "./technical-audit.js";
+export * from "./lib/business-classification.js";

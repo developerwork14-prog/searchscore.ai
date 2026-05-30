@@ -11,7 +11,7 @@ export function reportToCsv(report: AiVisibilityReport) {
     ["AI Visibility Score", `${report.visibilityScore}%`],
     ["Visibility Level", report.visibilityLevel],
     ["AI Decision Coverage", `${report.breakdown.aiDecisionCoverage}%`],
-    ["Competitive Landscape", `${report.breakdown.competitiveLandscape}%`],
+    ["Category Visibility", `${report.breakdown.categoryVisibility}%`],
     ["Brand Authority", `${report.breakdown.brandAuthority}%`],
     ["Entity Strength", `${report.breakdown.entityStrength}%`],
     ["Search Readiness", `${report.breakdown.searchReadiness}%`]
@@ -28,7 +28,7 @@ export function reportToHtml(report: AiVisibilityReport) {
 <h2>${report.visibilityScore}% - ${report.visibilityLevel}</h2>
 <p>${report.sentiment.explanation}</p>
 <h3>Recommendations</h3>
-${report.recommendations.map((group) => `<h4>${group.priority}</h4><ul>${group.items.map((item) => `<li>${item}</li>`).join("")}</ul>`).join("")}
+${report.recommendations.map((item) => `<h4>${item.priority}: ${item.recommendation}</h4><p><strong>Reason:</strong> ${item.reason}</p><p><strong>Expected AI Visibility Impact:</strong> ${item.expectedAiVisibilityImpact}</p>`).join("")}
 </body>
 </html>`;
 }

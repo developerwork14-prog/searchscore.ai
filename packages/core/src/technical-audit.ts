@@ -154,11 +154,13 @@ const CHECKS: CheckDefinition[] = [
   [109, "Content Basics", "Modified date present", 4, "MINOR"],
   [110, "Content Basics", "Named author byline present", 5, "MINOR"],
   [111, "Content Basics", "Author linked to bio page", 4, "MINOR"],
-  [112, "Content Basics", "At least 2 outbound links", 4, "MINOR"]
+  [112, "Content Basics", "At least 2 outbound links", 4, "MINOR"],
+  [113, "Trust Signals", "Review or testimonial signals present", 4, "MINOR"],
+  [114, "AI Crawl Readiness", "llms.txt returns HTTP 200", 3, "ADVISORY"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
-const DOMAIN_CHECK_IDS = new Set([3, 4, 7, 10, 11, 12, 13, 14, 15, 22, 23, 35, 37, 38, 45, 56, 59, 67, 68, 69, 70, 80, 81, 83, 91, 98, 99, 106]);
+const DOMAIN_CHECK_IDS = new Set([3, 4, 7, 10, 11, 12, 13, 14, 15, 22, 23, 35, 37, 38, 45, 56, 59, 67, 68, 69, 70, 80, 81, 83, 91, 98, 99, 106, 114]);
 
 interface LabVitals {
   lcp?: number;
@@ -411,6 +413,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
   const sitemap = await fetchText(sitemapUrl).catch(() => null);
   const aiSitemap = await fetchText(`${origin}/ai-sitemap.xml`).catch(() => null);
+  const llms = await fetchText(`${origin}/llms.txt`).catch(() => null);
   const [psi, crux] = await Promise.all([
     fetchPageSpeedInsights(page.finalUrl),
     fetchCrux(page.finalUrl)
@@ -455,6 +458,8 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const hasLanguageAlternates = page.html.match(/\/(en|hi|fr|es|de|ar)\//i) !== null || hreflangs > 0;
   const aboutWords = aboutLink ? await fetchPage(absolute(url, page.$(aboutLink).attr("href") ?? "")).then((p) => p.wordCount).catch(() => 0) : 0;
   const contactText = contactLink ? await fetchPage(absolute(url, page.$(contactLink).attr("href") ?? "")).then((p) => p.$("body").text()).catch(() => "") : "";
+  const reviewSignals = page.$("[class*='review'],[class*='testimonial'],[id*='review'],[id*='testimonial']").length;
+  const reviewWords = (page.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length;
 
   const results: TechnicalCheckResult[] = [];
   const add = (id: number, passed: boolean, evidence: string) => results.push(pass(CHECKS[id - 1], passed, evidence));
@@ -578,6 +583,8 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(110, /author|byline|rel=.author.|itemprop=.author./i.test(page.html), "author hint");
   add(111, page.$("a[href*='/author/'],a[href*='/team/']").length > 0, "author bio link");
   add(112, outboundCount >= 2, `${outboundCount} outbound links`);
+  add(113, reviewSignals > 0 || reviewWords >= 2, `${reviewSignals} review/testimonial elements, ${reviewWords} review terms`);
+  add(114, llms?.response.status === 200 && /text|plain/i.test(llms.response.headers.get("content-type") ?? ""), `Status ${llms?.response.status ?? "missing"}`);
 
   return scoreChecks(results);
 }
