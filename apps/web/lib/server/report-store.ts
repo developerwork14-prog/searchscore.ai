@@ -15,6 +15,7 @@ declare global {
   var aivaMongoClientPromise: Promise<MongoClient> | undefined;
   var aivaMemoryReports: Map<string, AiVisibilityReport> | undefined;
   var aivaMemoryLeads: StrategyLead[] | undefined;
+  var aivaMongoLastError: string | undefined;
 }
 
 const memoryReports = globalThis.aivaMemoryReports ??= new Map<string, AiVisibilityReport>();
@@ -23,6 +24,10 @@ const memoryLeads = globalThis.aivaMemoryLeads ??= [];
 function mongoClient() {
   const uri = process.env.MONGODB_URI;
   if (!uri) return null;
+  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
+    globalThis.aivaMongoLastError = 'MONGODB_URI must start with "mongodb://" or "mongodb+srv://"';
+    return null;
+  }
 
   globalThis.aivaMongoClientPromise ??= new MongoClient(uri, {
     serverSelectionTimeoutMS: 3000,
@@ -39,8 +44,20 @@ async function database() {
     return client.db(process.env.MONGODB_DB ?? "aiva");
   } catch (error) {
     globalThis.aivaMongoClientPromise = undefined;
+    globalThis.aivaMongoLastError = error instanceof Error ? error.message : "Unknown MongoDB connection error";
     console.error("MongoDB connection failed", error);
     return null;
+  }
+}
+
+function redactedMongoUri() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) return "";
+  try {
+    const parsed = new URL(uri);
+    return `${parsed.protocol}//${parsed.username ? `${parsed.username}:***@` : ""}${parsed.host}${parsed.pathname}`;
+  } catch {
+    return "Invalid URI format";
   }
 }
 
@@ -50,15 +67,20 @@ export async function reportStoreHealth() {
     return {
       mode: "memory",
       mongoConfigured: Boolean(process.env.MONGODB_URI),
-      database: process.env.MONGODB_DB ?? "aiva"
+      database: process.env.MONGODB_DB ?? "aiva",
+      uri: redactedMongoUri(),
+      lastError: globalThis.aivaMongoLastError ?? null
     };
   }
 
   await db.command({ ping: 1 });
+  globalThis.aivaMongoLastError = undefined;
   return {
     mode: "mongodb",
     mongoConfigured: true,
-    database: db.databaseName
+    database: db.databaseName,
+    uri: redactedMongoUri(),
+    lastError: null
   };
 }
 
