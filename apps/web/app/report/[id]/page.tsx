@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type { StructuredAiVisibilityReport } from "@aiva/core";
 import { CalendarCheck, Download, ExternalLink, Link2, Sparkles } from "lucide-react";
 import { API_BASE, getReport, submitStrategyCall } from "@/lib/api";
@@ -25,6 +25,7 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
 
 export default function ReportPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
   const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo">("technical");
@@ -286,6 +287,19 @@ export default function ReportPage() {
           >
             Schedule Strategy Call
           </button>
+        </Card>
+      </section>
+
+      <section className="mb-6">
+        <Card className="flex flex-col gap-4 bg-white p-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-black uppercase text-teal">Run another audit</p>
+            <h2 className="mt-2 text-2xl font-black">Generate a new visibility report</h2>
+          </div>
+          <Button onClick={() => router.push("/")} className="w-full bg-ink text-white hover:bg-teal md:w-auto">
+            <Sparkles className="size-4" />
+            Generate New Report
+          </Button>
         </Card>
       </section>
 
