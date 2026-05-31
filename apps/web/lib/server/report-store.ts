@@ -11,12 +11,14 @@ interface StrategyLead {
   createdAt: string;
 }
 
-const memoryReports = new Map<string, AiVisibilityReport>();
-const memoryLeads: StrategyLead[] = [];
-
 declare global {
   var aivaMongoClientPromise: Promise<MongoClient> | undefined;
+  var aivaMemoryReports: Map<string, AiVisibilityReport> | undefined;
+  var aivaMemoryLeads: StrategyLead[] | undefined;
 }
+
+const memoryReports = globalThis.aivaMemoryReports ??= new Map<string, AiVisibilityReport>();
+const memoryLeads = globalThis.aivaMemoryLeads ??= [];
 
 function mongoClient() {
   const uri = process.env.MONGODB_URI;
