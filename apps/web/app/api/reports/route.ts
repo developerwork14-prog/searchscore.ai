@@ -24,6 +24,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Invalid request", issues: error.flatten() }, { status: 400 });
     }
     console.error(error);
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
+    return NextResponse.json({
+      message: error instanceof Error ? error.message : "Internal server error"
+    }, { status: 500 });
   }
 }
