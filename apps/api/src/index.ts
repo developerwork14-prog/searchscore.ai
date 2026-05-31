@@ -2,7 +2,8 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
-import { generateVisibilityReport, reportToCsv, reportToHtml, reportToJson, runPromptPlayground } from "@aiva/core";
+import type { AiVisibilityReport, CreatedPublicReport, StructuredAiVisibilityReport } from "@aiva/core";
+import { generateVisibilityReport, reportToCsv, reportToHtml, reportToJson, reportToPdf, runPromptPlayground, toStructuredAiVisibilityReport } from "@aiva/core";
 import { z } from "zod";
 import { env } from "./env.js";
 import { reportStore } from "./report-store.js";
@@ -20,6 +21,24 @@ const reportInputSchema = z.object({
   businessEmail: z.string().email()
 });
 
+const strategyCallSchema = z.object({
+  reportId: z.string().min(1),
+  name: z.string().min(2).max(120),
+  email: z.string().email(),
+  phone: z.string().min(7).max(30)
+});
+
+function publicReportView(report: AiVisibilityReport): StructuredAiVisibilityReport {
+  return toStructuredAiVisibilityReport(report);
+}
+
+function createdPublicReportView(report: AiVisibilityReport): CreatedPublicReport {
+  return {
+    id: report.id,
+    ...toStructuredAiVisibilityReport(report)
+  };
+}
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "ai-visibility-analyzer-api" });
 });
@@ -29,7 +48,7 @@ app.post("/api/reports", async (req, res, next) => {
     const input = reportInputSchema.parse(req.body);
     const report = await generateVisibilityReport(input, env.webOrigin);
     await reportStore.save(report);
-    res.status(201).json(report);
+    res.status(201).json(createdPublicReportView(report));
   } catch (error) {
     next(error);
   }
@@ -41,7 +60,7 @@ app.get("/api/reports/:id", async (req, res) => {
     res.status(404).json({ message: "Report not found" });
     return;
   }
-  res.json(report);
+  res.json(publicReportView(report));
 });
 
 app.post("/api/playground", async (req, res, next) => {
@@ -56,6 +75,44 @@ app.post("/api/playground", async (req, res, next) => {
       return;
     }
     res.json(runPromptPlayground(report.brandName, body.prompt, report.visibilityScore));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/strategy-call", async (req, res, next) => {
+  try {
+    const body = strategyCallSchema.parse(req.body);
+    const report = await reportStore.get(body.reportId);
+    if (!report) {
+      res.status(404).json({ message: "Report not found" });
+      return;
+    }
+
+    const message = [
+      "Strategy Call Request",
+      `Name: ${body.name}`,
+      `Email: ${body.email}`,
+      `Phone: ${body.phone}`,
+      `Brand: ${report.brandName}`,
+      `Report: ${report.shareUrl}`
+    ].join("\n");
+    const mailtoUrl = env.notificationEmail
+      ? `mailto:${encodeURIComponent(env.notificationEmail)}?subject=${encodeURIComponent(`Strategy Call Request - ${report.brandName}`)}&body=${encodeURIComponent(message)}`
+      : "";
+    const whatsappUrl = env.whatsappNumber
+      ? `https://wa.me/${env.whatsappNumber.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`
+      : "";
+
+    console.log(message);
+    res.status(201).json({
+      ok: true,
+      mailtoUrl,
+      whatsappUrl,
+      message: env.notificationEmail || env.whatsappNumber
+        ? "Strategy call request captured."
+        : "Strategy call request captured. Configure LEAD_NOTIFICATION_EMAIL and LEAD_WHATSAPP_NUMBER to route leads."
+    });
   } catch (error) {
     next(error);
   }
@@ -78,8 +135,8 @@ app.get("/api/reports/:id/export/:format", async (req, res) => {
     return;
   }
   if (req.params.format === "pdf") {
-    res.setHeader("Content-Disposition", `attachment; filename="${report.brandName}-visibility.html"`);
-    res.type("text/html").send(reportToHtml(report));
+    res.setHeader("Content-Disposition", `attachment; filename="${report.brandName}-visibility.pdf"`);
+    res.type("application/pdf").send(reportToPdf(report));
     return;
   }
 

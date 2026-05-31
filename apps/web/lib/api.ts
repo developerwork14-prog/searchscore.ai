@@ -1,6 +1,6 @@
-import type { AiVisibilityReport, PlaygroundResult, ReportInput } from "@aiva/core";
+import type { CreatedPublicReport, PlaygroundResult, ReportInput, StructuredAiVisibilityReport } from "@aiva/core";
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -15,12 +15,12 @@ export async function createReport(input: ReportInput) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)
   });
-  return parseResponse<AiVisibilityReport>(response);
+  return parseResponse<CreatedPublicReport>(response);
 }
 
 export async function getReport(id: string) {
   const response = await fetch(`${API_BASE}/api/reports/${id}`, { cache: "no-store" });
-  return parseResponse<AiVisibilityReport>(response);
+  return parseResponse<StructuredAiVisibilityReport>(response);
 }
 
 export async function runPlayground(reportId: string, prompt: string) {
@@ -30,4 +30,13 @@ export async function runPlayground(reportId: string, prompt: string) {
     body: JSON.stringify({ reportId, prompt })
   });
   return parseResponse<PlaygroundResult>(response);
+}
+
+export async function submitStrategyCall(input: { reportId: string; name: string; email: string; phone: string }) {
+  const response = await fetch(`${API_BASE}/api/strategy-call`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  return parseResponse<{ ok: boolean; message: string; mailtoUrl: string; whatsappUrl: string }>(response);
 }

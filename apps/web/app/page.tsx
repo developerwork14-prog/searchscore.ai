@@ -11,8 +11,8 @@ const tasks = [
   "Scanning Traditional Search Engines",
   "Scanning Video Search Engines",
   "Scanning Local Search Engines",
-  "Checking Brand Authority",
-  "Checking Entity Authority",
+  "Running Technical Audit",
+  "Running GEO / AEO Audit",
   "Mapping Market Position",
   "Generating Visibility Score",
   "Compiling Insights"
@@ -21,7 +21,7 @@ const tasks = [
 const statuses = [
   "Checking how AI engines perceive your brand",
   "Mapping market position",
-  "Evaluating brand authority",
+  "Evaluating GEO / AEO readiness",
   "Analyzing high-intent customer prompts",
   "Measuring AI recommendation likelihood"
 ];
@@ -80,7 +80,7 @@ export default function HomePage() {
               </div>
               <h1 className="text-3xl font-bold md:text-4xl">Building your visibility report</h1>
               <p className="mt-3 text-sm leading-6 text-white/66">The audit is scoring how buyers discover and compare your brand across AI, search, local, and video surfaces.</p>
-              <p className="mt-6 text-sm font-bold text-mint">Estimated time: 45-60 seconds</p>
+              {/* <p className="mt-6 text-sm font-bold text-mint">Estimated time: 45-60 seconds</p> */}
             </div>
             <div className="grid gap-8 p-6 md:p-10 md:grid-cols-[240px_1fr] md:items-center">
             <div className="flex flex-col items-center">

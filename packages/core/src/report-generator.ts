@@ -1,14 +1,18 @@
 import {
   AiVisibilityReport,
   AiMarketPosition,
+  LeadGenerationMetric,
   Recommendation,
   RecommendationPriority,
   ReportInput,
   RiskLevel,
   ScoringPillars,
+  TechnicalCategoryStatus,
+  TechnicalCategorySummary,
   VisibilityLevel
 } from "./types.js";
 import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult, TechnicalSeverity } from "./technical-audit.js";
+import { runGeoAeoAudit } from "./geo-aeo-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
 
 function clamp(value: number, min = 0, max = 100) {
@@ -33,14 +37,8 @@ function getVisibilityLevel(score: number): VisibilityLevel {
   return "Excellent";
 }
 
-function calculateScore(pillars: ScoringPillars) {
-  return clamp(
-    pillars.technicalFoundation * 0.2 +
-      pillars.geoReadiness * 0.25 +
-      pillars.aeoReadiness * 0.15 +
-      pillars.brandAuthority * 0.15 +
-      pillars.aiSearchVisibility * 0.25
-  );
+function calculateScore(technicalScore: number, geoAeoScore: number) {
+  return clamp(technicalScore * 0.4 + geoAeoScore * 0.6);
 }
 
 function riskLevel(score: number): RiskLevel {
@@ -235,11 +233,141 @@ function classificationRecommendation(confidence: number): Recommendation | null
   };
 }
 
-function auditWeaknesses(audit: TechnicalAuditResult, recommendations: Recommendation[]) {
-  const failedMajorChecks = audit.checks.filter((check) => !check.passed && (check.severity === "BLOCKER" || check.severity === "MAJOR"));
-  const recommendationWeaknesses = recommendations.slice(0, 3).map((item) => item.recommendation);
-  const auditWeaknesses = failedMajorChecks.slice(0, 3).map((check) => `${check.name} failed (${check.evidence})`);
-  return (recommendationWeaknesses.length ? recommendationWeaknesses : auditWeaknesses).slice(0, 3);
+function failedIssueCount(audit: TechnicalAuditResult, ids: number[]) {
+  const idSet = new Set(ids);
+  return audit.checks.filter((check) => idSet.has(check.id) && !check.passed).length;
+}
+
+function categoryStatus(failedChecks: number): TechnicalCategoryStatus {
+  if (failedChecks === 0) return "Passed";
+  if (failedChecks <= 2) return "Minor Attention";
+  return "Needs Attention";
+}
+
+function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCategorySummary[] {
+  const categoryOrder = [
+    "HTTP & Server Health",
+    "Robots.txt & Sitemap",
+    "Meta Tags",
+    "Heading Structure",
+    "Canonicalization",
+    "Indexability & Crawlability",
+    "URL Structure",
+    "Core Web Vitals",
+    "Mobile Optimization",
+    "Image SEO",
+    "Security & Trust Pages",
+    "Performance",
+    "Schema Markup",
+    "Social Metadata",
+    "Internal Linking",
+    "Semantic HTML",
+    "Accessibility",
+    "International SEO",
+    "Content Basics",
+    "Trust Signals",
+    "AI Crawl Readiness"
+  ];
+  const categories = new Map<string, TechnicalCheckResult[]>();
+
+  for (const check of audit.checks) {
+    const current = categories.get(check.category) ?? [];
+    current.push(check);
+    categories.set(check.category, current);
+  }
+
+  return categoryOrder
+    .filter((categoryName) => categories.has(categoryName))
+    .map((categoryName) => {
+      const checks = categories.get(categoryName) ?? [];
+      const totalWeight = checks.reduce((sum, check) => sum + check.weight, 0);
+      const passedWeight = checks.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
+      const failedChecks = checks.filter((check) => !check.passed).length;
+      const warningChecks = checks.filter((check) => !check.passed && ["MINOR", "ADVISORY"].includes(check.severity)).length;
+
+      return {
+        categoryName,
+        totalChecks: checks.length,
+        passedChecks: checks.length - failedChecks,
+        failedChecks,
+        warningChecks,
+        score: totalWeight ? clamp((passedWeight / totalWeight) * 100) : 0,
+        status: categoryStatus(failedChecks)
+      };
+    });
+}
+
+function opportunityFloor(score: number) {
+  if (score < 25) return 4;
+  if (score < 45) return 3;
+  if (score < 70) return 2;
+  if (score < 85) return 1;
+  return 0;
+}
+
+function opportunityCount(score: number, auditCount: number) {
+  return Math.max(opportunityFloor(score), auditCount);
+}
+
+function publicIssueSummary(recommendations: Recommendation[], visibilityScore: number) {
+  const highFromFindings = recommendations.filter((item) => item.priority === "High Priority").length;
+  const mediumFromFindings = recommendations.filter((item) => item.priority === "Medium Priority").length;
+  const lowFromFindings = recommendations.filter((item) => item.priority === "Low Priority").length;
+  const highImpactOpportunities = Math.max(opportunityFloor(visibilityScore), highFromFindings);
+  const mediumImpactOpportunities = Math.max(visibilityScore < 70 ? 2 : 1, mediumFromFindings);
+  const lowImpactOpportunities = lowFromFindings;
+  const totalVisible = highImpactOpportunities + mediumImpactOpportunities + lowImpactOpportunities;
+  const totalDetected = Math.max(totalVisible, recommendations.length);
+
+  return {
+    highImpactOpportunities,
+    mediumImpactOpportunities,
+    lowImpactOpportunities,
+    additionalFindingsDetected: Math.max(0, totalDetected - 3),
+    teaserFindings: [
+      "Authority signals can be strengthened.",
+      "AI recommendation coverage is limited.",
+      "Brand trust indicators can be improved."
+    ],
+    summaryMessages: [
+      "Several authority signals are missing.",
+      "Multiple AI visibility opportunities were detected.",
+      "Important crawlability improvements are available."
+    ].filter((_, index) => [highImpactOpportunities, mediumImpactOpportunities, lowImpactOpportunities][index] > 0)
+  };
+}
+
+function leadMetrics(audit: TechnicalAuditResult, reportBreakdown: AiVisibilityReport["breakdown"]): LeadGenerationMetric[] {
+  return [
+    {
+      label: "AI Decision Coverage",
+      score: reportBreakdown.aiDecisionCoverage,
+      opportunitiesIdentified: opportunityCount(reportBreakdown.aiDecisionCoverage, failedIssueCount(audit, [77, 78, 79, 80, 81, 82, 85, 91, 107, 113, 114])),
+      explanation: "Measures how often AI systems are likely to include your brand in recommendation and decision-making queries.",
+      summary: "Multiple AI visibility opportunities were detected."
+    },
+    {
+      label: "Brand Authority",
+      score: reportBreakdown.brandAuthority,
+      opportunitiesIdentified: opportunityCount(reportBreakdown.brandAuthority, failedIssueCount(audit, [67, 68, 69, 70, 80, 81, 92, 93, 94, 95, 110, 111, 113])),
+      explanation: "Measures trust, credibility, and authority signals associated with your brand.",
+      summary: "Several authority signals are missing."
+    },
+    {
+      label: "Entity Strength",
+      score: reportBreakdown.entityStrength,
+      opportunitiesIdentified: opportunityCount(reportBreakdown.entityStrength, failedIssueCount(audit, [77, 78, 79, 80, 81, 82, 87, 88, 89, 100, 105])),
+      explanation: "Measures how clearly AI systems understand and identify your business entity.",
+      summary: "Entity clarity signals can be strengthened."
+    },
+    {
+      label: "Search Readiness",
+      score: reportBreakdown.searchReadiness,
+      opportunitiesIdentified: opportunityCount(reportBreakdown.searchReadiness, failedIssueCount(audit, [1, 2, 5, 6, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 24, 27, 28, 32, 35, 46, 49, 53, 56, 59, 72, 73, 96, 97, 107])),
+      explanation: "Measures how well your website is prepared for discovery, crawling, and indexing.",
+      summary: "Important crawlability improvements are available."
+    }
+  ];
 }
 
 async function fetchHomepageHtml(url: string) {
@@ -260,9 +388,13 @@ async function fetchHomepageHtml(url: string) {
 export async function generateVisibilityReport(input: ReportInput, origin = "http://localhost:3000"): Promise<AiVisibilityReport> {
   const normalizedUrl = input.websiteUrl.startsWith("http") ? input.websiteUrl : `https://${input.websiteUrl}`;
   const seed = stableHash(`${input.brandName}:${normalizedUrl}:${input.businessEmail}`);
-  const [technicalAudit, htmlContent] = await Promise.all([
-    runTechnicalAudit(normalizedUrl),
-    fetchHomepageHtml(normalizedUrl)
+  const htmlContentPromise = fetchHomepageHtml(normalizedUrl);
+  const technicalAuditPromise = runTechnicalAudit(normalizedUrl);
+  const geoAeoAuditPromise = htmlContentPromise.then((html) => runGeoAeoAudit(normalizedUrl, html));
+  const [technicalAudit, htmlContent, geoAeoAudit] = await Promise.all([
+    technicalAuditPromise,
+    htmlContentPromise,
+    geoAeoAuditPromise
   ]);
   const classification = classifyBusiness(normalizedUrl, htmlContent);
   const category = classification.subIndustry;
@@ -275,15 +407,20 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     aiSearchVisibility: scoreFromSeed(seed, 16, 12, 70)
   };
 
-  const visibilityScore = calculateScore(pillars);
+  const visibilityScore = calculateScore(technicalAudit.score, geoAeoAudit.score);
   const categoryVisibility = clamp((pillars.aiSearchVisibility * 0.6) + (pillars.geoReadiness * 0.2) + (pillars.aeoReadiness * 0.2));
+  const breakdown = {
+    aiDecisionCoverage: pillars.aiSearchVisibility,
+    categoryVisibility,
+    brandAuthority: pillars.brandAuthority,
+    entityStrength: pillars.geoReadiness,
+    searchReadiness: clamp((pillars.technicalFoundation + pillars.aeoReadiness) / 2)
+  };
   const aiMarketPosition: AiMarketPosition = {
     industry: classification.industry,
     subIndustry: classification.subIndustry,
     businessModel: classification.businessModel,
     classificationConfidence: classification.confidence,
-    evidenceKeywords: classification.evidenceKeywords,
-    rejectedCategories: classification.rejectedCategories,
     categoryVisibility,
     aiPresenceLevel: getVisibilityLevel(pillars.aiSearchVisibility),
     authorityStrength: authorityStrength(pillars.brandAuthority),
@@ -313,13 +450,16 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     visibilityScore,
     visibilityLevel: getVisibilityLevel(visibilityScore),
     pillars,
-    breakdown: {
-      aiDecisionCoverage: pillars.aiSearchVisibility,
-      categoryVisibility,
-      brandAuthority: pillars.brandAuthority,
-      entityStrength: pillars.geoReadiness,
-      searchReadiness: clamp((pillars.technicalFoundation + pillars.aeoReadiness) / 2)
-    },
+    breakdown,
+    leadMetrics: leadMetrics(technicalAudit, breakdown),
+    visibilityIssueSummary: publicIssueSummary(recommendations, visibilityScore),
+    technicalCategorySummaries: technicalCategorySummaries(technicalAudit),
+    geoAeoAudit,
+    visibilityOpportunities: [
+      "AI systems found opportunities to improve brand understanding.",
+      "Authority and trust signals can be strengthened.",
+      "Search and crawl readiness can be improved for better discoverability."
+    ],
     aiMarketPosition,
     losingPrompts: prompts.slice(0, 4).map((prompt, index) => ({
       prompt,
@@ -344,8 +484,8 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
         `${classification.industry} researchers`
       ],
       marketPositioning: [aiMarketPosition.marketPosition, "Brand visibility is evaluated from owned signals and category relevance"],
-      strengths: ["Clear brand identity", "Recoverable prompt demand", "Solid search readiness signals"],
-      weaknesses: auditWeaknesses(technicalAudit, recommendations)
+      strengths: ["Brand visibility signals were detected", "AI discovery potential exists", "Category-level opportunities are available"],
+      weaknesses: publicIssueSummary(recommendations, visibilityScore).summaryMessages
     },
     sentiment: {
       value: visibilityScore >= 70 ? "Positive" : visibilityScore >= 40 ? "Neutral" : "Negative",
@@ -359,8 +499,8 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     risk: {
       level: riskLevel(visibilityScore),
       factors: [
-        ...(classification.confidence < 55 ? ["Low classification confidence"] : []),
-        ...recommendations.slice(0, 3).map((item) => item.recommendation)
+        ...(classification.confidence < 55 ? ["Category clarity needs review"] : []),
+        ...publicIssueSummary(recommendations, visibilityScore).summaryMessages
       ].slice(0, 4),
       businessImpact: [
         "AI systems may not confidently understand when to recommend your brand.",
@@ -369,6 +509,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
       ]
     },
     recommendations,
+    internalRecommendations: recommendations,
     shareUrl: `${origin}/report/${id}`
   };
 }

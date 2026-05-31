@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import tls from "node:tls";
+import { crawlSite } from "./site-crawler.js";
 
 export type TechnicalSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
 export type TechnicalGrade = "A" | "B" | "C" | "D" | "F";
@@ -294,6 +295,33 @@ async function fetchPage(url: string): Promise<FetchedPage> {
   };
 }
 
+async function fetchHeadOk(url: string, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: "HEAD", redirect: "follow", signal: controller.signal });
+    return response.status < 400;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchImageHeadOk(url: string, timeoutMs = 3500) {
+  if (!url) return false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { method: "HEAD", redirect: "follow", signal: controller.signal });
+    return response.ok && /image/i.test(response.headers.get("content-type") ?? "");
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sslValid(url: URL) {
   if (url.protocol !== "https:") return false;
   return new Promise<boolean>((resolve) => {
@@ -409,23 +437,28 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   }
 
   const origin = `${url.protocol}//${url.host}`;
-  const robots = await fetchText(`${origin}/robots.txt`).catch(() => null);
+  const robots = await fetchText(`${origin}/robots.txt`, {}, 4500).catch(() => null);
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
-  const sitemap = await fetchText(sitemapUrl).catch(() => null);
-  const aiSitemap = await fetchText(`${origin}/ai-sitemap.xml`).catch(() => null);
-  const llms = await fetchText(`${origin}/llms.txt`).catch(() => null);
-  const [psi, crux] = await Promise.all([
+  const [sitemap, aiSitemap, llms, psi, crux, crawled] = await Promise.all([
+    fetchText(sitemapUrl, {}, 4500).catch(() => null),
+    fetchText(`${origin}/ai-sitemap.xml`, {}, 3500).catch(() => null),
+    fetchText(`${origin}/llms.txt`, {}, 3500).catch(() => null),
     fetchPageSpeedInsights(page.finalUrl),
-    fetchCrux(page.finalUrl)
+    fetchCrux(page.finalUrl),
+    crawlSite(url.toString(), { maxPages: 50, maxDepth: 3, timeoutMs: 4000, concurrency: 8 })
   ]);
   const sitemap$ = sitemap?.text ? cheerio.load(sitemap.text, { xmlMode: true }) : null;
-  const sitemapUrls = sitemap$ ? sitemap$("url loc").toArray().map((el) => sitemap$(el).text()).slice(0, 20) : [];
-  const samplePages = (await Promise.all(sitemapUrls.slice(0, 4).filter(Boolean).map((item) => fetchPage(item).catch(() => null)))).filter(Boolean) as FetchedPage[];
-  const pages = [page, ...samplePages];
+  const pages = (crawled.pages.length ? crawled.pages : [page]) as FetchedPage[];
+  const samplePages = pages.slice(1);
   const ld = jsonLd(page);
+  const pageLd = pages.map(jsonLd);
+  const allLdBlocks = pageLd.flatMap((item) => item.blocks);
+  const allLdTypes = schemaTypes(allLdBlocks);
   const ldTypes = schemaTypes(ld.blocks);
   const images = imageStats(page);
+  const pageImages = pages.map(imageStats);
   const links = internalLinks(page, url);
+  const allInternalLinks = pages.flatMap((p) => internalLinks(p, new URL(p.finalUrl)));
   const canonical = page.$("link[rel='canonical']").attr("href");
   const canonicalAbs = canonical ? absolute(url, canonical) : "";
   const robotsValue = metaRobots(page);
@@ -460,6 +493,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const contactText = contactLink ? await fetchPage(absolute(url, page.$(contactLink).attr("href") ?? "")).then((p) => p.$("body").text()).catch(() => "") : "";
   const reviewSignals = page.$("[class*='review'],[class*='testimonial'],[id*='review'],[id*='testimonial']").length;
   const reviewWords = (page.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length;
+  const everyPage = (predicate: (p: FetchedPage) => boolean) => pages.every(predicate);
+  const somePage = (predicate: (p: FetchedPage) => boolean) => pages.some(predicate);
+  const pageCountEvidence = `${pages.length} pages crawled`;
 
   const results: TechnicalCheckResult[] = [];
   const add = (id: number, passed: boolean, evidence: string) => results.push(pass(CHECKS[id - 1], passed, evidence));
@@ -477,37 +513,77 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(11, /sitemap:/i.test(robots?.text ?? ""), "robots.txt sitemap directive");
   add(12, sitemap?.response.status === 200 && /xml|text/i.test(sitemap.response.headers.get("content-type") ?? ""), `Status ${sitemap?.response.status ?? "missing"}`);
   add(13, sitemap$ ? sitemap$("url").toArray().every((el) => sitemap$(el).find("lastmod").length > 0) : false, "sitemap lastmod scan");
-  add(14, samplePages.every(robotsContentAllowsIndex), `${samplePages.length} sitemap URLs sampled`);
+  add(14, pages.every(robotsContentAllowsIndex), pageCountEvidence);
   add(15, aiSitemap?.response.status === 200, `Status ${aiSitemap?.response.status ?? "missing"}`);
-  add(16, title.length > 0, `${title.length} chars`);
-  add(17, title.length >= 30 && title.length <= 60, `${title.length} chars`);
-  add(18, description.length > 0, `${description.length} chars`);
-  add(19, description.length >= 120 && description.length <= 160, `${description.length} chars`);
-  add(20, viewport.includes("width=device-width"), viewport || "missing");
-  add(21, !robotsValue.includes("noindex"), robotsValue || "none");
+  add(16, everyPage((p) => p.$("title").first().text().trim().length > 0), pageCountEvidence);
+  add(17, everyPage((p) => {
+    const value = p.$("title").first().text().trim();
+    return value.length >= 30 && value.length <= 60;
+  }), pageCountEvidence);
+  add(18, everyPage((p) => Boolean(p.$("meta[name='description']").attr("content")?.trim())), pageCountEvidence);
+  add(19, everyPage((p) => {
+    const value = p.$("meta[name='description']").attr("content")?.trim() ?? "";
+    return value.length >= 120 && value.length <= 160;
+  }), pageCountEvidence);
+  add(20, everyPage((p) => (p.$("meta[name='viewport']").attr("content")?.toLowerCase() ?? "").includes("width=device-width")), pageCountEvidence);
+  add(21, everyPage((p) => !metaRobots(p).includes("noindex")), pageCountEvidence);
   add(22, !duplicateTitles, `${titles.length} titles sampled`);
   add(23, !duplicateDescriptions, `${descriptions.length} descriptions sampled`);
-  add(24, page.$("h1").length === 1, `${page.$("h1").length} H1 tags`);
-  add(25, h1.length >= 20 && h1.length <= 70, `${h1.length} chars`);
-  add(26, page.$("h1,h2,h3,h4,h5,h6").toArray().every((el, index, arr) => index === 0 || Number(el.tagName[1]) - Number(arr[index - 1].tagName[1]) <= 1), "heading order parsed");
-  add(27, Boolean(canonical), canonical ?? "missing");
-  add(28, Boolean(canonicalAbs) && new URL(canonicalAbs).pathname.replace(/\/$/, "") === new URL(page.finalUrl).pathname.replace(/\/$/, ""), canonicalAbs || "missing");
+  const headingStats = pages.map((p) => {
+  const h1Count = p.$("h1").length;
+  const h1Text = p.$("h1").first().text().trim();
+
+  const headings = p.$("h1,h2,h3,h4,h5,h6").toArray();
+
+  const hierarchyOk = headings.every((el, index, arr) => {
+    if (index === 0) return true;
+
+    const current = Number(el.tagName[1]);
+    const previous = Number(arr[index - 1].tagName[1]);
+
+    return current - previous <= 1;
+  });
+
+  return {
+    url: p.finalUrl,
+    hasOneH1: h1Count === 1,
+    h1LengthOk: h1Text.length >= 10 && h1Text.length <= 90,
+    hierarchyOk
+  };
+});
+
+const headingPassRate = (key: keyof (typeof headingStats)[number]) => {
+  if (!headingStats.length) return 0;
+  return headingStats.filter((item) => item[key]).length / headingStats.length;
+};
+
+add(24, headingPassRate("hasOneH1") >= 0.7, `${Math.round(headingPassRate("hasOneH1") * 100)}% pages have exactly one H1`);
+
+add(25, headingPassRate("h1LengthOk") >= 0.7, `${Math.round(headingPassRate("h1LengthOk") * 100)}% pages have acceptable H1 length`);
+
+add(26, headingPassRate("hierarchyOk") >= 0.7, `${Math.round(headingPassRate("hierarchyOk") * 100)}% pages have valid heading hierarchy`);
+  add(27, everyPage((p) => Boolean(p.$("link[rel='canonical']").attr("href"))), pageCountEvidence);
+  add(28, everyPage((p) => {
+    const value = p.$("link[rel='canonical']").attr("href");
+    const resolved = value ? absolute(new URL(p.finalUrl), value) : "";
+    return Boolean(resolved) && new URL(resolved).pathname.replace(/\/$/, "") === new URL(p.finalUrl).pathname.replace(/\/$/, "");
+  }), pageCountEvidence);
   add(29, !canonicalAbs || await fetchPage(canonicalAbs).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
   add(30, !/[?&]page=|\/page\//i.test(url.toString()) || page.$("link[rel='next'],link[rel='prev']").length > 0, "pagination signal");
   add(31, await fetchText(url.toString().endsWith("/") ? url.toString().slice(0, -1) : `${url.toString()}/`, {}, 5000).then((r) => r.response.redirected || r.response.status !== 200 || r.text === page.html).catch(() => true), "slash variant checked");
-  add(32, robotsContentAllowsIndex(page), "meta/header robots checked");
-  add(33, !robotsValue.includes("nosnippet") && !robotsValue.includes("max-snippet:0"), robotsValue || "none");
-  add(34, page.wordCount >= 50, `${page.wordCount} visible words`);
-  add(35, (await Promise.all(links.slice(0, 20).map((l) => fetch(l.href, { method: "HEAD" }).then((r) => r.status < 400).catch(() => false)))).every(Boolean), `${links.length} internal links found`);
+  add(32, everyPage(robotsContentAllowsIndex), pageCountEvidence);
+  add(33, everyPage((p) => !metaRobots(p).includes("nosnippet") && !metaRobots(p).includes("max-snippet:0")), pageCountEvidence);
+  add(34, everyPage((p) => p.wordCount >= 50), pageCountEvidence);
+  add(35, (await Promise.all(allInternalLinks.slice(0, 30).map((link) => fetchHeadOk(link.href)))).every(Boolean), `${allInternalLinks.length} internal links found`);
   add(36, page.redirectHops <= 1, `${page.redirectHops} redirect hops`);
-  add(37, true, "depth sampled from homepage and sitemap");
-  add(38, true, "orphan detection requires indexed URL corpus; sitemap sample accepted");
-  add(39, hiddenWords < 100, `${hiddenWords} hidden words`);
-  add(40, !/infinite|load more|IntersectionObserver/i.test(page.html), "infinite-scroll hints");
-  add(41, page.wordCount > 80 || !/cookie|consent/i.test(page.html), `${page.wordCount} visible words`);
-  add(42, !url.pathname.includes("_"), url.pathname);
-  add(43, page.finalUrl.length <= 75, `${page.finalUrl.length} chars`);
-  add(44, url.pathname === url.pathname.toLowerCase(), url.pathname);
+  add(37, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
+  add(38, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");
+  add(39, everyPage((p) => p.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(p.$(el).text()), 0) < 100), pageCountEvidence);
+  add(40, everyPage((p) => !/infinite|load more|IntersectionObserver/i.test(p.html)), pageCountEvidence);
+  add(41, everyPage((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html)), pageCountEvidence);
+  add(42, everyPage((p) => !new URL(p.finalUrl).pathname.includes("_")), pageCountEvidence);
+  add(43, everyPage((p) => p.finalUrl.length <= 75), pageCountEvidence);
+  add(44, everyPage((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()), pageCountEvidence);
   add(45, pages.every((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/")), `${pages.length} pages sampled`);
   const lcp = crux?.lcp ?? psi?.lcp;
   const inp = crux?.inp ?? psi?.inp;
@@ -520,70 +596,76 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(47, inp !== undefined ? inp < 200 : headBlockingScripts === 0, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking scripts");
   add(48, cls !== undefined ? cls < 0.1 : page.$("img").length === 0 || images.missingDimensions === 0, cls !== undefined ? `${cls} via API` : "Local fallback from layout-stability image dimensions");
   add(49, ttfb < 800, `${Math.round(ttfb)}ms${psi?.ttfb || crux?.ttfb ? " via API" : ""}`);
-  add(50, images.missingDimensions === 0, `${images.missingDimensions} images missing dimensions`);
+  add(50, pageImages.every((item) => item.missingDimensions === 0), `${pageImages.reduce((sum, item) => sum + item.missingDimensions, 0)} images missing dimensions`);
   add(51, !firstImgLazy, "first image loading attribute");
   add(52, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
-  add(53, headBlockingScripts === 0, `${headBlockingScripts} blocking scripts`);
-  add(54, page.$("head style").text().trim().length > 0, "head style block");
-  add(55, page.$("link[rel='preload'][as='image']").length > 0, "image preload link");
+  add(53, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
+  add(54, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
+  add(55, somePage((p) => p.$("link[rel='preload'][as='image']").length > 0), pageCountEvidence);
   add(56, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
   add(57, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(58, viewport.includes("width=device-width") && viewport.includes("initial-scale=1"), viewport || "missing");
   add(59, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
   add(60, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
-  add(61, images.missingAlt === 0, `${images.missingAlt} images missing alt`);
-  add(62, page.$("img[src*='chart'],img[src*='graph'],img[src*='infographic'],img[src*='data']").toArray().every((el) => wordCount(page.$(el).attr("alt") ?? "") >= 50), "data image alt scan");
-  add(63, images.missingDimensions === 0, `${images.missingDimensions} images missing dimensions`);
-  add(64, page.$("img").slice(2).toArray().every((el) => page.$(el).attr("loading") === "lazy"), "below-fold approximation");
-  add(65, images.modernRatio >= 0.7, `${Math.round(images.modernRatio * 100)}% modern images`);
-  add(66, images.generic === 0, `${images.generic} generic filenames`);
+  add(61, pageImages.every((item) => item.missingAlt === 0), `${pageImages.reduce((sum, item) => sum + item.missingAlt, 0)} images missing alt`);
+  add(62, everyPage((p) => p.$("img[src*='chart'],img[src*='graph'],img[src*='infographic'],img[src*='data']").toArray().every((el) => wordCount(p.$(el).attr("alt") ?? "") >= 50)), pageCountEvidence);
+  add(63, pageImages.every((item) => item.missingDimensions === 0), `${pageImages.reduce((sum, item) => sum + item.missingDimensions, 0)} images missing dimensions`);
+  add(64, everyPage((p) => p.$("img").slice(2).toArray().every((el) => p.$(el).attr("loading") === "lazy")), pageCountEvidence);
+  add(65, pageImages.every((item) => item.modernRatio >= 0.7), pageCountEvidence);
+  add(66, pageImages.every((item) => item.generic === 0), `${pageImages.reduce((sum, item) => sum + item.generic, 0)} generic filenames`);
   add(67, Boolean(footerPrivacy), "footer privacy link");
   add(68, Boolean(footerTerms), "footer terms link");
   add(69, /\+?\d[\d\s().-]{7,}/.test(contactText) && /\b(street|road|avenue|lane|floor|city|india|usa|uk)\b/i.test(contactText), "contact NAP scan");
   add(70, aboutWords >= 200, `${aboutWords} about-page words`);
   add(71, /cookie/i.test(page.html), "cookie consent hint");
   add(72, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
-  add(73, headBlockingScripts === 0, `${headBlockingScripts} blocking scripts`);
-  add(74, page.$("head style").text().trim().length > 0, "head style block");
-  add(75, page.$("link[rel='preload'][as='image']").length > 0, "image preload link");
-  add(76, images.modernRatio >= 0.7, `${Math.round(images.modernRatio * 100)}% modern images`);
-  add(77, ld.blocks.length > 0, `${ld.blocks.length} JSON-LD blocks`);
-  add(78, ld.errors.length === 0, `${ld.errors.length} JSON-LD errors`);
-  add(79, contextsValid, "JSON-LD contexts checked");
+  add(73, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
+  add(74, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
+  add(75, somePage((p) => p.$("link[rel='preload'][as='image']").length > 0), pageCountEvidence);
+  add(76, pageImages.every((item) => item.modernRatio >= 0.7), pageCountEvidence);
+  add(77, pageLd.every((item) => item.blocks.length > 0), pageCountEvidence);
+  add(78, pageLd.every((item) => item.errors.length === 0), `${pageLd.reduce((sum, item) => sum + item.errors.length, 0)} JSON-LD errors`);
+  add(79, allLdBlocks.every((block) => {
+    const context = (block as Record<string, unknown>)?.["@context"];
+    return typeof context === "string" ? context.includes("schema.org") : true;
+  }), "JSON-LD contexts checked");
   add(80, hasSchemaType(ld.blocks, /Organization/), ldTypes.join(", ") || "none");
-  add(81, page.html.match(/"sameAs"\s*:\s*\[/) !== null && (page.html.match(/https?:\/\//g)?.length ?? 0) >= 4, "sameAs URL count approximation");
-  add(82, hasSchemaType(ld.blocks, /WebSite/) && /SearchAction/.test(page.html), "WebSite/SearchAction schema");
-  add(83, !samplePages.length || samplePages.every((p) => hasSchemaType(jsonLd(p).blocks, /BreadcrumbList/)), `${samplePages.length} interior pages sampled`);
-  add(84, !/blog|article/i.test(url.pathname) || hasSchemaType(ld.blocks, /Article|BlogPosting/), "blog/article schema conditional");
-  add(85, page.$("details, .faq, [class*='faq']").length < 1 || hasSchemaType(ld.blocks, /FAQPage/), "FAQ conditional");
-  add(86, !/how-to|how to/i.test(`${url.pathname} ${h1}`) || hasSchemaType(ld.blocks, /HowTo/), "HowTo conditional");
-  add(87, !/service/i.test(url.pathname) || hasSchemaType(ld.blocks, /LocalBusiness|ProfessionalService/), "LocalBusiness conditional");
-  add(88, !/author|team/i.test(url.pathname) || hasSchemaType(ld.blocks, /Person/), "Person schema conditional");
-  add(89, !/product|pricing/i.test(url.pathname) || hasSchemaType(ld.blocks, /Product/), "Product schema conditional");
-  add(90, !/"price"\s*:/.test(page.html) || /\$|₹|€|£|\bprice\b/i.test(page.$("body").text()), "price schema/DOM consistency hint");
-  add(91, ld.errors.length === 0, "Local rich-results fallback");
-  add(92, Boolean(page.$("meta[property='og:title']").attr("content")?.trim()), "og:title");
-  add(93, Boolean(page.$("meta[property='og:description']").attr("content")?.trim()), "og:description");
-  add(94, await fetch(absolute(url, page.$("meta[property='og:image']").attr("content") ?? ""), { method: "HEAD" }).then((r) => r.ok && /image/i.test(r.headers.get("content-type") ?? "")).catch(() => false), "og:image HEAD");
+  add(81, pages.some((p) => p.html.match(/"sameAs"\s*:\s*\[/) !== null && (p.html.match(/https?:\/\//g)?.length ?? 0) >= 4), pageCountEvidence);
+  add(82, hasSchemaType(allLdBlocks, /WebSite/) && pages.some((p) => /SearchAction/.test(p.html)), "WebSite/SearchAction schema");
+  add(83, !samplePages.length || samplePages.every((p) => hasSchemaType(jsonLd(p).blocks, /BreadcrumbList/)), `${samplePages.length} interior pages crawled`);
+  add(84, everyPage((p) => !/blog|article/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Article|BlogPosting/)), pageCountEvidence);
+  add(85, everyPage((p) => p.$("details, .faq, [class*='faq']").length < 1 || hasSchemaType(jsonLd(p).blocks, /FAQPage/)), pageCountEvidence);
+  add(86, everyPage((p) => !/how-to|how to/i.test(`${new URL(p.finalUrl).pathname} ${p.$("h1").first().text().trim()}`) || hasSchemaType(jsonLd(p).blocks, /HowTo/)), pageCountEvidence);
+  add(87, everyPage((p) => !/service/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/)), pageCountEvidence);
+  add(88, everyPage((p) => !/author|team/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Person/)), pageCountEvidence);
+  add(89, everyPage((p) => !/product|pricing/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Product/)), pageCountEvidence);
+  add(90, everyPage((p) => !/"price"\s*:/.test(p.html) || /\$|₹|€|£|\bprice\b/i.test(p.$("body").text())), pageCountEvidence);
+  add(91, pageLd.every((item) => item.errors.length === 0), "Local rich-results fallback");
+  add(92, everyPage((p) => Boolean(p.$("meta[property='og:title']").attr("content")?.trim())), pageCountEvidence);
+  add(93, everyPage((p) => Boolean(p.$("meta[property='og:description']").attr("content")?.trim())), pageCountEvidence);
+  add(94, await fetchImageHeadOk(absolute(url, page.$("meta[property='og:image']").attr("content") ?? "")), "og:image HEAD");
   add(95, ["twitter:card", "twitter:title", "twitter:description"].every((name) => page.$(`meta[name='${name}']`).attr("content")), "Twitter card tags");
-  add(96, links.length >= 3, `${links.length} internal links`);
-  add(97, links.every((link) => !GENERIC_ANCHORS.has(link.text)), "anchor text scanned");
-  add(98, true, "orphan detection requires indexed URL corpus; sitemap sample accepted");
-  add(99, true, "depth sampled from homepage and sitemap");
-  add(100, semanticCount >= 3, `${semanticCount} semantic elements`);
-  add(101, page.$("table").toArray().every((el) => page.$(el).find("caption").length > 0), "table captions");
-  add(102, page.$("time").toArray().every((el) => Boolean(page.$(el).attr("datetime"))), "time datetime attributes");
-  add(103, images.missingAlt === 0, `${images.missingAlt} images missing alt`);
-  add(104, page.$("button,input,select,textarea").toArray().every((el) => Boolean(page.$(el).text().trim() || page.$(el).attr("aria-label") || page.$(el).attr("aria-labelledby") || page.$(el).attr("placeholder"))), "interactive labels");
-  add(105, Boolean(page.$("html").attr("lang")), page.$("html").attr("lang") ?? "missing");
+  add(96, everyPage((p) => internalLinks(p, new URL(p.finalUrl)).length >= 3), pageCountEvidence);
+  add(97, allInternalLinks.every((link) => !GENERIC_ANCHORS.has(link.text)), "anchor text scanned");
+  add(98, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");
+  add(99, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
+  add(100, everyPage((p) => p.$("article,section,main,aside,header,footer").length >= 3), pageCountEvidence);
+  add(101, everyPage((p) => p.$("table").toArray().every((el) => p.$(el).find("caption").length > 0)), pageCountEvidence);
+  add(102, everyPage((p) => p.$("time").toArray().every((el) => Boolean(p.$(el).attr("datetime")))), pageCountEvidence);
+  add(103, pageImages.every((item) => item.missingAlt === 0), `${pageImages.reduce((sum, item) => sum + item.missingAlt, 0)} images missing alt`);
+  add(104, everyPage((p) => p.$("button,input,select,textarea").toArray().every((el) => Boolean(p.$(el).text().trim() || p.$(el).attr("aria-label") || p.$(el).attr("aria-labelledby") || p.$(el).attr("placeholder")))), pageCountEvidence);
+  add(105, everyPage((p) => Boolean(p.$("html").attr("lang"))), pageCountEvidence);
   add(106, !hasLanguageAlternates || hreflangs > 0, `${hreflangs} hreflang tags`);
-  add(107, page.wordCount >= (/blog|article/i.test(url.pathname) ? 800 : 300), `${page.wordCount} words`);
-  add(108, page.$("time[datetime]").length > 0 || /datePublished/.test(page.html), "published date");
-  add(109, /dateModified|last-modified/i.test(page.html) || page.headers.has("last-modified"), "modified date");
-  add(110, /author|byline|rel=.author.|itemprop=.author./i.test(page.html), "author hint");
-  add(111, page.$("a[href*='/author/'],a[href*='/team/']").length > 0, "author bio link");
-  add(112, outboundCount >= 2, `${outboundCount} outbound links`);
-  add(113, reviewSignals > 0 || reviewWords >= 2, `${reviewSignals} review/testimonial elements, ${reviewWords} review terms`);
+  add(107, everyPage((p) => p.wordCount >= (/blog|article/i.test(new URL(p.finalUrl).pathname) ? 800 : 300)), pageCountEvidence);
+  add(108, everyPage((p) => p.$("time[datetime]").length > 0 || /datePublished/.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
+  add(109, everyPage((p) => /dateModified|last-modified/i.test(p.html) || p.headers.has("last-modified") || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
+  add(110, everyPage((p) => /author|byline|rel=.author.|itemprop=.author./i.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
+  add(111, somePage((p) => p.$("a[href*='/author/'],a[href*='/team/']").length > 0), pageCountEvidence);
+  add(112, everyPage((p) => p.$("a[href]").toArray().filter((el) => {
+    const href = p.$(el).attr("href") ?? "";
+    return href.startsWith("http") && !sameOrigin(new URL(p.finalUrl), href);
+  }).length >= 2), pageCountEvidence);
+  add(113, pages.some((p) => p.$("[class*='review'],[class*='testimonial'],[id*='review'],[id*='testimonial']").length > 0 || ((p.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length >= 2)), pageCountEvidence);
   add(114, llms?.response.status === 200 && /text|plain/i.test(llms.response.headers.get("content-type") ?? ""), `Status ${llms?.response.status ?? "missing"}`);
 
   return scoreChecks(results);
