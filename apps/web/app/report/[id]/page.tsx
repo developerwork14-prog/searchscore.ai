@@ -2,9 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { PlaygroundResult, StructuredAiVisibilityReport } from "@aiva/core";
-import { Bot, CalendarCheck, ExternalLink, Link2, Send, Sparkles } from "lucide-react";
-import { getReport, runPlayground } from "@/lib/api";
+import type { StructuredAiVisibilityReport } from "@aiva/core";
+import { CalendarCheck, Download, ExternalLink, Link2, Sparkles } from "lucide-react";
+import { API_BASE, getReport, submitStrategyCall } from "@/lib/api";
 import { Button, Card } from "@/components/ui";
 
 function scoreColor(score: number) {
@@ -27,23 +27,29 @@ export default function ReportPage() {
   const params = useParams<{ id: string }>();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [playground, setPlayground] = useState<PlaygroundResult | null>(null);
-  const [isTesting, setIsTesting] = useState(false);
   const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo">("technical");
+  const [showStrategyForm, setShowStrategyForm] = useState(false);
+  const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
+  const [strategyStatus, setStrategyStatus] = useState("");
+  const [strategyForm, setStrategyForm] = useState({ name: "", email: "", phone: "" });
 
   useEffect(() => {
     getReport(params.id).then(setReport).catch((err) => setError(err instanceof Error ? err.message : "Report not found"));
   }, [params.id]);
 
-  async function onPromptSubmit(event: FormEvent) {
+  async function onStrategySubmit(event: FormEvent) {
     event.preventDefault();
-    if (!prompt.trim() || !report) return;
-    setIsTesting(true);
+    setIsSubmittingStrategy(true);
+    setStrategyStatus("");
     try {
-      setPlayground(await runPlayground(params.id, prompt));
+      const result = await submitStrategyCall({ reportId: params.id, ...strategyForm });
+      setStrategyStatus(result.message);
+      if (result.whatsappUrl) window.open(result.whatsappUrl, "_blank", "noopener,noreferrer");
+      if (result.mailtoUrl) window.setTimeout(() => { window.location.href = result.mailtoUrl; }, 250);
+    } catch (err) {
+      setStrategyStatus(err instanceof Error ? err.message : "Could not submit strategy call request");
     } finally {
-      setIsTesting(false);
+      setIsSubmittingStrategy(false);
     }
   }
 
@@ -73,6 +79,7 @@ export default function ReportPage() {
   };
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
+  const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
 
   return (
     <main className="app-shell min-h-screen px-5 py-6">
@@ -124,59 +131,6 @@ export default function ReportPage() {
           </div>
         </Card>
       </section>
-
-      {/* <section className="mb-6">
-        <Card className="p-6">
-          <div className="mb-4 flex items-center gap-2"><Bot className="size-5 text-teal" /><h2 className="text-xl font-black">AI Search Playground</h2></div>
-          <form onSubmit={onPromptSubmit} className="flex gap-2">
-            <input
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder={report.playground_questions[0] ?? `What does ${report.brand} offer?`}
-              className="min-h-11 flex-1 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
-            />
-            <Button disabled={isTesting}><Send className="size-4" /></Button>
-          </form>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            {report.playground_questions.map((example) => (
-              <button key={example} onClick={() => setPrompt(example)} className="rounded-md bg-mist px-2.5 py-1 font-bold text-teal transition hover:bg-teal hover:text-white">{example}</button>
-            ))}
-          </div>
-          {playground ? (
-            <div className="mt-5 rounded-md border border-black/10 bg-mist p-4 shadow-soft">
-              <Badge tone={playground.mentionStatus === "Mentioned" ? "good" : playground.mentionStatus === "Partially Mentioned" ? "warn" : "bad"}>{playground.mentionStatus}</Badge>
-              <p className="mt-3 text-sm text-ink/75">{playground.answer}</p>
-              <p className="mt-3 text-sm font-bold">Confidence Score: {playground.confidenceScore}%</p>
-            </div>
-          ) : null}
-        </Card>
-      </section> */}
-      {/* <section className="mb-6">
-        <Card className="p-6">
-          <div className="mb-4 flex items-center gap-2"><Bot className="size-5 text-teal" /><h2 className="text-xl font-black">AI Search Playground</h2></div>
-          <form onSubmit={onPromptSubmit} className="flex gap-2">
-            <input
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder={report.playground_questions[0] ?? `What does ${report.brand} offer?`}
-              className="min-h-11 flex-1 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
-            />
-            <Button disabled={isTesting}><Send className="size-4" /></Button>
-          </form>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            {report.playground_questions.map((example) => (
-              <button key={example} onClick={() => setPrompt(example)} className="rounded-md bg-mist px-2.5 py-1 font-bold text-teal transition hover:bg-teal hover:text-white">{example}</button>
-            ))}
-          </div>
-          {playground ? (
-            <div className="mt-5 rounded-md border border-black/10 bg-mist p-4 shadow-soft">
-              <Badge tone={playground.mentionStatus === "Mentioned" ? "good" : playground.mentionStatus === "Partially Mentioned" ? "warn" : "bad"}>{playground.mentionStatus}</Badge>
-              <p className="mt-3 text-sm text-ink/75">{playground.answer}</p>
-              <p className="mt-3 text-sm font-bold">Confidence Score: {playground.confidenceScore}%</p>
-            </div>
-          ) : null}
-        </Card>
-      </section> */}
 
       <section className="mb-6">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -281,9 +235,9 @@ export default function ReportPage() {
                   <li key={item}>✓ {item}</li>
                 ))}
               </ul>
-              <a href={`mailto:?subject=Full GEO / AEO Report for ${encodeURIComponent(report.brand)}`}>
+              <a href={pdfExportUrl} download>
                 <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral md:w-auto">
-                  <CalendarCheck className="size-4" />
+                  <Download className="size-4" />
                   Get My Full Report
                 </Button>
               </a>
@@ -319,17 +273,70 @@ export default function ReportPage() {
               <li key={item}>✓ {item}</li>
             ))}
           </ul>
-          <a href={`mailto:?subject=AI Visibility Consultation for ${encodeURIComponent(report.brand)}`}>
+          <a href={pdfExportUrl} download>
             <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral">
-              <CalendarCheck className="size-4" />
+              <Download className="size-4" />
               Get My Full Report
             </Button>
           </a>
-          <a className="mt-3 block text-center text-sm font-black text-mint transition hover:text-white" href={`mailto:?subject=Strategy Call for ${encodeURIComponent(report.brand)}`}>
+          <button
+            type="button"
+            onClick={() => setShowStrategyForm(true)}
+            className="mt-3 block w-full text-center text-sm font-black text-mint transition hover:text-white"
+          >
             Schedule Strategy Call
-          </a>
+          </button>
         </Card>
       </section>
+
+      {showStrategyForm ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/60 px-5 py-8">
+          <Card className="w-full max-w-lg p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase text-teal">Strategy Call</p>
+                <h2 className="mt-2 text-2xl font-black">Schedule Strategy Call</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStrategyForm(false)}
+                className="rounded-md bg-mist px-3 py-2 text-sm font-black text-ink/60 transition hover:bg-ink hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <form onSubmit={onStrategySubmit} className="mt-6 grid gap-4">
+              <input
+                required
+                value={strategyForm.name}
+                onChange={(event) => setStrategyForm((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Name"
+                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+              />
+              <input
+                required
+                type="email"
+                value={strategyForm.email}
+                onChange={(event) => setStrategyForm((current) => ({ ...current, email: event.target.value }))}
+                placeholder="Email"
+                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+              />
+              <input
+                required
+                value={strategyForm.phone}
+                onChange={(event) => setStrategyForm((current) => ({ ...current, phone: event.target.value }))}
+                placeholder="Phone"
+                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+              />
+              <Button disabled={isSubmittingStrategy} className="w-full bg-teal text-white hover:bg-coral">
+                <CalendarCheck className="size-4" />
+                {isSubmittingStrategy ? "Submitting..." : "Submit Request"}
+              </Button>
+              {strategyStatus ? <p className="text-sm font-semibold text-ink/65">{strategyStatus}</p> : null}
+            </form>
+          </Card>
+        </div>
+      ) : null}
       </div>
     </main>
   );
