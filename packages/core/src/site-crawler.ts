@@ -25,6 +25,7 @@ interface CrawlOptions {
   maxDepth?: number;
   timeoutMs?: number;
   concurrency?: number;
+  maxSitemapFiles?: number;
 }
 
 function wordCount(text: string) {
@@ -115,13 +116,13 @@ function internalLinks(page: CrawledPage, root: URL) {
     .filter((href) => !/\.(pdf|jpg|jpeg|png|gif|webp|avif|svg|zip|docx?|xlsx?|pptx?|mp4|mov)(\?|$)/i.test(href));
 }
 
-async function sitemapUrls(origin: string, timeoutMs: number) {
+async function sitemapUrls(origin: string, timeoutMs: number, maxSitemapFiles: number) {
   const robots = await fetchText(`${origin}/robots.txt`, timeoutMs).catch(() => null);
   const declared = [...(robots?.text.matchAll(/^sitemap:\s*(.+)$/gim) ?? [])].map((match) => match[1].trim());
   const sitemapCandidates = declared.length ? declared : [`${origin}/sitemap.xml`];
   const urls = new Set<string>();
 
-  for (const sitemap of sitemapCandidates.slice(0, 5)) {
+  for (const sitemap of sitemapCandidates.slice(0, maxSitemapFiles)) {
     const fetched = await fetchText(sitemap, timeoutMs).catch(() => null);
     if (!fetched?.response.ok || !fetched.text.trim()) continue;
     const $ = cheerio.load(fetched.text, { xmlMode: true });
@@ -143,11 +144,12 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
   const maxDepth = options.maxDepth ?? 5;
   const timeoutMs = options.timeoutMs ?? 7000;
   const concurrency = options.concurrency ?? 6;
+  const maxSitemapFiles = options.maxSitemapFiles ?? 2;
   const root = new URL(normalizeUrl(inputUrl));
   const origin = `${root.protocol}//${root.host}`;
   const seen = new Set<string>();
   const pages: CrawledPage[] = [];
-  const sitemap = (await sitemapUrls(origin, timeoutMs)).filter((href) => sameOrigin(root, href));
+  const sitemap = (await sitemapUrls(origin, timeoutMs, maxSitemapFiles)).filter((href) => sameOrigin(root, href));
   const queue: Array<{ url: string; depth: number; source: CrawledPage["source"] }> = [
     { url: canonicalize(root.toString()), depth: 0, source: "homepage" },
     ...sitemap.map((url) => ({ url, depth: 1, source: "sitemap" as const }))

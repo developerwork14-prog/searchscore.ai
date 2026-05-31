@@ -279,8 +279,8 @@ async function fetchText(url: string, init: RequestInit = {}, timeoutMs = 9000) 
   }
 }
 
-async function fetchPage(url: string): Promise<FetchedPage> {
-  const { response, text, responseTimeMs } = await fetchText(url);
+async function fetchPage(url: string, timeoutMs = 9000): Promise<FetchedPage> {
+  const { response, text, responseTimeMs } = await fetchText(url, {}, timeoutMs);
   const $ = cheerio.load(text);
   return {
     url,
@@ -295,7 +295,7 @@ async function fetchPage(url: string): Promise<FetchedPage> {
   };
 }
 
-async function fetchHeadOk(url: string, timeoutMs = 3500) {
+async function fetchHeadOk(url: string, timeoutMs = 1800) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -308,7 +308,7 @@ async function fetchHeadOk(url: string, timeoutMs = 3500) {
   }
 }
 
-async function fetchImageHeadOk(url: string, timeoutMs = 3500) {
+async function fetchImageHeadOk(url: string, timeoutMs = 1800) {
   if (!url) return false;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -325,7 +325,7 @@ async function fetchImageHeadOk(url: string, timeoutMs = 3500) {
 async function sslValid(url: URL) {
   if (url.protocol !== "https:") return false;
   return new Promise<boolean>((resolve) => {
-    const socket = tls.connect({ host: url.hostname, port: 443, servername: url.hostname, timeout: 6000 }, () => {
+    const socket = tls.connect({ host: url.hostname, port: 443, servername: url.hostname, timeout: 2500 }, () => {
       const cert = socket.getPeerCertificate();
       const validTo = cert.valid_to ? Date.parse(cert.valid_to) : 0;
       socket.end();
@@ -430,22 +430,22 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const url = new URL(normalizeUrl(inputUrl));
   let page: FetchedPage;
   try {
-    page = await fetchPage(url.toString());
+    page = await fetchPage(url.toString(), 3500);
   } catch (error) {
     const checks = CHECKS.map((check) => pass(check, check.severity === "ADVISORY", `Fetch failed: ${error instanceof Error ? error.message : "unknown error"}`));
     return scoreChecks(checks);
   }
 
   const origin = `${url.protocol}//${url.host}`;
-  const robots = await fetchText(`${origin}/robots.txt`, {}, 4500).catch(() => null);
+  const robots = await fetchText(`${origin}/robots.txt`, {}, 2500).catch(() => null);
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
   const [sitemap, aiSitemap, llms, psi, crux, crawled] = await Promise.all([
-    fetchText(sitemapUrl, {}, 4500).catch(() => null),
-    fetchText(`${origin}/ai-sitemap.xml`, {}, 3500).catch(() => null),
-    fetchText(`${origin}/llms.txt`, {}, 3500).catch(() => null),
+    fetchText(sitemapUrl, {}, 2500).catch(() => null),
+    fetchText(`${origin}/ai-sitemap.xml`, {}, 1800).catch(() => null),
+    fetchText(`${origin}/llms.txt`, {}, 1800).catch(() => null),
     fetchPageSpeedInsights(page.finalUrl),
     fetchCrux(page.finalUrl),
-    crawlSite(url.toString(), { maxPages: 50, maxDepth: 3, timeoutMs: 4000, concurrency: 8 })
+    crawlSite(url.toString(), { maxPages: 8, maxDepth: 2, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
   const sitemap$ = sitemap?.text ? cheerio.load(sitemap.text, { xmlMode: true }) : null;
   const pages = (crawled.pages.length ? crawled.pages : [page]) as FetchedPage[];
@@ -489,8 +489,8 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const duplicateDescriptions = new Set(descriptions).size !== descriptions.length;
   const hreflangs = page.$("link[rel='alternate'][hreflang]").length;
   const hasLanguageAlternates = page.html.match(/\/(en|hi|fr|es|de|ar)\//i) !== null || hreflangs > 0;
-  const aboutWords = aboutLink ? await fetchPage(absolute(url, page.$(aboutLink).attr("href") ?? "")).then((p) => p.wordCount).catch(() => 0) : 0;
-  const contactText = contactLink ? await fetchPage(absolute(url, page.$(contactLink).attr("href") ?? "")).then((p) => p.$("body").text()).catch(() => "") : "";
+  const aboutWords = aboutLink ? await fetchPage(absolute(url, page.$(aboutLink).attr("href") ?? ""), 2000).then((p) => p.wordCount).catch(() => 0) : 0;
+  const contactText = contactLink ? await fetchPage(absolute(url, page.$(contactLink).attr("href") ?? ""), 2000).then((p) => p.$("body").text()).catch(() => "") : "";
   const reviewSignals = page.$("[class*='review'],[class*='testimonial'],[id*='review'],[id*='testimonial']").length;
   const reviewWords = (page.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length;
   const everyPage = (predicate: (p: FetchedPage) => boolean) => pages.every(predicate);
@@ -506,7 +506,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(4, page.headers.has("strict-transport-security"), page.headers.get("strict-transport-security") ?? "missing");
   add(5, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
   add(6, !(page.headers.get("x-robots-tag") ?? "").toLowerCase().includes("noindex"), page.headers.get("x-robots-tag") ?? "none");
-  add(7, await fetchText(`${url.protocol}//www.${url.hostname.replace(/^www\./, "")}`, { method: "GET" }, 5000).then((r) => r.response.redirected || r.response.status === 200).catch(() => true), "www variant checked");
+  add(7, await fetchText(`${url.protocol}//www.${url.hostname.replace(/^www\./, "")}`, { method: "GET" }, 1800).then((r) => r.response.redirected || r.response.status === 200).catch(() => true), "www variant checked");
   add(8, url.protocol !== "https:" || page.$("[src^='http://'],[href^='http://']").length === 0, "HTTP assets/links on HTTPS page");
   add(9, page.responseTimeMs < 800, `${page.responseTimeMs}ms`);
   add(10, robots?.response.status === 200 && /text|plain/i.test(robots.response.headers.get("content-type") ?? ""), `Status ${robots?.response.status ?? "missing"}`);
@@ -568,13 +568,13 @@ add(26, headingPassRate("hierarchyOk") >= 0.7, `${Math.round(headingPassRate("hi
     const resolved = value ? absolute(new URL(p.finalUrl), value) : "";
     return Boolean(resolved) && new URL(resolved).pathname.replace(/\/$/, "") === new URL(p.finalUrl).pathname.replace(/\/$/, "");
   }), pageCountEvidence);
-  add(29, !canonicalAbs || await fetchPage(canonicalAbs).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
+  add(29, !canonicalAbs || await fetchPage(canonicalAbs, 1800).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
   add(30, !/[?&]page=|\/page\//i.test(url.toString()) || page.$("link[rel='next'],link[rel='prev']").length > 0, "pagination signal");
-  add(31, await fetchText(url.toString().endsWith("/") ? url.toString().slice(0, -1) : `${url.toString()}/`, {}, 5000).then((r) => r.response.redirected || r.response.status !== 200 || r.text === page.html).catch(() => true), "slash variant checked");
+  add(31, await fetchText(url.toString().endsWith("/") ? url.toString().slice(0, -1) : `${url.toString()}/`, {}, 1800).then((r) => r.response.redirected || r.response.status !== 200 || r.text === page.html).catch(() => true), "slash variant checked");
   add(32, everyPage(robotsContentAllowsIndex), pageCountEvidence);
   add(33, everyPage((p) => !metaRobots(p).includes("nosnippet") && !metaRobots(p).includes("max-snippet:0")), pageCountEvidence);
   add(34, everyPage((p) => p.wordCount >= 50), pageCountEvidence);
-  add(35, (await Promise.all(allInternalLinks.slice(0, 30).map((link) => fetchHeadOk(link.href)))).every(Boolean), `${allInternalLinks.length} internal links found`);
+  add(35, (await Promise.all(allInternalLinks.slice(0, 10).map((link) => fetchHeadOk(link.href)))).every(Boolean), `${allInternalLinks.length} internal links found`);
   add(36, page.redirectHops <= 1, `${page.redirectHops} redirect hops`);
   add(37, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
   add(38, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");

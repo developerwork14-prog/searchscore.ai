@@ -189,7 +189,7 @@ async function fetchLikelyLocalPageEntries(origin: string): Promise<LocalPageHtm
 
   const fetched = await Promise.all(pages.map(async ([path, source]) => {
     try {
-      const { response, text } = await fetchText(`${origin}${path}`, 5000);
+      const { response, text } = await fetchText(`${origin}${path}`, 2000);
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return null;
       return { source, html: text } satisfies LocalPageHtml;
@@ -481,12 +481,12 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const normalizedUrl = normalizeUrl(inputUrl);
   const url = new URL(normalizedUrl);
   const origin = `${url.protocol}//${url.host}`;
-  const pageHtml = html ?? await fetchText(normalizedUrl).then((result) => result.text).catch(() => "");
+  const pageHtml = html ?? await fetchText(normalizedUrl, 3000).then((result) => result.text).catch(() => "");
   const [robots, llms, localPages, crawled] = await Promise.all([
-    fetchText(`${origin}/robots.txt`, 4500).catch(() => null),
-    fetchText(`${origin}/llms.txt`, 3500).catch(() => null),
+    fetchText(`${origin}/robots.txt`, 2500).catch(() => null),
+    fetchText(`${origin}/llms.txt`, 1800).catch(() => null),
     fetchLikelyLocalPageEntries(origin),
-    crawlSite(normalizedUrl, { maxPages: 50, maxDepth: 3, timeoutMs: 4000, concurrency: 8 })
+    crawlSite(normalizedUrl, { maxPages: 8, maxDepth: 2, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
     source: page.source === "homepage" ? "homepage" : page.source === "sitemap" ? "sitemap page" : "internal page",
