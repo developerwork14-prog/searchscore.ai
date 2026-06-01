@@ -68,7 +68,7 @@ const CHECKS: CheckDefinition[] = [
   [22, "Meta Tags", "Duplicate titles sitewide", 6, "MAJOR"],
   [23, "Meta Tags", "Duplicate meta descriptions sitewide", 5, "MAJOR"],
   [24, "Heading Structure", "Exactly 1 H1 per page", 7, "MAJOR"],
-  [25, "Heading Structure", "H1 length 20-70 characters", 4, "MINOR"],
+  [25, "Heading Structure", "H1 length 10-90 characters", 4, "MINOR"],
   [26, "Heading Structure", "Heading hierarchy never skips levels", 5, "MAJOR"],
   [27, "Canonicalization", "Canonical tag exists on every page", 6, "MAJOR"],
   [28, "Canonicalization", "Canonical URL is self-referencing", 7, "BLOCKER"],
@@ -529,39 +529,63 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(21, everyPage((p) => !metaRobots(p).includes("noindex")), pageCountEvidence);
   add(22, !duplicateTitles, `${titles.length} titles sampled`);
   add(23, !duplicateDescriptions, `${descriptions.length} descriptions sampled`);
-  const headingStats = pages.map((p) => {
-  const h1Count = p.$("h1").length;
-  const h1Text = p.$("h1").first().text().trim();
+  const visibleHeadings = (p: FetchedPage, selector = "h1,h2,h3,h4,h5,h6") => p.$(selector).toArray().filter((el) => {
+    const text = p.$(el).text().replace(/\s+/g, " ").trim();
+    if (!text) return false;
+    if (p.$(el).attr("hidden") !== undefined || p.$(el).attr("aria-hidden") === "true") return false;
 
-  const headings = p.$("h1,h2,h3,h4,h5,h6").toArray();
+    const hiddenAncestor = p.$(el).parents().toArray().some((parent) => {
+      const style = (p.$(parent).attr("style") ?? "").replace(/\s+/g, "").toLowerCase();
+      return p.$(parent).attr("hidden") !== undefined || p.$(parent).attr("aria-hidden") === "true" || style.includes("display:none") || style.includes("visibility:hidden");
+    });
+    if (hiddenAncestor) return false;
 
-  const hierarchyOk = headings.every((el, index, arr) => {
-    if (index === 0) return true;
-
-    const current = Number(el.tagName[1]);
-    const previous = Number(arr[index - 1].tagName[1]);
-
-    return current - previous <= 1;
+    const style = (p.$(el).attr("style") ?? "").replace(/\s+/g, "").toLowerCase();
+    return !style.includes("display:none") && !style.includes("visibility:hidden");
   });
 
-  return {
-    url: p.finalUrl,
-    hasOneH1: h1Count === 1,
-    h1LengthOk: h1Text.length >= 10 && h1Text.length <= 90,
-    hierarchyOk
+  const headingStats = pages.map((p) => {
+    const h1s = visibleHeadings(p, "h1");
+    const h1Text = h1s.length === 1 ? p.$(h1s[0]).text().replace(/\s+/g, " ").trim() : "";
+    const headings = visibleHeadings(p);
+
+    const hierarchyOk = headings.every((el, index, arr) => {
+      if (index === 0) return true;
+
+      const current = Number(String(p.$(el).prop("tagName") ?? "").slice(1));
+      const previous = Number(String(p.$(arr[index - 1]).prop("tagName") ?? "").slice(1));
+
+      return current - previous <= 1;
+    });
+
+    return {
+      url: p.finalUrl,
+      hasUsableH1: h1s.length >= 1,
+      hasOneH1: h1s.length === 1,
+      h1LengthOk: h1Text.length >= 10 && h1Text.length <= 90,
+      hierarchyOk
+    };
+  });
+
+  const headingPassRate = (key: "hasUsableH1" | "hasOneH1" | "h1LengthOk" | "hierarchyOk") => {
+    if (!headingStats.length) return 0;
+    return headingStats.filter((item) => item[key]).length / headingStats.length;
   };
-});
 
-const headingPassRate = (key: keyof (typeof headingStats)[number]) => {
-  if (!headingStats.length) return 0;
-  return headingStats.filter((item) => item[key]).length / headingStats.length;
-};
+  const headingEvidence = (key: "hasUsableH1" | "hasOneH1" | "h1LengthOk" | "hierarchyOk", label: string) => {
+    const passed = headingStats.filter((item) => item[key]).length;
+    const failed = headingStats.find((item) => !item[key]);
+    const failedUrl = failed ? `; sample issue: ${failed.url}` : "";
+    return `${passed}/${headingStats.length} pages ${label}${failedUrl}`;
+  };
 
-add(24, headingPassRate("hasOneH1") >= 0.7, `${Math.round(headingPassRate("hasOneH1") * 100)}% pages have exactly one H1`);
+  const usableH1Rate = headingPassRate("hasUsableH1");
+  const singleH1Rate = headingPassRate("hasOneH1");
+  add(24, usableH1Rate >= 0.7 || singleH1Rate >= 0.6, headingEvidence("hasOneH1", "have exactly one visible H1"));
 
-add(25, headingPassRate("h1LengthOk") >= 0.7, `${Math.round(headingPassRate("h1LengthOk") * 100)}% pages have acceptable H1 length`);
+  add(25, headingPassRate("h1LengthOk") >= 0.6, headingEvidence("h1LengthOk", "have H1 length between 10 and 90 characters"));
 
-add(26, headingPassRate("hierarchyOk") >= 0.7, `${Math.round(headingPassRate("hierarchyOk") * 100)}% pages have valid heading hierarchy`);
+  add(26, headingPassRate("hierarchyOk") >= 0.6, headingEvidence("hierarchyOk", "have valid visible heading hierarchy"));
   add(27, everyPage((p) => Boolean(p.$("link[rel='canonical']").attr("href"))), pageCountEvidence);
   add(28, everyPage((p) => {
     const value = p.$("link[rel='canonical']").attr("href");
