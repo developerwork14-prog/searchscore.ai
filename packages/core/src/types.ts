@@ -156,6 +156,17 @@ export interface PublicTechnicalAudit {
   score: number;
   grade: GeoAeoGrade;
   issues_found: number;
+  category_debug?: {
+    category: string;
+    totalChecks: number;
+    passedChecks: number;
+    failedChecks: number;
+    failedCheckDetails: {
+      id: number;
+      name: string;
+      evidence: string;
+    }[];
+  }[];
 }
 
 export interface RiskAssessment {
@@ -177,6 +188,7 @@ export interface AiVisibilityReport {
   leadMetrics: LeadGenerationMetric[];
   visibilityIssueSummary: VisibilityIssueSummary;
   technicalCategorySummaries: TechnicalCategorySummary[];
+  technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
   geoAeoAudit: GeoAeoAuditResult;
   visibilityOpportunities: string[];
   aiMarketPosition?: AiMarketPosition;

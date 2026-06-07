@@ -28,7 +28,7 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo">("technical");
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation">("technical");
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -78,6 +78,8 @@ export default function ReportPage() {
     opportunity_counts: { high: 0, medium: 0, low: 0 },
     categories: []
   };
+  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation");
+  const citationCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "ChatGPT Citation");
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
@@ -149,6 +151,12 @@ export default function ReportPage() {
             >
               GEO / AEO Audit
             </button>
+            <button
+              onClick={() => setActiveAuditTab("citation")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "citation" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              ChatGPT Citation
+            </button>
           </div>
         </div>
 
@@ -185,7 +193,7 @@ export default function ReportPage() {
               );
             })}
           </div>
-        ) : (
+        ) : activeAuditTab === "geo" ? (
           <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
             <Card className="overflow-hidden">
               <div className="bg-ink p-6 text-white">
@@ -201,7 +209,7 @@ export default function ReportPage() {
             </Card>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {geoAeoAudit.categories.map((category) => (
+              {geoCategories.map((category) => (
                 <Card key={category.categoryName} className="p-5">
                   <div className="flex min-h-16 items-start justify-between gap-3">
                     <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
@@ -243,6 +251,35 @@ export default function ReportPage() {
                 </Button>
               </a>
             </Card>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {citationCategories.map((category) => (
+              <Card key={category.categoryName} className="p-5">
+                <div className="flex min-h-16 items-start justify-between gap-3">
+                  <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                  <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
+                </div>
+                <div className="mt-5 grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                    <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                    <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                    <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
+                  </div>
+                </div>
+                <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                  <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                  <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
+                </div>
+              </Card>
+            ))}
           </div>
         )}
       </section>

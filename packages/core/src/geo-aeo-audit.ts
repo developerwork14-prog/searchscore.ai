@@ -86,7 +86,36 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 34, category: "AI Crawlability", name: "Data point density", severity: "MAJOR", scope: "page" },
   { id: 35, category: "Structured Data Integrity", name: "FAQ schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 36, category: "Structured Data Integrity", name: "Product schema-DOM match", severity: "BLOCKER", scope: "page" },
-  { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" }
+  { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" },
+  { id: 38, category: "ChatGPT Citation", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 39, category: "ChatGPT Citation", name: "ChatGPT-User allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 40, category: "ChatGPT Citation", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
+  { id: 41, category: "ChatGPT Citation", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
+  { id: 42, category: "ChatGPT Citation", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
+  { id: 43, category: "ChatGPT Citation", name: "H2 chain-of-thought sequence", severity: "MINOR", scope: "page" },
+  { id: 44, category: "ChatGPT Citation", name: "Multi-turn follow-up coverage", severity: "MAJOR", scope: "page" },
+  { id: 45, category: "ChatGPT Citation", name: "Next steps section", severity: "MINOR", scope: "page" },
+  { id: 46, category: "ChatGPT Citation", name: "Conversational readability", severity: "MINOR", scope: "page" },
+  { id: 47, category: "ChatGPT Citation", name: "Comparison/vs page detection", severity: "MINOR", scope: "domain" },
+  { id: 48, category: "ChatGPT Citation", name: "Best-of roundup detection", severity: "MINOR", scope: "domain" },
+  { id: 49, category: "ChatGPT Citation", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
+  { id: 50, category: "ChatGPT Citation", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
+  { id: 51, category: "ChatGPT Citation", name: "Feature-to-JTBD mapping", severity: "MAJOR", scope: "page" },
+  { id: 52, category: "ChatGPT Citation", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
+  { id: 53, category: "ChatGPT Citation", name: "Review volume and freshness", severity: "MAJOR", scope: "domain" },
+  { id: 54, category: "ChatGPT Citation", name: "Review diversity check", severity: "MINOR", scope: "domain" },
+  { id: 55, category: "ChatGPT Citation", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
+  { id: 56, category: "ChatGPT Citation", name: "Product comparison pages", severity: "MINOR", scope: "domain" },
+  { id: 57, category: "ChatGPT Citation", name: "Alternatives-to pages", severity: "MINOR", scope: "domain" },
+  { id: 58, category: "ChatGPT Citation", name: "Negative constraint section", severity: "MINOR", scope: "page" },
+  { id: 59, category: "ChatGPT Citation", name: "Hallucination resistance", severity: "MAJOR", scope: "page" },
+  { id: 60, category: "ChatGPT Citation", name: "Extractability score", severity: "MAJOR", scope: "page" },
+  { id: 61, category: "ChatGPT Citation", name: "Content depth for intent", severity: "MAJOR", scope: "page" },
+  { id: 62, category: "ChatGPT Citation", name: "Fact density per 100 words", severity: "MINOR", scope: "page" },
+  { id: 63, category: "ChatGPT Citation", name: "Evidence density", severity: "MINOR", scope: "page" },
+  { id: 64, category: "ChatGPT Citation", name: "Primary-source classification", severity: "MINOR", scope: "page" },
+  { id: 65, category: "ChatGPT Citation", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
+  { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" }
 ];
 
 const CATEGORY_ORDER = [
@@ -97,7 +126,8 @@ const CATEGORY_ORDER = [
   "Content Authority",
   "Local GEO Signals",
   "AI Crawlability",
-  "Structured Data Integrity"
+  "Structured Data Integrity",
+  "ChatGPT Citation"
 ];
 
 const CATEGORY_WEIGHTS: Record<string, number> = {
@@ -108,7 +138,8 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "Content Authority": 10,
   "Local GEO Signals": 15,
   "AI Crawlability": 5,
-  "Structured Data Integrity": 5
+  "Structured Data Integrity": 5,
+  "ChatGPT Citation": 15
 };
 
 function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
@@ -152,6 +183,22 @@ async function fetchText(url: string, timeoutMs = 9000) {
       redirect: "follow",
       signal: controller.signal,
       headers: { "user-agent": "AIVisibilityAnalyzer/1.0", accept: "text/plain,text/markdown,text/html,*/*" }
+    });
+    const text = await response.text().catch(() => "");
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTextWithUserAgent(url: string, userAgent: string, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "user-agent": userAgent, accept: "text/html,text/plain,*/*" }
     });
     const text = await response.text().catch(() => "");
     return { response, text };
@@ -438,6 +485,60 @@ function robotGroupAllows(robotsText: string, bot: string) {
   });
 }
 
+function robotGroupFor(robotsText: string, bot: string) {
+  return robotsText
+    .split(/\n(?=user-agent\s*:)/i)
+    .map((group) => group.trim())
+    .find((group) => [...group.matchAll(/^user-agent\s*:\s*(.+)$/gim)].some((match) => match[1].trim().toLowerCase() === bot.toLowerCase())) ?? "";
+}
+
+function challengeDetected(status: number, text: string) {
+  return status === 403 || status === 503 || /\b(captcha|cloudflare|access denied|blocked|verify you are human|security check|challenge)\b/i.test(text);
+}
+
+function h2Texts($: cheerio.CheerioAPI) {
+  return $("h2").toArray().map((el) => $(el).text().trim()).filter(Boolean);
+}
+
+function headingUrlSignals(pages: LocalPageHtml[], url: URL, pattern: RegExp) {
+  const pageSignals = pages.filter((page) => {
+    const page$ = cheerio.load(page.html);
+    const headings = page$("h1,h2").toArray().map((el) => page$(el).text()).join(" ");
+    return pattern.test(`${page.source} ${headings}`);
+  }).length;
+  return pattern.test(url.pathname) || pageSignals > 0;
+}
+
+function fleschReadingEase(text: string) {
+  const sentences = Math.max((text.match(/[.!?]+/g) ?? []).length, 1);
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const syllables = words.reduce((sum, word) => {
+    const clean = word.toLowerCase().replace(/[^a-z]/g, "");
+    const groups = clean.match(/[aeiouy]+/g)?.length ?? 1;
+    return sum + Math.max(1, groups - (clean.endsWith("e") ? 1 : 0));
+  }, 0);
+  return 206.835 - 1.015 * (words.length / sentences) - 84.6 * (syllables / Math.max(words.length, 1));
+}
+
+function standaloneH2Sections($: cheerio.CheerioAPI) {
+  const headings = $("h2").toArray();
+  return headings.map((heading) => {
+    const title = $(heading).text().trim();
+    let text = "";
+    let node = $(heading).next();
+    while (node.length && node.get(0)?.tagName?.toLowerCase() !== "h2") {
+      text += ` ${node.text()}`;
+      node = node.next();
+    }
+    const words = wordCount(text);
+    return { title, words, answerLike: words >= 40 && /\b(is|are|means|includes|helps|use|should|can|will|because|for example)\b/i.test(text) };
+  });
+}
+
+function productSchemaComplete(records: Record<string, unknown>[]) {
+  return records.some((record) => Boolean(record.name && (record.offers || record.aggregateRating || record.review)));
+}
+
 function addCheck(results: GeoAeoCheckResult[], id: number, passed: boolean, evidence: string) {
   const def = CHECKS.find((check) => check.id === id);
   if (!def) return;
@@ -486,8 +587,9 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     fetchText(`${origin}/robots.txt`, 2500).catch(() => null),
     fetchText(`${origin}/llms.txt`, 1800).catch(() => null),
     fetchLikelyLocalPageEntries(origin),
-    crawlSite(normalizedUrl, { maxPages: 8, maxDepth: 2, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
+    crawlSite(normalizedUrl, { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
+  const oaiPage = await fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 3000).catch(() => null);
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
     source: page.source === "homepage" ? "homepage" : page.source === "sitemap" ? "sitemap page" : "internal page",
     html: page.html
@@ -519,6 +621,23 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const localEvidence = localGeoEvidence(localGeoPages);
   const productObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /Product/i.test(type)));
   const faqObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /FAQPage/i.test(type)));
+  const robotsText = robots?.text ?? "";
+  const h2s = h2Texts($);
+  const h2Progression = ["what", "why", "how", "benefit", "comparison|compare|vs", "faq|question", "next|action"].filter((pattern) => h2s.some((text) => new RegExp(pattern, "i").test(text)));
+  const followUpSections = ["pricing", "comparison|compare|vs", "alternatives?", "setup", "implementation", "faq|questions"].filter((pattern) => new RegExp(pattern, "i").test(`${bodyText} ${h2s.join(" ")}`));
+  const readability = fleschReadingEase(bodyText);
+  const sectionScores = standaloneH2Sections($);
+  const extractableSections = sectionScores.filter((section) => section.answerLike).length;
+  const factCount = (bodyText.match(/\b\d+(?:\.\d+)?%|\b\d{4}\b|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) ?? []).length;
+  const factDensity = wordCount(bodyText) ? (factCount / wordCount(bodyText)) * 100 : 0;
+  const evidenceSignals = $("a[href^='http'], cite, blockquote").length + (bodyText.match(/\b(source|reference|according to|study|report|research)\b/gi) ?? []).length;
+  const reviewSignals = (bodyText.match(/\b(review|reviews|rating|ratings|testimonial|testimonials)\b/gi) ?? []).length;
+  const freshReviewSignals = (bodyText.match(/\b(2024|2025|2026|recent|latest|verified)\b/gi) ?? []).length;
+  const reviewSourceSignals = ["google", "trustpilot", "g2", "capterra", "facebook", "yelp"].filter((source) => lowerBody.includes(source)).length;
+  const nosnippet = /nosnippet|max-snippet:0/i.test(`${pageHtml} ${oaiPage?.response.headers.get("x-robots-tag") ?? ""}`) || $("[data-nosnippet]").length > 0;
+  const oaiWords = wordCount(cheerio.load(oaiPage?.text ?? "")("body").text());
+  const rawWords = wordCount(bodyText);
+  const oaiNotChallenged = oaiPage ? !challengeDetected(oaiPage.response.status, oaiPage.text) : false;
   const result: GeoAeoCheckResult[] = [];
 
   [
@@ -604,6 +723,35 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     return !productName || lowerBody.includes(productName);
   }), "Product schema-DOM consistency scan");
   addCheck(result, 37, jsonLd.errors.length === 0, `${jsonLd.errors.length} JSON-LD errors`);
+  addCheck(result, 38, robotGroupAllows(robotsText, "OAI-SearchBot"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
+  addCheck(result, 39, robotGroupAllows(robotsText, "ChatGPT-User"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
+  addCheck(result, 40, robotGroupAllows(robotsText, "OAI-SearchBot") && robotGroupAllows(robotsText, "ChatGPT-User"), robotGroupFor(robotsText, "GPTBot") ? "GPTBot group checked against OAI agents" : "No explicit GPTBot group");
+  addCheck(result, 41, oaiNotChallenged, oaiPage ? `OAI-SearchBot status ${oaiPage.response.status}` : "OAI-SearchBot request failed");
+  addCheck(result, 42, oaiWords >= Math.round(rawWords * 0.8), `${oaiWords}/${rawWords} words visible to OAI-SearchBot`);
+  addCheck(result, 43, h2Progression.length >= 4, `${h2Progression.length}/7 logical H2 stages detected`);
+  addCheck(result, 44, followUpSections.length >= 3, `${followUpSections.length}/6 follow-up sections detected`);
+  addCheck(result, 45, /\b(related questions|next steps|what to do next|recommended actions)\b/i.test(bodyText), "next-step language scan");
+  addCheck(result, 46, readability >= 50 && readability <= 80, `Flesch Reading Ease ${Math.round(readability)}`);
+  addCheck(result, 47, headingUrlSignals(sitePages, url, /\b(vs|versus|compare|comparison)\b/i), "URL/H1/H2 comparison scan");
+  addCheck(result, 48, headingUrlSignals(sitePages, url, /\b(best|top|roundup|list)\b/i), "URL/H1/H2 best-of scan");
+  addCheck(result, 49, headingUrlSignals(sitePages, url, /\balternatives?\b/i), "URL/H1/H2 alternatives scan");
+  addCheck(result, 50, headingUrlSignals(sitePages, url, /\b(use case|for [a-z ]+|solutions? for|industry)\b/i), "URL/H1/H2 use-case scan");
+  addCheck(result, 51, /\b(feature|capability|workflow|job to be done|JTBD|use case|outcome|helps you)\b/i.test(bodyText), "feature-to-outcome language scan");
+  addCheck(result, 52, !productObjects.length || productSchemaComplete(productObjects), productObjects.length ? `${productObjects.length} Product schema objects` : "No Product schema required");
+  addCheck(result, 53, reviewSignals >= 3 && freshReviewSignals >= 1, `${reviewSignals} review signals, ${freshReviewSignals} freshness signals`);
+  addCheck(result, 54, reviewSourceSignals >= 2 || reviewSignals >= 4, `${reviewSourceSignals} review source signals`);
+  addCheck(result, 55, /\b(refund|return|shipping|privacy|terms|contact|warranty|guarantee|secure payment)\b/i.test(bodyText), "merchant trust page/link scan");
+  addCheck(result, 56, headingUrlSignals(sitePages, url, /\b(product comparison|compare products|vs|versus)\b/i), "product comparison page scan");
+  addCheck(result, 57, headingUrlSignals(sitePages, url, /\balternatives? to\b/i), "alternatives-to page scan");
+  addCheck(result, 58, /\b(what .+ is not|limitations?|does not include|not included|not for)\b/i.test(bodyText), "negative constraint language scan");
+  addCheck(result, 59, !/\b(best|leading|world-class|cutting-edge|revolutionary|seamless)\b/i.test(bodyText) || factDensity >= 2, `Fact density ${factDensity.toFixed(1)} per 100 words`);
+  addCheck(result, 60, sectionScores.length === 0 || extractableSections / sectionScores.length >= 0.6, `${extractableSections}/${sectionScores.length} H2 sections stand alone`);
+  addCheck(result, 61, rawWords >= (/pricing|product|service|comparison|alternatives/i.test(url.pathname) ? 600 : 300), `${rawWords} visible words`);
+  addCheck(result, 62, factDensity >= 2, `${factDensity.toFixed(1)} facts per 100 words`);
+  addCheck(result, 63, evidenceSignals >= 2, `${evidenceSignals} citation/reference/source signals`);
+  addCheck(result, 64, /\b(original|proprietary|first-party|our research|our data|study|survey|benchmark|dataset)\b/i.test(bodyText), "primary-source language scan");
+  addCheck(result, 65, !nosnippet, nosnippet ? "nosnippet/max-snippet/data-nosnippet found" : "No nosnippet restrictions found");
+  addCheck(result, 66, rawWords > 0 && oaiWords / rawWords >= 0.8, `${oaiWords}/${rawWords} OAI/raw HTML word ratio`);
 
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
