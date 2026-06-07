@@ -117,7 +117,19 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 54, category: "ChatGPT Citation", name: "Review diversity check", severity: "MINOR", scope: "domain" },
   { id: 55, category: "ChatGPT Citation", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
   { id: 65, category: "ChatGPT Citation", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
-  { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" }
+  { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" },
+  { id: 67, category: "Gemini Citation", name: "Google-Extended allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 68, category: "Gemini Citation", name: "WAF not blocking Google-Extended", severity: "BLOCKER", scope: "domain" },
+  { id: 69, category: "Gemini Citation", name: "IP range accessible", severity: "BLOCKER", scope: "domain" },
+  { id: 70, category: "Gemini Citation", name: "NAP matches GBP consistently", severity: "BLOCKER", scope: "domain" },
+  { id: 71, category: "Gemini Citation", name: "Cookie consent not blocking DOM", severity: "BLOCKER", scope: "page" },
+  { id: 72, category: "Gemini Citation", name: "Server-side schema injection", severity: "BLOCKER", scope: "page" },
+  { id: 73, category: "Gemini Citation", name: "GoogleOther allowed", severity: "MAJOR", scope: "domain" },
+  { id: 74, category: "Gemini Citation", name: "Speakable schema presence", severity: "MINOR", scope: "page" },
+  { id: 75, category: "Gemini Citation", name: "Stock photo detection", severity: "MINOR", scope: "page" },
+  { id: 76, category: "Gemini Citation", name: "OCR legibility", severity: "MINOR", scope: "page" },
+  { id: 77, category: "Gemini Citation", name: "VideoObject schema", severity: "MINOR", scope: "page" },
+  { id: 78, category: "Gemini Citation", name: "Transcript-HTML alignment", severity: "MAJOR", scope: "page" }
 ];
 
 const CATEGORY_ORDER = [
@@ -129,7 +141,8 @@ const CATEGORY_ORDER = [
   "Local GEO Signals",
   "AI Crawlability",
   "Structured Data Integrity",
-  "ChatGPT Citation"
+  "ChatGPT Citation",
+  "Gemini Citation"
 ];
 
 const CATEGORY_WEIGHTS: Record<string, number> = {
@@ -141,10 +154,11 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "Local GEO Signals": 15,
   "AI Crawlability": 5,
   "Structured Data Integrity": 5,
-  "ChatGPT Citation": 15
+  "ChatGPT Citation": 15,
+  "Gemini Citation": 15
 };
 
-const CHATGPT_CITATION_RECOMMENDATIONS: Record<number, string> = {
+const CITATION_RECOMMENDATIONS: Record<number, string> = {
   38: "Allow OAI-SearchBot in robots.txt so ChatGPT search can crawl public pages.",
   39: "Allow ChatGPT-User in robots.txt for user-triggered browsing and citations.",
   40: "Separate GPTBot training rules from OAI-SearchBot and ChatGPT-User access rules.",
@@ -156,7 +170,19 @@ const CHATGPT_CITATION_RECOMMENDATIONS: Record<number, string> = {
   54: "Show reviews from diverse sources or multiple trust platforms.",
   55: "Link merchant trust pages such as privacy, terms, refund, warranty, shipping, contact, and secure payment.",
   65: "Remove nosnippet, max-snippet:0, X-Robots-Tag restrictions, and data-nosnippet from citable content.",
-  66: "Ensure OAI-SearchBot receives raw HTML content comparable to normal page content."
+  66: "Ensure OAI-SearchBot receives raw HTML content comparable to normal page content.",
+  67: "Allow Google-Extended in robots.txt when Gemini citation visibility is desired.",
+  68: "Allow Google-Extended through WAF, bot protection, and challenge rules.",
+  69: "Review server/WAF IP allow rules; true Google IP verification needs manual network testing.",
+  70: "Keep business name, address, and phone consistent across homepage, contact page, footer, and schema.",
+  71: "Ensure cookie consent does not replace the crawlable raw HTML body.",
+  72: "Render JSON-LD schema server-side instead of injecting it only after JavaScript.",
+  73: "Allow GoogleOther in robots.txt for Google systems that support AI and search features.",
+  74: "Add speakable schema only where the content is appropriate for voice-style extraction.",
+  75: "Replace stock imagery with original images where trust and citation quality matter.",
+  76: "Add meaningful alt text to images that communicate important page content.",
+  77: "Add VideoObject schema for embedded videos on key pages.",
+  78: "Publish crawlable transcript or caption text that aligns with the visible page content."
 };
 
 function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
@@ -690,6 +716,10 @@ function reviewDiversity(records: Record<string, unknown>[]) {
   return { ratings: ratings.length, ratingValue, reviewCount, suspiciousPerfect };
 }
 
+function schemaScriptCount(html: string) {
+  return cheerio.load(html)("script[type='application/ld+json']").length;
+}
+
 async function renderedWordCount(url: string, timeoutMs = 8000) {
   try {
     const loadPuppeteer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<{
@@ -711,13 +741,150 @@ async function renderedWordCount(url: string, timeoutMs = 8000) {
     try {
       const page = await browser.newPage();
       await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
-      return { words: wordCount(cheerio.load(await page.content())("body").text()) };
+      const html = await page.content();
+      return {
+        words: wordCount(cheerio.load(html)("body").text()),
+        schemaCount: schemaScriptCount(html)
+      };
     } finally {
       await browser.close();
     }
   } catch (error) {
-    return { words: null, error: error instanceof Error ? error.message : String(error) };
+    return { words: null, schemaCount: null, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function geminiWafEvidence(page: { response: Response; text: string } | null) {
+  const status = page?.response.status ?? 0;
+  const htmlLength = page?.text.length ?? 0;
+  const text = page?.text ?? "";
+  const challengeDetected = /captcha|challenge|blocked|access denied/i.test(text) && htmlLength < 10000;
+  const pass = Boolean(page && status === 200 && htmlLength > 5000 && (htmlLength > 50000 || !challengeDetected));
+  return { pass: status === 403 || status === 503 ? false : pass, status, htmlLength };
+}
+
+function schemaTextValue(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (value && typeof value === "object") {
+      const nested = value as Record<string, unknown>;
+      const nestedValue: string = schemaTextValue(nested, ["streetAddress", "addressLocality", "addressRegion", "postalCode"]);
+      if (nestedValue) return nestedValue;
+    }
+  }
+  return "";
+}
+
+function extractNapFromHtml(html: string) {
+  const page$ = cheerio.load(html);
+  const parsed = parseJsonLd(page$);
+  const businessRecords = findObjects(parsed.blocks, (record) =>
+    flattenSchemaTypes(record).some((type) => /LocalBusiness|Organization/i.test(type))
+  );
+  const schemaRecord = businessRecords.at(0);
+  const metaText = page$("meta[name],meta[property]").toArray().map((el) => page$(el).attr("content") ?? "").join(" ");
+  const visibleText = page$("body").text().replace(/\s+/g, " ").trim();
+  const phone = schemaRecord ? schemaTextValue(schemaRecord, ["telephone", "phone"]) : "";
+  const addressValue = schemaRecord?.address;
+  const address = typeof addressValue === "string"
+    ? addressValue
+    : addressValue && typeof addressValue === "object"
+      ? ["streetAddress", "addressLocality", "addressRegion", "postalCode"].map((key) => (addressValue as Record<string, unknown>)[key]).filter(Boolean).join(", ")
+      : "";
+
+  return {
+    name: schemaRecord ? schemaTextValue(schemaRecord, ["name", "legalName"]) : page$("meta[property='og:site_name']").attr("content") ?? page$("title").first().text().trim(),
+    address: address || (visibleText.match(/\b\d{1,5}\s+[A-Za-z0-9 .,'-]+(?:street|st\.|road|rd\.|avenue|ave\.|lane|sector|block|floor|suite)\b[^.]{0,100}/i)?.[0] ?? ""),
+    phone: phone || (visibleText.match(/\+?\d[\d\s().-]{7,}/)?.[0] ?? metaText.match(/\+?\d[\d\s().-]{7,}/)?.[0] ?? "")
+  };
+}
+
+function normalizeNap(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function napConsistency(pages: LocalPageHtml[]) {
+  const checked = pages.slice(0, 6).map((page) => ({ url: page.url ?? page.source, nap: extractNapFromHtml(page.html) }));
+  const found = checked.filter((page) => page.nap.name || page.nap.address || page.nap.phone);
+  const first = found.at(0)?.nap;
+  const consistent = first ? found.every((page) =>
+    (!first.name || !page.nap.name || normalizeNap(first.name) === normalizeNap(page.nap.name)) &&
+    (!first.address || !page.nap.address || normalizeNap(first.address) === normalizeNap(page.nap.address)) &&
+    (!first.phone || !page.nap.phone || normalizeNap(first.phone).slice(-8) === normalizeNap(page.nap.phone).slice(-8))
+  ) : false;
+
+  return {
+    pass: found.length > 0 && consistent,
+    napFound: found.length > 0,
+    name: first?.name ?? "",
+    address: first?.address ?? "",
+    phone: first?.phone ?? "",
+    consistent,
+    pages_checked: checked.length
+  };
+}
+
+function cookieConsentEvidence(html: string) {
+  const page$ = cheerio.load(html);
+  const rawWordCount = wordCount(page$("body").text());
+  const consentPatternFound = /cookie consent|accept cookies|gdpr|before you continue/i.test(html);
+  const consentWallDetected = consentPatternFound && rawWordCount < 200;
+  return { pass: rawWordCount > 200 && !consentWallDetected, rawWordCount, consentWallDetected };
+}
+
+function speakableEvidence(blocks: unknown[]) {
+  const found = findObjects(blocks, (record) =>
+    flattenSchemaTypes(record).some((type) => /SpeakableSpecification/i.test(type)) ||
+    Object.prototype.hasOwnProperty.call(record, "speakable")
+  ).length > 0;
+  return { pass: found, found };
+}
+
+function imageSources($: cheerio.CheerioAPI) {
+  return $("img").toArray().map((el) => ({
+    src: $(el).attr("src") ?? $(el).attr("data-src") ?? "",
+    alt: $(el).attr("alt") ?? ""
+  })).filter((image) => image.src);
+}
+
+function stockPhotoEvidence(images: ReturnType<typeof imageSources>) {
+  const stockPattern = /shutterstock\.com|gettyimages\.com|istockphoto\.com|unsplash\.com|pexels\.com|freepik\.com|depositphotos\.com|stock\.adobe\.com|dreamstime\.com|123rf\.com/i;
+  const stockImages = images.map((image) => image.src).filter((src) => stockPattern.test(src)).slice(0, 10);
+  const score = stockImages.length === 0 ? 10 : stockImages.length <= 2 ? 5 : 0;
+  return { score, stockCount: stockImages.length, stockImages, totalImages: images.length };
+}
+
+function ocrLegibilityEvidence(images: ReturnType<typeof imageSources>) {
+  const withAlt = images.filter((image) => image.alt.trim().length > 10).length;
+  const withoutAlt = images.length - withAlt;
+  const score = images.length ? Math.round((withAlt / images.length) * 10) : 10;
+  return { score, totalImages: images.length, withAlt, withoutAlt, advisory: withoutAlt > 0 };
+}
+
+function videoSchemaEvidence($: cheerio.CheerioAPI, blocks: unknown[]) {
+  const videosFound = $("video,iframe[src*='youtube'],iframe[src*='youtu.be'],iframe[src*='vimeo']").length;
+  const schemasFound = findObjects(blocks, (record) => flattenSchemaTypes(record).some((type) => /VideoObject/i.test(type))).length;
+  const ratio = videosFound ? schemasFound / videosFound : 1;
+  const score = !videosFound ? 10 : ratio >= 0.7 ? 10 : ratio >= 0.3 ? 5 : 0;
+  return { score, videosFound, schemasFound, ratio: Number(ratio.toFixed(2)) };
+}
+
+function entitySet(text: string) {
+  return new Set((text.match(/\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*|\d+(?:\.\d+)?%?|\d{4})\b/g) ?? []).map((item) => item.toLowerCase()));
+}
+
+function transcriptAlignmentEvidence($: cheerio.CheerioAPI, body: string) {
+  const videoCount = $("video,iframe[src*='youtube'],iframe[src*='youtu.be'],iframe[src*='vimeo']").length;
+  const transcriptText = $("[class*='transcript'],[id*='transcript'],section:contains('Transcript'),track").text().replace(/\s+/g, " ").trim();
+  if (!videoCount && !transcriptText) return { skipped: true, reason: "No video or transcript detected" };
+  if (!transcriptText) return { score: 0, entitiesInTranscript: 0, entitiesInContent: entitySet(body).size, overlapPct: 0 };
+  const transcriptEntities = entitySet(transcriptText);
+  const contentEntities = entitySet(body);
+  const overlap = [...transcriptEntities].filter((entity) => contentEntities.has(entity)).length;
+  const overlapPct = transcriptEntities.size ? Math.round((overlap / transcriptEntities.size) * 100) : 0;
+  const score = overlapPct >= 70 ? 10 : overlapPct >= 40 ? 5 : 0;
+  return { score, entitiesInTranscript: transcriptEntities.size, entitiesInContent: contentEntities.size, overlapPct };
 }
 
 function fleschReadingEase(text: string) {
@@ -812,6 +979,8 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     crawlSite(normalizedUrl, { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
   const oaiPage = await fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 3000).catch(() => null);
+  const googleExtendedPage = await fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 3000).catch(() => null);
+  const serverPage = await fetchText(normalizedUrl, 3000).catch(() => null);
   const browserPage = await fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 3000).catch(() => null);
   const extraSitemapResult = await fetchSitemapUrls(origin, 10000, 50).catch(() => null);
   const extraSitemapUrls = extraSitemapResult?.urls ?? [];
@@ -866,6 +1035,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const rawWords = wordCount(bodyText);
   const renderedResult = await renderedWordCount(normalizedUrl);
   const renderedWords = renderedResult.words;
+  const renderedSchemaCount = renderedResult.schemaCount;
   const oaiChallengeDetected = oaiPage ? challengeDetected(oaiPage.response.status, oaiPage.text) : true;
   const oaiHtmlLength = oaiPage?.text.length ?? 0;
   const oaiHasHtml = oaiPage ? htmlContentExists(oaiPage.text) : false;
@@ -888,6 +1058,30 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     ...sitemapAndPageUrls.map((href) => ({ url: href, anchorText: "" })),
     ...footerTrustUrls(pageHtml, url)
   ]);
+  const geminiWaf = geminiWafEvidence(googleExtendedPage);
+  const serverHtmlLength = serverPage?.text.length ?? 0;
+  const ipAccessible = Boolean(serverPage && serverPage.response.status === 200 && htmlContentExists(serverPage.text));
+  const ipRangeEvidence = {
+    pass: ipAccessible,
+    advisory: !geminiWaf.pass,
+    note: !geminiWaf.pass
+      ? "Manual verification recommended because Google-Extended WAF check failed; true Google IP range testing is not possible server-side."
+      : "Server-side fetch returned accessible HTML from this audit server perspective.",
+    status: serverPage?.response.status ?? 0,
+    htmlLength: serverHtmlLength
+  };
+  const napEvidence = napConsistency(localGeoPages);
+  const consentEvidence = cookieConsentEvidence(pageHtml);
+  const rawSchemaCount = schemaScriptCount(pageHtml);
+  const schemaInjectionEvidence = renderedSchemaCount === null
+    ? { skipped: true, reason: renderedResult.error ?? "Puppeteer unavailable" }
+    : { pass: rawSchemaCount >= renderedSchemaCount, rawSchemaCount, renderedSchemaCount, jsInjected: rawSchemaCount < renderedSchemaCount };
+  const speakable = speakableEvidence(jsonLd.blocks);
+  const images = imageSources($);
+  const stockPhoto = stockPhotoEvidence(images);
+  const ocrLegibility = ocrLegibilityEvidence(images);
+  const videoSchema = videoSchemaEvidence($, jsonLd.blocks);
+  const transcriptAlignment = transcriptAlignmentEvidence($, bodyText);
   const ssrRatio = renderedWords ? oaiWords / renderedWords : null;
   const pageUrl = (page: LocalPageHtml, index: number) => page.url ?? `${origin}/#sample-${index + 1}`;
   const pageText = (page: LocalPageHtml) => cheerio.load(page.html)("body").text().replace(/\s+/g, " ").trim();
@@ -1013,11 +1207,32 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     const renderedRatio = ssrRatio ?? 0;
     addCheck(result, 66, renderedRatio >= 0.6, JSON.stringify({ score: renderedRatio >= 0.8 ? 10 : renderedRatio >= 0.6 ? 5 : 0, skipped: false, ratio: Number(renderedRatio.toFixed(2)), oaiWords, renderedWords }));
   }
+  addCheck(result, 67, robotGroupAllows(robotsText, "Google-Extended"), JSON.stringify({ pass: robotGroupAllows(robotsText, "Google-Extended"), raw: robotGroupFor(robotsText, "Google-Extended") || "No explicit Google-Extended group" }));
+  addCheck(result, 68, geminiWaf.pass, JSON.stringify(geminiWaf));
+  addCheck(result, 69, ipRangeEvidence.pass, JSON.stringify(ipRangeEvidence));
+  addCheck(result, 70, napEvidence.pass, JSON.stringify(napEvidence));
+  addCheck(result, 71, consentEvidence.pass, JSON.stringify(consentEvidence));
+  if ("skipped" in schemaInjectionEvidence && schemaInjectionEvidence.skipped) {
+    addSkippedCheck(result, 72, JSON.stringify(schemaInjectionEvidence));
+  } else {
+    addCheck(result, 72, Boolean(schemaInjectionEvidence.pass), JSON.stringify(schemaInjectionEvidence));
+  }
+  addCheck(result, 73, robotGroupAllows(robotsText, "GoogleOther"), JSON.stringify({ pass: robotGroupAllows(robotsText, "GoogleOther") }));
+  addCheck(result, 74, speakable.pass, JSON.stringify(speakable));
+  addCheck(result, 75, stockPhoto.score >= 5, JSON.stringify(stockPhoto));
+  addCheck(result, 76, ocrLegibility.score >= 5, JSON.stringify(ocrLegibility));
+  addCheck(result, 77, videoSchema.score >= 5, JSON.stringify(videoSchema));
+  if ("skipped" in transcriptAlignment && transcriptAlignment.skipped) {
+    addSkippedCheck(result, 78, JSON.stringify(transcriptAlignment));
+  } else {
+    const transcriptScore = transcriptAlignment.score ?? 0;
+    addCheck(result, 78, transcriptScore >= 5, JSON.stringify(transcriptAlignment));
+  }
 
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
   const citationFailedDetails = result
-    .filter((check) => check.category === "ChatGPT Citation" && !check.passed && !check.skipped)
+    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation") && !check.passed && !check.skipped)
     .map((check) => {
       const affected = affectedPagesFor(check);
       return {
@@ -1025,13 +1240,13 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
         name: check.name,
         severity: check.severity,
         evidence: check.evidence,
-        recommendation: CHATGPT_CITATION_RECOMMENDATIONS[check.id] ?? "Review this failed citation-readiness signal on key pages.",
+        recommendation: CITATION_RECOMMENDATIONS[check.id] ?? "Review this failed citation-readiness signal on key pages.",
         affectedPages: affected.affectedPages,
         sampleUrls: affected.sampleUrls
       };
     });
   const citationSkippedDetails = result
-    .filter((check) => check.category === "ChatGPT Citation" && check.skipped)
+    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation") && check.skipped)
     .map((check) => ({
       id: check.id,
       name: check.name,

@@ -28,8 +28,9 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation">("technical");
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation" | "gemini">("technical");
   const [showCitationFailures, setShowCitationFailures] = useState(false);
+  const [showGeminiFailures, setShowGeminiFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -79,8 +80,12 @@ export default function ReportPage() {
     opportunity_counts: { high: 0, medium: 0, low: 0 },
     categories: []
   };
-  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation");
+  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
   const citationCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "ChatGPT Citation");
+  const geminiCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "Gemini Citation");
+  const citationLikeCategories = activeAuditTab === "gemini" ? geminiCategories : citationCategories;
+  const showCitationLikeFailures = activeAuditTab === "gemini" ? showGeminiFailures : showCitationFailures;
+  const setShowCitationLikeFailures = activeAuditTab === "gemini" ? setShowGeminiFailures : setShowCitationFailures;
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
@@ -157,6 +162,12 @@ export default function ReportPage() {
               className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "citation" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
             >
               ChatGPT Citation
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("gemini")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "gemini" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Gemini Citation
             </button>
           </div>
         </div>
@@ -255,7 +266,7 @@ export default function ReportPage() {
           </div>
         ) : (
           <div className="grid gap-4">
-            {citationCategories.map((category) => {
+            {citationLikeCategories.map((category) => {
               const failedDetails = category.failedCheckDetails ?? [];
               const skippedDetails = category.skippedCheckDetails ?? [];
 
@@ -287,12 +298,12 @@ export default function ReportPage() {
                     <div className="mt-5">
                       <button
                         type="button"
-                        onClick={() => setShowCitationFailures((current) => !current)}
+                        onClick={() => setShowCitationLikeFailures((current) => !current)}
                         className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
                       >
-                        {showCitationFailures ? "Hide Failed Checks" : "Show Failed Checks"}
+                        {showCitationLikeFailures ? "Hide Failed Checks" : "Show Failed Checks"}
                       </button>
-                        {showCitationFailures ? (
+                        {showCitationLikeFailures ? (
                         <div className="mt-4 grid gap-3">
                           {failedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Failed Checks</p> : null}
                           {failedDetails.map((detail) => (
@@ -305,21 +316,6 @@ export default function ReportPage() {
                                 <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
                               </div>
                               <p className="mt-3 text-sm font-semibold text-ink/75">{detail.recommendation}</p>
-                              <div className="mt-3 rounded-md bg-white px-3 py-2">
-                                <p className="text-xs font-black uppercase text-ink/45">Affected Pages</p>
-                                <p className="mt-1 text-sm font-black text-ink">{detail.affectedPages}</p>
-                                {detail.sampleUrls.length ? (
-                                  <ul className="mt-2 grid gap-1">
-                                    {detail.sampleUrls.map((sampleUrl) => (
-                                      <li key={sampleUrl}>
-                                        <a className="break-all text-xs font-semibold text-teal hover:text-coral" href={sampleUrl} target="_blank">
-                                          {sampleUrl}
-                                        </a>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : null}
-                              </div>
                             </div>
                           ))}
                           {skippedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Skipped Checks</p> : null}
