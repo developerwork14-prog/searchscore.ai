@@ -28,9 +28,10 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation" | "gemini">("technical");
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation" | "gemini" | "indexability">("technical");
   const [showCitationFailures, setShowCitationFailures] = useState(false);
   const [showGeminiFailures, setShowGeminiFailures] = useState(false);
+  const [showIndexabilityFailures, setShowIndexabilityFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -80,12 +81,13 @@ export default function ReportPage() {
     opportunity_counts: { high: 0, medium: 0, low: 0 },
     categories: []
   };
-  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
+  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation" && category.categoryName !== "Indexability");
   const citationCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "ChatGPT Citation");
   const geminiCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "Gemini Citation");
-  const citationLikeCategories = activeAuditTab === "gemini" ? geminiCategories : citationCategories;
-  const showCitationLikeFailures = activeAuditTab === "gemini" ? showGeminiFailures : showCitationFailures;
-  const setShowCitationLikeFailures = activeAuditTab === "gemini" ? setShowGeminiFailures : setShowCitationFailures;
+  const indexabilityCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "Indexability");
+  const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityCategories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
+  const showCitationLikeFailures = activeAuditTab === "indexability" ? showIndexabilityFailures : activeAuditTab === "gemini" ? showGeminiFailures : showCitationFailures;
+  const setShowCitationLikeFailures = activeAuditTab === "indexability" ? setShowIndexabilityFailures : activeAuditTab === "gemini" ? setShowGeminiFailures : setShowCitationFailures;
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
@@ -168,6 +170,12 @@ export default function ReportPage() {
               className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "gemini" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
             >
               Gemini Citation
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("indexability")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "indexability" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Indexability
             </button>
           </div>
         </div>
