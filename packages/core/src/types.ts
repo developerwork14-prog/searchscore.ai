@@ -109,6 +109,20 @@ export interface GeoAeoCategorySummary {
   warningChecks: number;
   score: number;
   status: TechnicalCategoryStatus;
+  failedCheckDetails?: {
+    id: number;
+    name: string;
+    severity: GeoAeoSeverity;
+    evidence: string;
+    recommendation: string;
+    affectedPages: number;
+    sampleUrls: string[];
+  }[];
+  skippedCheckDetails?: {
+    id: number;
+    name: string;
+    reason: string;
+  }[];
 }
 
 export interface GeoAeoCheckResult {
@@ -119,6 +133,7 @@ export interface GeoAeoCheckResult {
   scope: GeoAeoScope;
   passed: boolean;
   evidence: string;
+  skipped?: boolean;
 }
 
 export interface GeoAeoOpportunityCounts {

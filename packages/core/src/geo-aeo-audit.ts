@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { crawlSite } from "./site-crawler.js";
+import { crawlSite, fetchSitemapUrls } from "./site-crawler.js";
 
 export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR";
 export type GeoAeoScope = "page" | "domain";
@@ -17,6 +17,7 @@ export interface GeoAeoCheckDefinition {
 export interface GeoAeoCheckResult extends GeoAeoCheckDefinition {
   passed: boolean;
   evidence: string;
+  skipped?: boolean;
 }
 
 export interface GeoAeoCategorySummary {
@@ -27,6 +28,24 @@ export interface GeoAeoCategorySummary {
   warningChecks: number;
   score: number;
   status: GeoAeoStatus;
+  failedCheckDetails?: GeoAeoFailedCheckDetail[];
+  skippedCheckDetails?: GeoAeoSkippedCheckDetail[];
+}
+
+export interface GeoAeoFailedCheckDetail {
+  id: number;
+  name: string;
+  severity: GeoAeoSeverity;
+  evidence: string;
+  recommendation: string;
+  affectedPages: number;
+  sampleUrls: string[];
+}
+
+export interface GeoAeoSkippedCheckDetail {
+  id: number;
+  name: string;
+  reason: string;
 }
 
 export interface GeoAeoOpportunityCounts {
@@ -92,28 +111,11 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 40, category: "ChatGPT Citation", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
   { id: 41, category: "ChatGPT Citation", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
   { id: 42, category: "ChatGPT Citation", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
-  { id: 43, category: "ChatGPT Citation", name: "H2 chain-of-thought sequence", severity: "MINOR", scope: "page" },
-  { id: 44, category: "ChatGPT Citation", name: "Multi-turn follow-up coverage", severity: "MAJOR", scope: "page" },
-  { id: 45, category: "ChatGPT Citation", name: "Next steps section", severity: "MINOR", scope: "page" },
-  { id: 46, category: "ChatGPT Citation", name: "Conversational readability", severity: "MINOR", scope: "page" },
-  { id: 47, category: "ChatGPT Citation", name: "Comparison/vs page detection", severity: "MINOR", scope: "domain" },
-  { id: 48, category: "ChatGPT Citation", name: "Best-of roundup detection", severity: "MINOR", scope: "domain" },
   { id: 49, category: "ChatGPT Citation", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
   { id: 50, category: "ChatGPT Citation", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
-  { id: 51, category: "ChatGPT Citation", name: "Feature-to-JTBD mapping", severity: "MAJOR", scope: "page" },
   { id: 52, category: "ChatGPT Citation", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
-  { id: 53, category: "ChatGPT Citation", name: "Review volume and freshness", severity: "MAJOR", scope: "domain" },
   { id: 54, category: "ChatGPT Citation", name: "Review diversity check", severity: "MINOR", scope: "domain" },
   { id: 55, category: "ChatGPT Citation", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
-  { id: 56, category: "ChatGPT Citation", name: "Product comparison pages", severity: "MINOR", scope: "domain" },
-  { id: 57, category: "ChatGPT Citation", name: "Alternatives-to pages", severity: "MINOR", scope: "domain" },
-  { id: 58, category: "ChatGPT Citation", name: "Negative constraint section", severity: "MINOR", scope: "page" },
-  { id: 59, category: "ChatGPT Citation", name: "Hallucination resistance", severity: "MAJOR", scope: "page" },
-  { id: 60, category: "ChatGPT Citation", name: "Extractability score", severity: "MAJOR", scope: "page" },
-  { id: 61, category: "ChatGPT Citation", name: "Content depth for intent", severity: "MAJOR", scope: "page" },
-  { id: 62, category: "ChatGPT Citation", name: "Fact density per 100 words", severity: "MINOR", scope: "page" },
-  { id: 63, category: "ChatGPT Citation", name: "Evidence density", severity: "MINOR", scope: "page" },
-  { id: 64, category: "ChatGPT Citation", name: "Primary-source classification", severity: "MINOR", scope: "page" },
   { id: 65, category: "ChatGPT Citation", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
   { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" }
 ];
@@ -140,6 +142,21 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "AI Crawlability": 5,
   "Structured Data Integrity": 5,
   "ChatGPT Citation": 15
+};
+
+const CHATGPT_CITATION_RECOMMENDATIONS: Record<number, string> = {
+  38: "Allow OAI-SearchBot in robots.txt so ChatGPT search can crawl public pages.",
+  39: "Allow ChatGPT-User in robots.txt for user-triggered browsing and citations.",
+  40: "Separate GPTBot training rules from OAI-SearchBot and ChatGPT-User access rules.",
+  41: "Allow OAI user agents through WAF, bot protection, and challenge pages.",
+  42: "Make citable page content visible without login, interstitials, or paywalls.",
+  49: "Create alternatives pages for high-intent comparison queries.",
+  50: "Create use-case or industry pages that map the offer to specific buyer situations.",
+  52: "Complete Product schema with name plus offers, reviews, or aggregate ratings where applicable.",
+  54: "Show reviews from diverse sources or multiple trust platforms.",
+  55: "Link merchant trust pages such as privacy, terms, refund, warranty, shipping, contact, and secure payment.",
+  65: "Remove nosnippet, max-snippet:0, X-Robots-Tag restrictions, and data-nosnippet from citable content.",
+  66: "Ensure OAI-SearchBot receives raw HTML content comparable to normal page content."
 };
 
 function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
@@ -222,6 +239,7 @@ function sameOrigin(url: URL, href: string) {
 interface LocalPageHtml {
   source: string;
   html: string;
+  url?: string;
 }
 
 async function fetchLikelyLocalPageEntries(origin: string): Promise<LocalPageHtml[]> {
@@ -234,18 +252,18 @@ async function fetchLikelyLocalPageEntries(origin: string): Promise<LocalPageHtm
     ["/location/", "location page"]
   ] satisfies Array<[string, string]>;
 
-  const fetched = await Promise.all(pages.map(async ([path, source]) => {
+  const fetched = await Promise.all(pages.map(async ([path, source]): Promise<LocalPageHtml | null> => {
     try {
       const { response, text } = await fetchText(`${origin}${path}`, 2000);
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return null;
-      return { source, html: text } satisfies LocalPageHtml;
+      return { source, html: text, url: `${origin}${path}` } satisfies LocalPageHtml;
     } catch {
       return null;
     }
   }));
 
-  return fetched.filter((page): page is LocalPageHtml => Boolean(page));
+  return fetched.filter((page): page is LocalPageHtml => page !== null);
 }
 
 export async function fetchLikelyLocalPages(origin: string): Promise<string[]> {
@@ -493,7 +511,14 @@ function robotGroupFor(robotsText: string, bot: string) {
 }
 
 function challengeDetected(status: number, text: string) {
-  return status === 403 || status === 503 || /\b(captcha|cloudflare|access denied|blocked|verify you are human|security check|challenge)\b/i.test(text);
+  if (status === 403 || status === 503) return true;
+  if (status !== 200) return false;
+  if (text.length >= 5000) return false;
+  return /\b(captcha|challenge|blocked|cloudflare)\b/i.test(text);
+}
+
+function htmlContentExists(text: string) {
+  return /<html[\s>]|<!doctype html|<body[\s>]|<main[\s>]|<article[\s>]/i.test(text) || cheerio.load(text)("body").text().trim().length > 0;
 }
 
 function h2Texts($: cheerio.CheerioAPI) {
@@ -507,6 +532,192 @@ function headingUrlSignals(pages: LocalPageHtml[], url: URL, pattern: RegExp) {
     return pattern.test(`${page.source} ${headings}`);
   }).length;
   return pattern.test(url.pathname) || pageSignals > 0;
+}
+
+function pageSearchText(page: LocalPageHtml) {
+  const page$ = cheerio.load(page.html);
+  return `${page.url ?? ""} ${page$("title").first().text()} ${page$("h1,h2").text()}`.replace(/\s+/g, " ").trim();
+}
+
+function urlPathSearchText(href: string) {
+  try {
+    const parsed = new URL(href);
+    return decodeURIComponent(parsed.pathname).replace(/[-_]+/g, " ");
+  } catch {
+    return href.replace(/[-_]+/g, " ");
+  }
+}
+
+function compactSignals(signals: string[], limit = 10) {
+  return [...new Set(signals.filter(Boolean))].slice(0, limit);
+}
+
+function pageUrlSignals(pages: LocalPageHtml[], urls: string[], pattern: RegExp) {
+  const urlMatches = urls.filter((href) => pattern.test(`${href} ${urlPathSearchText(href)}`)).length;
+  const headingMatches = pages.filter((page) => pattern.test(pageSearchText(page))).length;
+  return { urlMatches, headingMatches, total: urlMatches + headingMatches };
+}
+
+function alternativesPageDetection(pages: LocalPageHtml[], urls: string[]) {
+  const strongUrlPattern = /\/(?:alternatives?|alternative-to|vs|compare|comparison)(?:\/|$)|\/[^/?#]+-(?:alternative|alternatives)(?:\/|$)|\/[^/?#]+-vs-[^/?#]+(?:\/|$)|\/best-[^/?#]+(?:\/|$)|\/[^/?#]+-alternatives?(?:\/|$)/i;
+  const textPattern = /\b(vs|versus|alternative|alternatives|compare|comparison|instead of|switch from)\b/i;
+  const blogPartialPattern = /\/(?:blog|articles?|resources?|posts?)\/[^?#]*(?:\bvs\b|compare)/i;
+
+  const strongSignals = [
+    ...urls.filter((href) => strongUrlPattern.test(href) || textPattern.test(urlPathSearchText(href))),
+    ...pages
+      .filter((page) => textPattern.test(pageSearchText(page)))
+      .map((page) => page.url ?? pageSearchText(page))
+  ];
+  const partialSignals = urls.filter((href) => blogPartialPattern.test(href));
+  const signals = compactSignals(strongSignals.length ? strongSignals : partialSignals);
+  const score = strongSignals.length ? 10 : partialSignals.length ? 5 : 0;
+
+  return { found: score > 0, signals, score };
+}
+
+function useCasePageDetection(pages: LocalPageHtml[], urls: string[]) {
+  const urlPattern = /\/(?:for-[^/?#]+|use-cases?|solutions?)(?:\/|$)|\/personal-loan-for-[^/?#]+|\/(?:salaried|freelancers?|self-employed|medical|travel|home-renovation|education|wedding|business|professionals?)(?:\/|$)/i;
+  const textPattern = /\b(personal loan for (?:medical expenses?|travel|home renovation|education|wedding|business)|loans? for (?:freelancers?|salaried professionals?|self-employed|medical|travel|home renovation|education|wedding|business)|for (?:medical expenses?|travel|home renovation|freelancers?|salaried professionals?|self-employed))\b/i;
+  const signals = compactSignals([
+    ...urls.filter((href) => urlPattern.test(href) || textPattern.test(urlPathSearchText(href))),
+    ...pages
+      .filter((page) => urlPattern.test(page.url ?? "") || textPattern.test(pageSearchText(page)))
+      .map((page) => page.url ?? pageSearchText(page))
+  ]);
+  const score = signals.length >= 3 ? 10 : signals.length >= 1 ? 5 : 0;
+
+  return { score, signalCount: signals.length, signals };
+}
+
+interface TrustPageCandidate {
+  url: string;
+  anchorText: string;
+}
+
+function footerTrustUrls(pageHtml: string, root: URL): TrustPageCandidate[] {
+  const footerStart = Math.floor(pageHtml.length * 0.8);
+  const footerHtml = pageHtml.slice(footerStart);
+  const footer$ = cheerio.load(footerHtml);
+  return footer$("a[href]").toArray()
+    .map((el) => {
+      try {
+        return {
+          url: new URL(footer$(el).attr("href") ?? "", root).toString(),
+          anchorText: footer$(el).text().replace(/\s+/g, " ").trim()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is TrustPageCandidate => item !== null);
+}
+
+function trustCandidateText(candidate: TrustPageCandidate, title = "", h1 = "") {
+  let path = candidate.url;
+  try {
+    const parsed = new URL(candidate.url);
+    path = decodeURIComponent(`${parsed.pathname} ${parsed.search}`);
+  } catch {
+    path = candidate.url;
+  }
+
+  return `${path} ${candidate.anchorText} ${title} ${h1}`.replace(/[_-]+/g, " ");
+}
+
+async function merchantTrustEvidence(candidates: TrustPageCandidate[]) {
+  const trustTypes = [
+    { type: "Privacy/Terms", pattern: /\b(privacy|privacy policy|terms|terms of service|terms and conditions|tnc|t and c|legal|disclaimer|cookie policy)\b/i },
+    { type: "Refund/Returns", pattern: /\b(refund|refund policy|cancellation|cancellation policy|return|returns|return policy|money back)\b/i },
+    { type: "Shipping/Delivery", pattern: /\b(shipping|shipping policy|delivery|delivery policy|fulfillment)\b/i },
+    { type: "Contact/Support", pattern: /\b(contact|contact us|support|help|helpdesk|grievance|reach us|get in touch)\b/i }
+  ];
+
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [candidate.url, candidate])).values()];
+  const found = new Set<string>();
+  for (const candidate of uniqueCandidates) {
+    const text = trustCandidateText(candidate);
+    trustTypes.forEach((item) => {
+      if (item.pattern.test(text)) found.add(item.type);
+    });
+  }
+
+  const broadTrustPattern = /\b(privacy|terms?|tnc|legal|disclaimer|cookie|refund|returns?|cancellation|money back|shipping|delivery|fulfillment|contact|support|helpdesk|grievance|reach|get in touch)\b/i;
+  const titleCandidates = uniqueCandidates
+    .filter((candidate) => broadTrustPattern.test(trustCandidateText(candidate)))
+    .slice(0, 20);
+
+  await Promise.all(titleCandidates.map(async (candidate) => {
+    try {
+      const { response, text } = await fetchText(candidate.url, 2500);
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return;
+      const page$ = cheerio.load(text);
+      const pageText = trustCandidateText(candidate, page$("title").first().text(), page$("h1").first().text());
+      trustTypes.forEach((item) => {
+        if (item.pattern.test(pageText)) found.add(item.type);
+      });
+    } catch {
+      // Trust page discovery should keep going when an individual candidate times out.
+    }
+  }));
+
+  const foundList = trustTypes.filter((item) => found.has(item.type)).map((item) => item.type);
+  const missing = trustTypes.filter((item) => !found.has(item.type)).map((item) => item.type);
+  const score = foundList.length === 4 ? 10 : foundList.length >= 2 ? 6 : 0;
+  return { score, found: foundList, missing };
+}
+
+function productSchemaFieldScore(records: Record<string, unknown>[]) {
+  const required = ["name", "brand", "offers", "aggregateRating"];
+  const present = new Set<string>();
+  records.forEach((record) => {
+    required.forEach((field) => {
+      if (record[field]) present.add(field);
+    });
+  });
+  const percent = records.length ? Math.round((present.size / required.length) * 100) : 100;
+  const score = percent >= 80 ? 10 : percent >= 60 ? 6 : 0;
+  return { present: present.size, total: required.length, percent, score };
+}
+
+function reviewDiversity(records: Record<string, unknown>[]) {
+  const ratings = findObjects(records, (record) => Boolean(record.ratingValue || record.reviewRating || record.aggregateRating));
+  const aggregate = findObjects(records, (record) => Boolean(record.ratingValue && record.reviewCount)).at(0);
+  const ratingValue = Number(aggregate?.ratingValue ?? 0);
+  const reviewCount = Number(aggregate?.reviewCount ?? 0);
+  const suspiciousPerfect = ratingValue === 5 && reviewCount >= 20;
+  return { ratings: ratings.length, ratingValue, reviewCount, suspiciousPerfect };
+}
+
+async function renderedWordCount(url: string, timeoutMs = 8000) {
+  try {
+    const loadPuppeteer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<{
+      default: {
+        launch(options: { args: string[]; headless: "new" }): Promise<{
+          newPage(): Promise<{
+            goto(url: string, options: { waitUntil: "networkidle2"; timeout: number }): Promise<unknown>;
+            content(): Promise<string>;
+          }>;
+          close(): Promise<void>;
+        }>;
+      };
+    }>;
+    const puppeteer = await loadPuppeteer("puppeteer");
+    const browser = await puppeteer.default.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    try {
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
+      return { words: wordCount(cheerio.load(await page.content())("body").text()) };
+    } finally {
+      await browser.close();
+    }
+  } catch (error) {
+    return { words: null, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function fleschReadingEase(text: string) {
@@ -545,32 +756,43 @@ function addCheck(results: GeoAeoCheckResult[], id: number, passed: boolean, evi
   results.push({ ...def, passed, evidence });
 }
 
-function categorySummaries(checks: GeoAeoCheckResult[]): GeoAeoCategorySummary[] {
+function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: string) {
+  const def = CHECKS.find((check) => check.id === id);
+  if (!def) return;
+  results.push({ ...def, passed: true, evidence, skipped: true });
+}
+
+function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFailedCheckDetail[] = [], skippedDetails: GeoAeoSkippedCheckDetail[] = []): GeoAeoCategorySummary[] {
   return CATEGORY_ORDER.map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
-    const failedChecks = categoryChecks.filter((check) => !check.passed).length;
-    const warningChecks = categoryChecks.filter((check) => !check.passed && check.severity === "MINOR").length;
+    const scorableChecks = categoryChecks.filter((check) => !check.skipped);
+    const failedChecks = scorableChecks.filter((check) => !check.passed).length;
+    const warningChecks = scorableChecks.filter((check) => !check.passed && check.severity === "MINOR").length;
+    const categoryFailedDetails = failedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
+    const categorySkippedDetails = skippedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
 
     return {
       categoryName,
-      totalChecks: categoryChecks.length,
-      passedChecks: categoryChecks.length - failedChecks,
+      totalChecks: scorableChecks.length,
+      passedChecks: scorableChecks.length - failedChecks,
       failedChecks,
       warningChecks,
-      score: categoryChecks.length ? clamp(((categoryChecks.length - failedChecks) / categoryChecks.length) * 100) : 0,
-      status: statusFor(failedChecks)
+      score: scorableChecks.length ? clamp(((scorableChecks.length - failedChecks) / scorableChecks.length) * 100) : 0,
+      status: statusFor(failedChecks),
+      ...(categoryFailedDetails.length ? { failedCheckDetails: categoryFailedDetails } : {}),
+      ...(categorySkippedDetails.length ? { skippedCheckDetails: categorySkippedDetails } : {})
     };
   });
 }
 
 function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
-  const scoped = checks.filter((check) => check.scope === scope);
+  const scoped = checks.filter((check) => check.scope === scope && !check.skipped);
   if (!scoped.length) return 0;
   return clamp((scoped.filter((check) => check.passed).length / scoped.length) * 100);
 }
 
 function opportunityCounts(checks: GeoAeoCheckResult[]): GeoAeoOpportunityCounts {
-  const failed = checks.filter((check) => !check.passed);
+  const failed = checks.filter((check) => !check.passed && !check.skipped);
   return {
     high: failed.filter((check) => check.severity === "BLOCKER").length,
     medium: failed.filter((check) => check.severity === "MAJOR").length,
@@ -590,11 +812,15 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     crawlSite(normalizedUrl, { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
   const oaiPage = await fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 3000).catch(() => null);
+  const browserPage = await fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 3000).catch(() => null);
+  const extraSitemapResult = await fetchSitemapUrls(origin, 10000, 50).catch(() => null);
+  const extraSitemapUrls = extraSitemapResult?.urls ?? [];
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
     source: page.source === "homepage" ? "homepage" : page.source === "sitemap" ? "sitemap page" : "internal page",
-    html: page.html
+    html: page.html,
+    url: page.finalUrl
   }));
-  const sitePages = crawledPages.length ? crawledPages : [{ source: "homepage", html: pageHtml }];
+  const sitePages = crawledPages.length ? crawledPages : [{ source: "homepage", html: pageHtml, url: normalizedUrl }];
   const siteHtml = sitePages.map((page) => page.html).join("\n");
   const localGeoPages: LocalPageHtml[] = [...sitePages, ...localPages];
   const localGeoHtml = localGeoPages.map((page) => page.html).join("\n");
@@ -636,8 +862,55 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const reviewSourceSignals = ["google", "trustpilot", "g2", "capterra", "facebook", "yelp"].filter((source) => lowerBody.includes(source)).length;
   const nosnippet = /nosnippet|max-snippet:0/i.test(`${pageHtml} ${oaiPage?.response.headers.get("x-robots-tag") ?? ""}`) || $("[data-nosnippet]").length > 0;
   const oaiWords = wordCount(cheerio.load(oaiPage?.text ?? "")("body").text());
+  const browserWords = wordCount(cheerio.load(browserPage?.text ?? pageHtml)("body").text());
   const rawWords = wordCount(bodyText);
-  const oaiNotChallenged = oaiPage ? !challengeDetected(oaiPage.response.status, oaiPage.text) : false;
+  const renderedResult = await renderedWordCount(normalizedUrl);
+  const renderedWords = renderedResult.words;
+  const oaiChallengeDetected = oaiPage ? challengeDetected(oaiPage.response.status, oaiPage.text) : true;
+  const oaiHtmlLength = oaiPage?.text.length ?? 0;
+  const oaiHasHtml = oaiPage ? htmlContentExists(oaiPage.text) : false;
+  const oaiWafDebug = {
+    pass: false,
+    status: oaiPage?.response.status ?? 0,
+    htmlLength: oaiHtmlLength,
+    challengeDetected: oaiChallengeDetected
+  };
+  const oaiNotChallenged = Boolean(oaiPage && oaiPage.response.status === 200 && oaiHasHtml && !oaiChallengeDetected);
+  oaiWafDebug.pass = oaiNotChallenged;
+  const paywallRatio = browserWords ? oaiWords / browserWords : 0;
+  const paywallStatus = paywallRatio >= 0.8 ? "green" : paywallRatio >= 0.5 ? "amber" : "red";
+  const sitemapAndPageUrls = [...new Set([...crawled.sitemapUrls, ...extraSitemapUrls, ...sitePages.map((page) => page.url ?? "").filter(Boolean)])];
+  const alternativesSignals = alternativesPageDetection(sitePages, sitemapAndPageUrls);
+  const useCaseSignals = useCasePageDetection(sitePages, sitemapAndPageUrls);
+  const productFieldScore = productSchemaFieldScore(productObjects);
+  const reviewDiversitySignal = reviewDiversity(productObjects);
+  const merchantTrust = await merchantTrustEvidence([
+    ...sitemapAndPageUrls.map((href) => ({ url: href, anchorText: "" })),
+    ...footerTrustUrls(pageHtml, url)
+  ]);
+  const ssrRatio = renderedWords ? oaiWords / renderedWords : null;
+  const pageUrl = (page: LocalPageHtml, index: number) => page.url ?? `${origin}/#sample-${index + 1}`;
+  const pageText = (page: LocalPageHtml) => cheerio.load(page.html)("body").text().replace(/\s+/g, " ").trim();
+  const failingPages = (predicate: (page: LocalPageHtml) => boolean) => sitePages.filter(predicate);
+  const affectedPagesFor = (check: GeoAeoCheckResult) => {
+    const domain = () => check.passed ? [] : sitePages;
+    const pageFailures = (() => {
+      switch (check.id) {
+        case 42:
+        case 66:
+          return check.passed ? [] : sitePages;
+        case 65:
+          return failingPages((page) => /nosnippet|max-snippet:0/i.test(page.html) || cheerio.load(page.html)("[data-nosnippet]").length > 0);
+        default:
+          return check.scope === "domain" ? domain() : check.passed ? [] : sitePages;
+      }
+    })();
+    const urls = pageFailures.map(pageUrl).filter(Boolean);
+    return {
+      affectedPages: urls.length,
+      sampleUrls: urls.slice(0, 3)
+    };
+  };
   const result: GeoAeoCheckResult[] = [];
 
   [
@@ -726,38 +999,47 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   addCheck(result, 38, robotGroupAllows(robotsText, "OAI-SearchBot"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
   addCheck(result, 39, robotGroupAllows(robotsText, "ChatGPT-User"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
   addCheck(result, 40, robotGroupAllows(robotsText, "OAI-SearchBot") && robotGroupAllows(robotsText, "ChatGPT-User"), robotGroupFor(robotsText, "GPTBot") ? "GPTBot group checked against OAI agents" : "No explicit GPTBot group");
-  addCheck(result, 41, oaiNotChallenged, oaiPage ? `OAI-SearchBot status ${oaiPage.response.status}` : "OAI-SearchBot request failed");
-  addCheck(result, 42, oaiWords >= Math.round(rawWords * 0.8), `${oaiWords}/${rawWords} words visible to OAI-SearchBot`);
-  addCheck(result, 43, h2Progression.length >= 4, `${h2Progression.length}/7 logical H2 stages detected`);
-  addCheck(result, 44, followUpSections.length >= 3, `${followUpSections.length}/6 follow-up sections detected`);
-  addCheck(result, 45, /\b(related questions|next steps|what to do next|recommended actions)\b/i.test(bodyText), "next-step language scan");
-  addCheck(result, 46, readability >= 50 && readability <= 80, `Flesch Reading Ease ${Math.round(readability)}`);
-  addCheck(result, 47, headingUrlSignals(sitePages, url, /\b(vs|versus|compare|comparison)\b/i), "URL/H1/H2 comparison scan");
-  addCheck(result, 48, headingUrlSignals(sitePages, url, /\b(best|top|roundup|list)\b/i), "URL/H1/H2 best-of scan");
-  addCheck(result, 49, headingUrlSignals(sitePages, url, /\balternatives?\b/i), "URL/H1/H2 alternatives scan");
-  addCheck(result, 50, headingUrlSignals(sitePages, url, /\b(use case|for [a-z ]+|solutions? for|industry)\b/i), "URL/H1/H2 use-case scan");
-  addCheck(result, 51, /\b(feature|capability|workflow|job to be done|JTBD|use case|outcome|helps you)\b/i.test(bodyText), "feature-to-outcome language scan");
-  addCheck(result, 52, !productObjects.length || productSchemaComplete(productObjects), productObjects.length ? `${productObjects.length} Product schema objects` : "No Product schema required");
-  addCheck(result, 53, reviewSignals >= 3 && freshReviewSignals >= 1, `${reviewSignals} review signals, ${freshReviewSignals} freshness signals`);
-  addCheck(result, 54, reviewSourceSignals >= 2 || reviewSignals >= 4, `${reviewSourceSignals} review source signals`);
-  addCheck(result, 55, /\b(refund|return|shipping|privacy|terms|contact|warranty|guarantee|secure payment)\b/i.test(bodyText), "merchant trust page/link scan");
-  addCheck(result, 56, headingUrlSignals(sitePages, url, /\b(product comparison|compare products|vs|versus)\b/i), "product comparison page scan");
-  addCheck(result, 57, headingUrlSignals(sitePages, url, /\balternatives? to\b/i), "alternatives-to page scan");
-  addCheck(result, 58, /\b(what .+ is not|limitations?|does not include|not included|not for)\b/i.test(bodyText), "negative constraint language scan");
-  addCheck(result, 59, !/\b(best|leading|world-class|cutting-edge|revolutionary|seamless)\b/i.test(bodyText) || factDensity >= 2, `Fact density ${factDensity.toFixed(1)} per 100 words`);
-  addCheck(result, 60, sectionScores.length === 0 || extractableSections / sectionScores.length >= 0.6, `${extractableSections}/${sectionScores.length} H2 sections stand alone`);
-  addCheck(result, 61, rawWords >= (/pricing|product|service|comparison|alternatives/i.test(url.pathname) ? 600 : 300), `${rawWords} visible words`);
-  addCheck(result, 62, factDensity >= 2, `${factDensity.toFixed(1)} facts per 100 words`);
-  addCheck(result, 63, evidenceSignals >= 2, `${evidenceSignals} citation/reference/source signals`);
-  addCheck(result, 64, /\b(original|proprietary|first-party|our research|our data|study|survey|benchmark|dataset)\b/i.test(bodyText), "primary-source language scan");
+  addCheck(result, 41, oaiNotChallenged, JSON.stringify(oaiWafDebug));
+  addCheck(result, 42, paywallStatus !== "red", JSON.stringify({ anonWords: browserWords, oaiWords, ratio: Number(paywallRatio.toFixed(2)), status: paywallStatus }));
+  addCheck(result, 49, alternativesSignals.score > 0, JSON.stringify(alternativesSignals));
+  addCheck(result, 50, useCaseSignals.score > 0, JSON.stringify(useCaseSignals));
+  addCheck(result, 52, productFieldScore.score >= 6, `${productFieldScore.present}/${productFieldScore.total} Product schema fields present (${productFieldScore.percent}%); score ${productFieldScore.score}/10`);
+  addCheck(result, 54, !reviewDiversitySignal.suspiciousPerfect, reviewDiversitySignal.reviewCount ? `rating ${reviewDiversitySignal.ratingValue}, reviewCount ${reviewDiversitySignal.reviewCount}` : "No suspicious aggregateRating detected");
+  addCheck(result, 55, merchantTrust.score > 0, JSON.stringify(merchantTrust));
   addCheck(result, 65, !nosnippet, nosnippet ? "nosnippet/max-snippet/data-nosnippet found" : "No nosnippet restrictions found");
-  addCheck(result, 66, rawWords > 0 && oaiWords / rawWords >= 0.8, `${oaiWords}/${rawWords} OAI/raw HTML word ratio`);
+  if (renderedWords === null) {
+    addCheck(result, 66, false, JSON.stringify({ score: 0, error: renderedResult.error ?? "Puppeteer failed", skipped: false }));
+  } else {
+    const renderedRatio = ssrRatio ?? 0;
+    addCheck(result, 66, renderedRatio >= 0.6, JSON.stringify({ score: renderedRatio >= 0.8 ? 10 : renderedRatio >= 0.6 ? 5 : 0, skipped: false, ratio: Number(renderedRatio.toFixed(2)), oaiWords, renderedWords }));
+  }
 
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
-  const categories = categorySummaries(result);
+  const citationFailedDetails = result
+    .filter((check) => check.category === "ChatGPT Citation" && !check.passed && !check.skipped)
+    .map((check) => {
+      const affected = affectedPagesFor(check);
+      return {
+        id: check.id,
+        name: check.name,
+        severity: check.severity,
+        evidence: check.evidence,
+        recommendation: CHATGPT_CITATION_RECOMMENDATIONS[check.id] ?? "Review this failed citation-readiness signal on key pages.",
+        affectedPages: affected.affectedPages,
+        sampleUrls: affected.sampleUrls
+      };
+    });
+  const citationSkippedDetails = result
+    .filter((check) => check.category === "ChatGPT Citation" && check.skipped)
+    .map((check) => ({
+      id: check.id,
+      name: check.name,
+      reason: check.evidence
+    }));
+  const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
 const rawScore = weightedCategoryScore(categories);
-  const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed);
+  const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed && !check.skipped);
   const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   const grade = gradeFor(score);
 

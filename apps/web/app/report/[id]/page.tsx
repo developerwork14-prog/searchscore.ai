@@ -29,6 +29,7 @@ export default function ReportPage() {
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
   const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation">("technical");
+  const [showCitationFailures, setShowCitationFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -253,33 +254,93 @@ export default function ReportPage() {
             </Card>
           </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {citationCategories.map((category) => (
-              <Card key={category.categoryName} className="p-5">
-                <div className="flex min-h-16 items-start justify-between gap-3">
-                  <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                  <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
-                </div>
-                <div className="mt-5 grid grid-cols-3 gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                    <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+          <div className="grid gap-4">
+            {citationCategories.map((category) => {
+              const failedDetails = category.failedCheckDetails ?? [];
+              const skippedDetails = category.skippedCheckDetails ?? [];
+
+              return (
+                <Card key={category.categoryName} className="p-5">
+                  <div className="flex min-h-16 items-start justify-between gap-3">
+                    <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                    <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
                   </div>
-                  <div>
-                    <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                    <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                  <div className="mt-5 grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                      <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                      <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                      <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                    <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
+                  <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                    <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                    <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
                   </div>
-                </div>
-                <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                  <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                  <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
-                </div>
-              </Card>
-            ))}
+                  {failedDetails.length || skippedDetails.length ? (
+                    <div className="mt-5">
+                      <button
+                        type="button"
+                        onClick={() => setShowCitationFailures((current) => !current)}
+                        className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
+                      >
+                        {showCitationFailures ? "Hide Failed Checks" : "Show Failed Checks"}
+                      </button>
+                        {showCitationFailures ? (
+                        <div className="mt-4 grid gap-3">
+                          {failedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Failed Checks</p> : null}
+                          {failedDetails.map((detail) => (
+                            <div key={detail.id} className="rounded-md border border-black/10 bg-cloud p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-black text-ink">{detail.name}</p>
+                                  <p className="mt-1 text-sm font-semibold text-ink/60">{detail.evidence}</p>
+                                </div>
+                                <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
+                              </div>
+                              <p className="mt-3 text-sm font-semibold text-ink/75">{detail.recommendation}</p>
+                              <div className="mt-3 rounded-md bg-white px-3 py-2">
+                                <p className="text-xs font-black uppercase text-ink/45">Affected Pages</p>
+                                <p className="mt-1 text-sm font-black text-ink">{detail.affectedPages}</p>
+                                {detail.sampleUrls.length ? (
+                                  <ul className="mt-2 grid gap-1">
+                                    {detail.sampleUrls.map((sampleUrl) => (
+                                      <li key={sampleUrl}>
+                                        <a className="break-all text-xs font-semibold text-teal hover:text-coral" href={sampleUrl} target="_blank">
+                                          {sampleUrl}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                          {skippedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Skipped Checks</p> : null}
+                          {skippedDetails.map((detail) => (
+                            <div key={detail.id} className="rounded-md border border-black/10 bg-white p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-black text-ink">{detail.name}</p>
+                                  <p className="mt-1 text-sm font-semibold text-ink/60">{detail.reason}</p>
+                                </div>
+                                <Badge tone="neutral">Skipped</Badge>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </Card>
+              );
+            })}
           </div>
         )}
       </section>
