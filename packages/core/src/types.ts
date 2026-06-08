@@ -109,6 +109,20 @@ export interface GeoAeoCategorySummary {
   warningChecks: number;
   score: number;
   status: TechnicalCategoryStatus;
+  failedCheckDetails?: {
+    id: number;
+    name: string;
+    severity: GeoAeoSeverity;
+    evidence: string;
+    recommendation: string;
+    affectedPages: number;
+    sampleUrls: string[];
+  }[];
+  skippedCheckDetails?: {
+    id: number;
+    name: string;
+    reason: string;
+  }[];
 }
 
 export interface GeoAeoCheckResult {
@@ -119,6 +133,7 @@ export interface GeoAeoCheckResult {
   scope: GeoAeoScope;
   passed: boolean;
   evidence: string;
+  skipped?: boolean;
 }
 
 export interface GeoAeoOpportunityCounts {
@@ -156,6 +171,17 @@ export interface PublicTechnicalAudit {
   score: number;
   grade: GeoAeoGrade;
   issues_found: number;
+  category_debug?: {
+    category: string;
+    totalChecks: number;
+    passedChecks: number;
+    failedChecks: number;
+    failedCheckDetails: {
+      id: number;
+      name: string;
+      evidence: string;
+    }[];
+  }[];
 }
 
 export interface RiskAssessment {
@@ -177,6 +203,7 @@ export interface AiVisibilityReport {
   leadMetrics: LeadGenerationMetric[];
   visibilityIssueSummary: VisibilityIssueSummary;
   technicalCategorySummaries: TechnicalCategorySummary[];
+  technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
   geoAeoAudit: GeoAeoAuditResult;
   visibilityOpportunities: string[];
   aiMarketPosition?: AiMarketPosition;

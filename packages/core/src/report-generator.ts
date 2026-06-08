@@ -260,12 +260,14 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     "Performance",
     "Schema Markup",
     "Social Metadata",
+    "External Link Trust",
     "Internal Linking",
     "Semantic HTML",
     "Accessibility",
     "International SEO",
     "Content Basics",
     "Trust Signals",
+    "Security & Spam",
     "AI Crawl Readiness"
   ];
   const categories = new Map<string, TechnicalCheckResult[]>();
@@ -454,6 +456,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     leadMetrics: leadMetrics(technicalAudit, breakdown),
     visibilityIssueSummary: publicIssueSummary(recommendations, visibilityScore),
     technicalCategorySummaries: technicalCategorySummaries(technicalAudit),
+    technicalCategoryDebug: technicalAudit.categoryDebug,
     geoAeoAudit,
     visibilityOpportunities: [
       "AI systems found opportunities to improve brand understanding.",

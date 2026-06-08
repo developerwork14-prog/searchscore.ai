@@ -7,7 +7,7 @@ interface StrategyLead {
   email: string;
   phone: string;
   brand: string;
-  reportUrl: string;
+  reportUrl: string; 
   createdAt: string;
 }
 
