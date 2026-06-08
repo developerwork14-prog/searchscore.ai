@@ -1,5 +1,6 @@
 import {
   AiVisibilityReport,
+  PublicIndexabilityAudit,
   PublicGeoAeoAudit,
   PublicTechnicalAudit,
   StructuredAiVisibilityReport,
@@ -117,9 +118,21 @@ function publicGeoAeoAudit(report: AiVisibilityReport): PublicGeoAeoAudit {
   };
 }
 
+function publicIndexabilityAudit(report: AiVisibilityReport): PublicIndexabilityAudit {
+  const audit = report.indexabilityAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
 export function toStructuredAiVisibilityReport(report: AiVisibilityReport): StructuredAiVisibilityReport {
   const technicalAudit = publicTechnicalAudit(report);
   const geoAeoAudit = publicGeoAeoAudit(report);
+  const indexabilityAudit = publicIndexabilityAudit(report);
   const overallScore = clamp(technicalAudit.score * 0.4 + geoAeoAudit.score * 0.6);
   const label = ratingLabel(overallScore);
   const opportunities = previewOpportunities(report);
@@ -142,6 +155,7 @@ export function toStructuredAiVisibilityReport(report: AiVisibilityReport): Stru
     technical_categories: report.technicalCategorySummaries ?? [],
     technical_audit: technicalAudit,
     geo_aeo_audit: geoAeoAudit,
+    indexability_audit: indexabilityAudit,
     playground_questions: [
       `What does ${report.brandName} offer in ${category}?`,
       `Is ${report.brandName} a trusted option for ${category}?`,

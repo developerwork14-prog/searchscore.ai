@@ -76,8 +76,8 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 5, category: "AI Bot Access", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
   { id: 6, category: "AI Bot Access", name: "Grok allowed", severity: "BLOCKER", scope: "domain" },
   { id: 7, category: "AI Bot Access", name: "DeepSeek allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 8, category: "AI Readiness", name: "llms.txt exists", severity: "MAJOR", scope: "domain" },
-  { id: 9, category: "AI Readiness", name: "llms.txt markdown format", severity: "MAJOR", scope: "domain" },
+  { id: 8, category: "AI Discovery Files", name: "llms.txt Exists", severity: "MAJOR", scope: "domain" },
+  { id: 9, category: "AI Discovery Files", name: "llms.txt Plain Markdown", severity: "MAJOR", scope: "domain" },
   { id: 10, category: "AI Readiness", name: "llms.txt word count", severity: "MAJOR", scope: "domain" },
   { id: 11, category: "AI Readiness", name: "llms.txt content completeness", severity: "MAJOR", scope: "domain" },
   { id: 12, category: "Entity & Trust Signals", name: "Organization sameAs depth", severity: "MAJOR", scope: "domain" },
@@ -106,55 +106,30 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 35, category: "Structured Data Integrity", name: "FAQ schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 36, category: "Structured Data Integrity", name: "Product schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" },
-  { id: 38, category: "ChatGPT Citation", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 39, category: "ChatGPT Citation", name: "ChatGPT-User allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 40, category: "ChatGPT Citation", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
-  { id: 41, category: "ChatGPT Citation", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
-  { id: 42, category: "ChatGPT Citation", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
-  { id: 49, category: "ChatGPT Citation", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
-  { id: 50, category: "ChatGPT Citation", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
-  { id: 52, category: "ChatGPT Citation", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
-  { id: 54, category: "ChatGPT Citation", name: "Review diversity check", severity: "MINOR", scope: "domain" },
-  { id: 55, category: "ChatGPT Citation", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
-  { id: 65, category: "ChatGPT Citation", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
-  { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" },
-  { id: 67, category: "Gemini Citation", name: "Google-Extended allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 68, category: "Gemini Citation", name: "WAF not blocking Google-Extended", severity: "BLOCKER", scope: "domain" },
-  { id: 69, category: "Gemini Citation", name: "IP range accessible", severity: "BLOCKER", scope: "domain" },
-  { id: 70, category: "Gemini Citation", name: "NAP matches GBP consistently", severity: "BLOCKER", scope: "domain" },
-  { id: 71, category: "Gemini Citation", name: "Cookie consent not blocking DOM", severity: "BLOCKER", scope: "page" },
-  { id: 72, category: "Gemini Citation", name: "Server-side schema injection", severity: "BLOCKER", scope: "page" },
-  { id: 73, category: "Gemini Citation", name: "GoogleOther allowed", severity: "MAJOR", scope: "domain" },
-  { id: 74, category: "Gemini Citation", name: "Speakable schema presence", severity: "MINOR", scope: "page" },
-  { id: 75, category: "Gemini Citation", name: "Stock photo detection", severity: "MINOR", scope: "page" },
-  { id: 76, category: "Gemini Citation", name: "OCR legibility", severity: "MINOR", scope: "page" },
-  { id: 77, category: "Gemini Citation", name: "VideoObject schema", severity: "MINOR", scope: "page" },
-  { id: 78, category: "Gemini Citation", name: "Transcript-HTML alignment", severity: "MAJOR", scope: "page" },
-  { id: 79, category: "Indexability", name: "No noindex anywhere", severity: "BLOCKER", scope: "page" },
-  { id: 80, category: "Indexability", name: "Self-referencing canonical", severity: "BLOCKER", scope: "page" },
-  { id: 81, category: "Indexability", name: "Canonical absolute HTTPS", severity: "MAJOR", scope: "page" },
-  { id: 82, category: "Indexability", name: "Canonical target returns 200", severity: "BLOCKER", scope: "page" },
-  { id: 83, category: "Indexability", name: "No canonical chains", severity: "MAJOR", scope: "page" },
-  { id: 84, category: "Indexability", name: "No HTTP header canonical conflict", severity: "MAJOR", scope: "page" },
-  { id: 85, category: "Indexability", name: "Canonical not pointing to noindex", severity: "BLOCKER", scope: "page" },
-  { id: 86, category: "Indexability", name: "No nosnippet on key pages", severity: "BLOCKER", scope: "page" },
-  { id: 87, category: "Indexability", name: "No max-snippet:0/low", severity: "BLOCKER", scope: "page" },
-  { id: 88, category: "Indexability", name: "No data-nosnippet key content", severity: "MAJOR", scope: "page" },
-  { id: 89, category: "Indexability", name: "No max-image-preview:none", severity: "MINOR", scope: "page" },
-  { id: 90, category: "Indexability", name: "HTTP to HTTPS no dual serving", severity: "BLOCKER", scope: "domain" },
-  { id: 91, category: "Indexability", name: "WWW/non-WWW handled", severity: "BLOCKER", scope: "domain" },
-  { id: 92, category: "Indexability", name: "No login/paywall gate", severity: "BLOCKER", scope: "page" },
-  { id: 93, category: "Indexability", name: "CSS hidden under 100 words", severity: "MAJOR", scope: "page" },
-  { id: 94, category: "Indexability", name: "No consent wall blocking", severity: "BLOCKER", scope: "page" },
-  { id: 95, category: "Indexability", name: "No back-button hijack", severity: "BLOCKER", scope: "page" },
-  { id: 96, category: "Indexability", name: "No infinite scroll dependency", severity: "MAJOR", scope: "page" },
-  { id: 97, category: "Indexability", name: "Hreflang correct", severity: "MAJOR", scope: "page" },
-  { id: 98, category: "Indexability", name: "Pagination rel next/prev", severity: "MINOR", scope: "page" },
-  { id: 99, category: "Indexability", name: "No soft-404s", severity: "MAJOR", scope: "page" },
-  { id: 100, category: "Indexability", name: "Parameter URL managed", severity: "MAJOR", scope: "page" },
-  { id: 101, category: "Indexability", name: "Google index verified", severity: "BLOCKER", scope: "domain" },
-  { id: 102, category: "Indexability", name: "Bing index verified", severity: "BLOCKER", scope: "domain" },
-  { id: 103, category: "Indexability", name: "No noindex in sitemap", severity: "MAJOR", scope: "domain" }
+  { id: 38, category: "Crawlability", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 39, category: "Crawlability", name: "ChatGPT-User allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 40, category: "Crawlability", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
+  { id: 41, category: "Crawlability", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
+  { id: 42, category: "Technical Access", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
+  { id: 49, category: "Content Structure", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
+  { id: 50, category: "Content Structure", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
+  { id: 52, category: "Content Quality", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
+  { id: 54, category: "Content Quality", name: "Review diversity check", severity: "MINOR", scope: "domain" },
+  { id: 55, category: "Content Quality", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
+  { id: 65, category: "Technical Access", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
+  { id: 66, category: "Crawlability", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" },
+  { id: 67, category: "Gemini Crawlability", name: "Google-Extended allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 68, category: "Gemini Crawlability", name: "WAF not blocking Google-Extended", severity: "BLOCKER", scope: "domain" },
+  { id: 69, category: "Gemini Crawlability", name: "IP range accessible", severity: "BLOCKER", scope: "domain" },
+  { id: 70, category: "Local & E-Commerce", name: "NAP matches GBP consistently", severity: "BLOCKER", scope: "domain" },
+  { id: 71, category: "Gemini Crawlability", name: "Cookie consent not blocking DOM", severity: "BLOCKER", scope: "page" },
+  { id: 72, category: "Schema & Technical", name: "Server-side schema injection", severity: "BLOCKER", scope: "page" },
+  { id: 73, category: "Robots & Bot Access", name: "GoogleOther allowed", severity: "MAJOR", scope: "domain" },
+  { id: 74, category: "Schema & Technical", name: "Speakable schema presence", severity: "MINOR", scope: "page" },
+  { id: 75, category: "Media & Visuals", name: "Stock photo detection", severity: "MINOR", scope: "page" },
+  { id: 76, category: "Media & Visuals", name: "OCR legibility", severity: "MINOR", scope: "page" },
+  { id: 77, category: "Schema & Technical", name: "VideoObject schema", severity: "MINOR", scope: "page" },
+  { id: 78, category: "Media & Visuals", name: "Transcript-HTML alignment", severity: "MAJOR", scope: "page" }
 ];
 
 const CATEGORY_ORDER = [
@@ -166,24 +141,41 @@ const CATEGORY_ORDER = [
   "Local GEO Signals",
   "AI Crawlability",
   "Structured Data Integrity",
-  "ChatGPT Citation",
-  "Gemini Citation",
-  "Indexability"
+  "Crawlability",
+  "Technical Access",
+  "Content Structure",
+  "Content Quality",
+  "Gemini Crawlability",
+  "Local & E-Commerce",
+  "Schema & Technical",
+  "Media & Visuals",
+  "Robots & Bot Access",
+  "AI Discovery Files"
 ];
 
 const CATEGORY_WEIGHTS: Record<string, number> = {
   "AI Bot Access": 20,
-  "AI Readiness": 10,
+  "AI Readiness": 5,
   "Entity & Trust Signals": 20,
   "FAQ & Answer Optimization": 15,
   "Content Authority": 10,
   "Local GEO Signals": 15,
   "AI Crawlability": 5,
   "Structured Data Integrity": 5,
-  "ChatGPT Citation": 15,
-  "Gemini Citation": 15,
-  "Indexability": 15
+  "Crawlability": 7,
+  "Technical Access": 3,
+  "Content Structure": 2,
+  "Content Quality": 3,
+  "Gemini Crawlability": 6,
+  "Local & E-Commerce": 2,
+  "Schema & Technical": 3,
+  "Media & Visuals": 2,
+  "Robots & Bot Access": 2,
+  "AI Discovery Files": 5
 };
+
+const CHATGPT_CITATION_CATEGORIES = new Set(["Crawlability", "Technical Access", "Content Structure", "Content Quality"]);
+const GEMINI_CITATION_CATEGORIES = new Set(["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"]);
 
 const CITATION_RECOMMENDATIONS: Record<number, string> = {
   38: "Allow OAI-SearchBot in robots.txt so ChatGPT search can crawl public pages.",
@@ -238,14 +230,14 @@ const CITATION_RECOMMENDATIONS: Record<number, string> = {
 };
 
 function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
-  const totalWeight = Object.values(CATEGORY_WEIGHTS).reduce((a, b) => a + b, 0);
+  const totalWeight = categories.reduce((sum, category) => sum + (CATEGORY_WEIGHTS[category.categoryName] ?? 0), 0);
 
   const weighted = categories.reduce((sum, category) => {
     const weight = CATEGORY_WEIGHTS[category.categoryName] ?? 0;
     return sum + category.score * weight;
   }, 0);
 
-  return clamp(weighted / totalWeight);
+  return totalWeight ? clamp(weighted / totalWeight) : 0;
 }
 
 function clamp(value: number, min = 0, max = 100) {
@@ -940,11 +932,19 @@ function cookieConsentEvidence(html: string) {
   return { pass: rawWordCount > 200 && !consentWallDetected, rawWordCount, consentWallDetected };
 }
 
-function speakableEvidence(blocks: unknown[]) {
+function speakableEvidence(blocks: unknown[], pageText = "") {
+  const isNewsOrPublisher =
+    /\b(news|publisher|magazine|journal|article|editorial)\b/i.test(pageText);
+
   const found = findObjects(blocks, (record) =>
     flattenSchemaTypes(record).some((type) => /SpeakableSpecification/i.test(type)) ||
     Object.prototype.hasOwnProperty.call(record, "speakable")
   ).length > 0;
+
+  if (!isNewsOrPublisher && !found) {
+    return { skipped: true, pass: true, found, reason: "Not applicable for non-news/media websites" };
+  }
+
   return { pass: found, found };
 }
 
@@ -1368,7 +1368,7 @@ function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: str
 }
 
 function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFailedCheckDetail[] = [], skippedDetails: GeoAeoSkippedCheckDetail[] = []): GeoAeoCategorySummary[] {
-  return CATEGORY_ORDER.map((categoryName) => {
+  return CATEGORY_ORDER.filter((categoryName) => checks.some((check) => check.category === categoryName)).map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
     const scorableChecks = categoryChecks.filter((check) => !check.skipped);
     const failedChecks = scorableChecks.filter((check) => !check.passed).length;
@@ -1382,7 +1382,9 @@ function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFai
       passedChecks: scorableChecks.length - failedChecks,
       failedChecks,
       warningChecks,
-      score: scorableChecks.length ? clamp(((scorableChecks.length - failedChecks) / scorableChecks.length) * 100) : 0,
+      score: scorableChecks.length
+  ? clamp(((scorableChecks.length - failedChecks) / scorableChecks.length) * 100)
+  : 100,
       status: statusFor(failedChecks),
       ...(categoryFailedDetails.length ? { failedCheckDetails: categoryFailedDetails } : {}),
       ...(categorySkippedDetails.length ? { skippedCheckDetails: categorySkippedDetails } : {})
@@ -1392,7 +1394,7 @@ function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFai
 
 function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
   const scoped = checks.filter((check) => check.scope === scope && !check.skipped);
-  if (!scoped.length) return 0;
+  if (!scoped.length) return 100;
   return clamp((scoped.filter((check) => check.passed).length / scoped.length) * 100);
 }
 
@@ -1699,50 +1701,11 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     const transcriptScore = transcriptAlignment.score ?? 0;
     addCheck(result, 78, transcriptScore >= 5, JSON.stringify(transcriptAlignment));
   }
-  addCheck(result, 79, noindexFound.length === 0, JSON.stringify({ pass: noindexFound.length === 0, foundIn: noindexFound }));
-  const canonicalSelfReferences = Boolean(canonicalUrl && normalizeComparableUrl(canonicalUrl) === normalizeComparableUrl(normalizedUrl));
-  addCheck(result, 80, canonicalSelfReferences, JSON.stringify(canonicalUrl
-    ? { pass: canonicalSelfReferences, pageUrl: normalizedUrl, canonicalUrl }
-    : { pass: false, reason: "No canonical tag found", canonicalUrl: null }
-  ));
-  if (!canonicalUrl) {
-    addSkippedCheck(result, 81, JSON.stringify({ skipped: true, reason: "Canonical URL not found - fix canonical detection first" }));
-    addSkippedCheck(result, 82, JSON.stringify({ skipped: true, reason: "Canonical URL not found - fix canonical detection first" }));
-  } else {
-    addCheck(result, 81, /^https:\/\//i.test(rawCanonicalUrl || responseHeaderCanonical) && /^https:\/\//i.test(canonicalUrl), JSON.stringify({ pass: /^https:\/\//i.test(rawCanonicalUrl || responseHeaderCanonical) && /^https:\/\//i.test(canonicalUrl), canonicalUrl }));
-    addCheck(result, 82, canonicalTargetNoRedirect?.response.status === 200, JSON.stringify({ pass: canonicalTargetNoRedirect?.response.status === 200, canonicalUrl, status: canonicalTargetNoRedirect?.response.status ?? 0 }));
-  }
-  addCheck(result, 83, !canonicalUrl || !secondCanonicalUrl || normalizeComparableUrl(secondCanonicalUrl) === normalizeComparableUrl(canonicalUrl), JSON.stringify({ pass: !canonicalUrl || !secondCanonicalUrl || normalizeComparableUrl(secondCanonicalUrl) === normalizeComparableUrl(canonicalUrl), hops: secondCanonicalUrl && normalizeComparableUrl(secondCanonicalUrl) !== normalizeComparableUrl(canonicalUrl) ? 2 : canonicalUrl ? 1 : 0, chain: [normalizedUrl, canonicalUrl, secondCanonicalUrl].filter(Boolean) }));
-  addCheck(result, 84, !responseHeaderCanonical || !htmlCanonical || normalizeComparableUrl(responseHeaderCanonical) === normalizeComparableUrl(htmlCanonical), JSON.stringify({ pass: !responseHeaderCanonical || !htmlCanonical || normalizeComparableUrl(responseHeaderCanonical) === normalizeComparableUrl(htmlCanonical), headerCanonical: responseHeaderCanonical, htmlCanonical }));
-  addCheck(result, 85, !canonicalTarget || !noindexFoundIn(canonicalTarget.text, canonicalTarget.response), JSON.stringify({ pass: !canonicalTarget || !noindexFoundIn(canonicalTarget.text, canonicalTarget.response), canonicalUrl, targetNoindex: Boolean(canonicalTarget && noindexFoundIn(canonicalTarget.text, canonicalTarget.response)) }));
-  addCheck(result, 86, !nosnippetFound(pageHtml, serverPage?.response), JSON.stringify({ pass: !nosnippetFound(pageHtml, serverPage?.response) }));
-  addCheck(result, 87, maxSnippet === null || maxSnippet === -1 || maxSnippet >= 1, JSON.stringify({
-    pass: maxSnippet === null || maxSnippet === -1 || maxSnippet >= 1,
-    value: maxSnippet,
-    status: maxSnippet === 0 ? "red" : maxSnippet !== null && maxSnippet >= 1 && maxSnippet < 50 ? "amber" : "green",
-    note: "max-snippet:-1 means unlimited"
-  }));
-  addCheck(result, 88, dataNosnippet.pass, JSON.stringify(dataNosnippet));
-  addCheck(result, 89, maxImagePreview !== "none", JSON.stringify({ score: maxImagePreview === "none" ? 0 : maxImagePreview === "standard" ? 5 : 10, value: maxImagePreview || "default" }));
-  addCheck(result, 90, httpHttps.pass, JSON.stringify(httpHttps));
-  addCheck(result, 91, wwwVariant.pass, JSON.stringify(wwwVariant));
-  addCheck(result, 92, anonymousWordCount > 200, JSON.stringify({ pass: anonymousWordCount > 200, anonymousWordCount }));
-  addCheck(result, 93, hiddenEvidence.pass, JSON.stringify(hiddenEvidence));
-  addCheck(result, 94, consentEvidence.pass, JSON.stringify({ pass: consentEvidence.pass, rawWordCount: consentEvidence.rawWordCount, consentDetected: consentEvidence.consentWallDetected }));
-  addCheck(result, 95, backButtonHijack.pass, JSON.stringify(backButtonHijack));
-  addCheck(result, 96, infiniteScroll.pass, JSON.stringify(infiniteScroll));
-  addCheck(result, 97, hreflang.pass, JSON.stringify(hreflang));
-  addCheck(result, 98, pagination.score >= 5, JSON.stringify(pagination));
-  addCheck(result, 99, soft404.pass, JSON.stringify(soft404));
-  addCheck(result, 100, parameterUrl.pass, JSON.stringify(parameterUrl));
-  addCheck(result, 101, googleIndex.pass, JSON.stringify(googleIndex));
-  addCheck(result, 102, bingIndex.pass, JSON.stringify(bingIndex));
-  addCheck(result, 103, sitemapNoindex.pass, JSON.stringify(sitemapNoindex));
 
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
   const citationFailedDetails = result
-    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation" || check.category === "Indexability") && !check.passed && !check.skipped)
+    .filter((check) => (CHATGPT_CITATION_CATEGORIES.has(check.category) || GEMINI_CITATION_CATEGORIES.has(check.category)) && !check.passed && !check.skipped)
     .map((check) => {
       const affected = affectedPagesFor(check);
       return {
@@ -1756,14 +1719,14 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
       };
     });
   const citationSkippedDetails = result
-    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation" || check.category === "Indexability") && check.skipped)
+    .filter((check) => (CHATGPT_CITATION_CATEGORIES.has(check.category) || GEMINI_CITATION_CATEGORIES.has(check.category)) && check.skipped)
     .map((check) => ({
       id: check.id,
       name: check.name,
       reason: check.evidence
     }));
   const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
-const rawScore = weightedCategoryScore(categories);
+  const rawScore = weightedCategoryScore(categories);
   const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed && !check.skipped);
   const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   const grade = gradeFor(score);

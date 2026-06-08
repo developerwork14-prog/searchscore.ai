@@ -13,6 +13,7 @@ import {
 } from "./types.js";
 import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult, TechnicalSeverity } from "./technical-audit.js";
 import { runGeoAeoAudit } from "./geo-aeo-audit.js";
+import { runIndexabilityAudit } from "./indexability-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
 
 function clamp(value: number, min = 0, max = 100) {
@@ -393,10 +394,12 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   const htmlContentPromise = fetchHomepageHtml(normalizedUrl);
   const technicalAuditPromise = runTechnicalAudit(normalizedUrl);
   const geoAeoAuditPromise = htmlContentPromise.then((html) => runGeoAeoAudit(normalizedUrl, html));
-  const [technicalAudit, htmlContent, geoAeoAudit] = await Promise.all([
+  const indexabilityAuditPromise = htmlContentPromise.then((html) => runIndexabilityAudit(normalizedUrl, html));
+  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit] = await Promise.all([
     technicalAuditPromise,
     htmlContentPromise,
-    geoAeoAuditPromise
+    geoAeoAuditPromise,
+    indexabilityAuditPromise
   ]);
   const classification = classifyBusiness(normalizedUrl, htmlContent);
   const category = classification.subIndustry;
@@ -458,6 +461,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     technicalCategorySummaries: technicalCategorySummaries(technicalAudit),
     technicalCategoryDebug: technicalAudit.categoryDebug,
     geoAeoAudit,
+    indexabilityAudit,
     visibilityOpportunities: [
       "AI systems found opportunities to improve brand understanding.",
       "Authority and trust signals can be strengthened.",
