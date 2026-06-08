@@ -85,7 +85,8 @@ function publicTechnicalAudit(report: AiVisibilityReport): PublicTechnicalAudit 
   return {
     score,
     grade: auditGrade(score),
-    issues_found: issuesFound
+    issues_found: issuesFound,
+    category_debug: report.technicalCategoryDebug
   };
 }
 

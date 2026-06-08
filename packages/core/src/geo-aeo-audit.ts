@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { crawlSite } from "./site-crawler.js";
+import { crawlSite, fetchSitemapUrls } from "./site-crawler.js";
 
 export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR";
 export type GeoAeoScope = "page" | "domain";
@@ -17,6 +17,7 @@ export interface GeoAeoCheckDefinition {
 export interface GeoAeoCheckResult extends GeoAeoCheckDefinition {
   passed: boolean;
   evidence: string;
+  skipped?: boolean;
 }
 
 export interface GeoAeoCategorySummary {
@@ -27,6 +28,24 @@ export interface GeoAeoCategorySummary {
   warningChecks: number;
   score: number;
   status: GeoAeoStatus;
+  failedCheckDetails?: GeoAeoFailedCheckDetail[];
+  skippedCheckDetails?: GeoAeoSkippedCheckDetail[];
+}
+
+export interface GeoAeoFailedCheckDetail {
+  id: number;
+  name: string;
+  severity: GeoAeoSeverity;
+  evidence: string;
+  recommendation: string;
+  affectedPages: number;
+  sampleUrls: string[];
+}
+
+export interface GeoAeoSkippedCheckDetail {
+  id: number;
+  name: string;
+  reason: string;
 }
 
 export interface GeoAeoOpportunityCounts {
@@ -86,7 +105,56 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 34, category: "AI Crawlability", name: "Data point density", severity: "MAJOR", scope: "page" },
   { id: 35, category: "Structured Data Integrity", name: "FAQ schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 36, category: "Structured Data Integrity", name: "Product schema-DOM match", severity: "BLOCKER", scope: "page" },
-  { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" }
+  { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" },
+  { id: 38, category: "ChatGPT Citation", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 39, category: "ChatGPT Citation", name: "ChatGPT-User allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 40, category: "ChatGPT Citation", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
+  { id: 41, category: "ChatGPT Citation", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
+  { id: 42, category: "ChatGPT Citation", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
+  { id: 49, category: "ChatGPT Citation", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
+  { id: 50, category: "ChatGPT Citation", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
+  { id: 52, category: "ChatGPT Citation", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
+  { id: 54, category: "ChatGPT Citation", name: "Review diversity check", severity: "MINOR", scope: "domain" },
+  { id: 55, category: "ChatGPT Citation", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
+  { id: 65, category: "ChatGPT Citation", name: "No nosnippet restrictions", severity: "BLOCKER", scope: "page" },
+  { id: 66, category: "ChatGPT Citation", name: "SSR for OAI-SearchBot", severity: "BLOCKER", scope: "page" },
+  { id: 67, category: "Gemini Citation", name: "Google-Extended allowed", severity: "BLOCKER", scope: "domain" },
+  { id: 68, category: "Gemini Citation", name: "WAF not blocking Google-Extended", severity: "BLOCKER", scope: "domain" },
+  { id: 69, category: "Gemini Citation", name: "IP range accessible", severity: "BLOCKER", scope: "domain" },
+  { id: 70, category: "Gemini Citation", name: "NAP matches GBP consistently", severity: "BLOCKER", scope: "domain" },
+  { id: 71, category: "Gemini Citation", name: "Cookie consent not blocking DOM", severity: "BLOCKER", scope: "page" },
+  { id: 72, category: "Gemini Citation", name: "Server-side schema injection", severity: "BLOCKER", scope: "page" },
+  { id: 73, category: "Gemini Citation", name: "GoogleOther allowed", severity: "MAJOR", scope: "domain" },
+  { id: 74, category: "Gemini Citation", name: "Speakable schema presence", severity: "MINOR", scope: "page" },
+  { id: 75, category: "Gemini Citation", name: "Stock photo detection", severity: "MINOR", scope: "page" },
+  { id: 76, category: "Gemini Citation", name: "OCR legibility", severity: "MINOR", scope: "page" },
+  { id: 77, category: "Gemini Citation", name: "VideoObject schema", severity: "MINOR", scope: "page" },
+  { id: 78, category: "Gemini Citation", name: "Transcript-HTML alignment", severity: "MAJOR", scope: "page" },
+  { id: 79, category: "Indexability", name: "No noindex anywhere", severity: "BLOCKER", scope: "page" },
+  { id: 80, category: "Indexability", name: "Self-referencing canonical", severity: "BLOCKER", scope: "page" },
+  { id: 81, category: "Indexability", name: "Canonical absolute HTTPS", severity: "MAJOR", scope: "page" },
+  { id: 82, category: "Indexability", name: "Canonical target returns 200", severity: "BLOCKER", scope: "page" },
+  { id: 83, category: "Indexability", name: "No canonical chains", severity: "MAJOR", scope: "page" },
+  { id: 84, category: "Indexability", name: "No HTTP header canonical conflict", severity: "MAJOR", scope: "page" },
+  { id: 85, category: "Indexability", name: "Canonical not pointing to noindex", severity: "BLOCKER", scope: "page" },
+  { id: 86, category: "Indexability", name: "No nosnippet on key pages", severity: "BLOCKER", scope: "page" },
+  { id: 87, category: "Indexability", name: "No max-snippet:0/low", severity: "BLOCKER", scope: "page" },
+  { id: 88, category: "Indexability", name: "No data-nosnippet key content", severity: "MAJOR", scope: "page" },
+  { id: 89, category: "Indexability", name: "No max-image-preview:none", severity: "MINOR", scope: "page" },
+  { id: 90, category: "Indexability", name: "HTTP to HTTPS no dual serving", severity: "BLOCKER", scope: "domain" },
+  { id: 91, category: "Indexability", name: "WWW/non-WWW handled", severity: "BLOCKER", scope: "domain" },
+  { id: 92, category: "Indexability", name: "No login/paywall gate", severity: "BLOCKER", scope: "page" },
+  { id: 93, category: "Indexability", name: "CSS hidden under 100 words", severity: "MAJOR", scope: "page" },
+  { id: 94, category: "Indexability", name: "No consent wall blocking", severity: "BLOCKER", scope: "page" },
+  { id: 95, category: "Indexability", name: "No back-button hijack", severity: "BLOCKER", scope: "page" },
+  { id: 96, category: "Indexability", name: "No infinite scroll dependency", severity: "MAJOR", scope: "page" },
+  { id: 97, category: "Indexability", name: "Hreflang correct", severity: "MAJOR", scope: "page" },
+  { id: 98, category: "Indexability", name: "Pagination rel next/prev", severity: "MINOR", scope: "page" },
+  { id: 99, category: "Indexability", name: "No soft-404s", severity: "MAJOR", scope: "page" },
+  { id: 100, category: "Indexability", name: "Parameter URL managed", severity: "MAJOR", scope: "page" },
+  { id: 101, category: "Indexability", name: "Google index verified", severity: "BLOCKER", scope: "domain" },
+  { id: 102, category: "Indexability", name: "Bing index verified", severity: "BLOCKER", scope: "domain" },
+  { id: 103, category: "Indexability", name: "No noindex in sitemap", severity: "MAJOR", scope: "domain" }
 ];
 
 const CATEGORY_ORDER = [
@@ -97,7 +165,10 @@ const CATEGORY_ORDER = [
   "Content Authority",
   "Local GEO Signals",
   "AI Crawlability",
-  "Structured Data Integrity"
+  "Structured Data Integrity",
+  "ChatGPT Citation",
+  "Gemini Citation",
+  "Indexability"
 ];
 
 const CATEGORY_WEIGHTS: Record<string, number> = {
@@ -108,7 +179,62 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "Content Authority": 10,
   "Local GEO Signals": 15,
   "AI Crawlability": 5,
-  "Structured Data Integrity": 5
+  "Structured Data Integrity": 5,
+  "ChatGPT Citation": 15,
+  "Gemini Citation": 15,
+  "Indexability": 15
+};
+
+const CITATION_RECOMMENDATIONS: Record<number, string> = {
+  38: "Allow OAI-SearchBot in robots.txt so ChatGPT search can crawl public pages.",
+  39: "Allow ChatGPT-User in robots.txt for user-triggered browsing and citations.",
+  40: "Separate GPTBot training rules from OAI-SearchBot and ChatGPT-User access rules.",
+  41: "Allow OAI user agents through WAF, bot protection, and challenge pages.",
+  42: "Make citable page content visible without login, interstitials, or paywalls.",
+  49: "Create alternatives pages for high-intent comparison queries.",
+  50: "Create use-case or industry pages that map the offer to specific buyer situations.",
+  52: "Complete Product schema with name plus offers, reviews, or aggregate ratings where applicable.",
+  54: "Show reviews from diverse sources or multiple trust platforms.",
+  55: "Link merchant trust pages such as privacy, terms, refund, warranty, shipping, contact, and secure payment.",
+  65: "Remove nosnippet, max-snippet:0, X-Robots-Tag restrictions, and data-nosnippet from citable content.",
+  66: "Ensure OAI-SearchBot receives raw HTML content comparable to normal page content.",
+  67: "Allow Google-Extended in robots.txt when Gemini citation visibility is desired.",
+  68: "Allow Google-Extended through WAF, bot protection, and challenge rules.",
+  69: "Review server/WAF IP allow rules; true Google IP verification needs manual network testing.",
+  70: "Keep business name, address, and phone consistent across homepage, contact page, footer, and schema.",
+  71: "Ensure cookie consent does not replace the crawlable raw HTML body.",
+  72: "Render JSON-LD schema server-side instead of injecting it only after JavaScript.",
+  73: "Allow GoogleOther in robots.txt for Google systems that support AI and search features.",
+  74: "Add speakable schema only where the content is appropriate for voice-style extraction.",
+  75: "Replace stock imagery with original images where trust and citation quality matter.",
+  76: "Add meaningful alt text to images that communicate important page content.",
+  77: "Add VideoObject schema for embedded videos on key pages.",
+  78: "Publish crawlable transcript or caption text that aligns with the visible page content.",
+  79: "Remove noindex directives from meta robots, X-Robots-Tag, and canonical targets for pages meant to rank.",
+  80: "Use a self-referencing canonical on the indexable page.",
+  81: "Use an absolute https canonical URL.",
+  82: "Point canonical URLs directly to pages that return HTTP 200.",
+  83: "Avoid canonical chains; point directly to the final canonical target.",
+  84: "Keep HTTP Link canonical and HTML canonical consistent, or remove the header canonical.",
+  85: "Do not canonicalize indexable pages to a noindexed target.",
+  86: "Remove nosnippet directives from pages that should be eligible for rich extraction.",
+  87: "Avoid max-snippet:0 or very low max-snippet values on key pages.",
+  88: "Remove data-nosnippet from substantial key content.",
+  89: "Allow image previews with max-image-preview:large or no restrictive directive.",
+  90: "Redirect HTTP requests to HTTPS with a permanent redirect.",
+  91: "Choose one canonical host variant and redirect the other consistently.",
+  92: "Expose substantial content without login or paywall gates.",
+  93: "Keep hidden text below spam-risk thresholds.",
+  94: "Ensure cookie consent does not block crawlable page content.",
+  95: "Remove scripts that manipulate browser history in ways that trap users.",
+  96: "Provide crawlable pagination when using infinite-scroll style interfaces.",
+  97: "Add valid hreflang alternates with x-default and self-reference for multilingual pages.",
+  98: "Handle paginated pages with clear pagination links and canonicals.",
+  99: "Return a real 404/410 for missing pages instead of a soft-404 200 response.",
+  100: "Canonicalize parameter URLs to clean equivalents.",
+  101: "Verify Google index coverage in Google Search Console.",
+  102: "Verify Bing index coverage in Bing Webmaster Tools.",
+  103: "Remove noindexed URLs from XML sitemaps."
 };
 
 function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
@@ -160,6 +286,22 @@ async function fetchText(url: string, timeoutMs = 9000) {
   }
 }
 
+async function fetchTextWithUserAgent(url: string, userAgent: string, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "user-agent": userAgent, accept: "text/html,text/plain,*/*" }
+    });
+    const text = await response.text().catch(() => "");
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function normalizeUrl(value: string) {
   return value.startsWith("http") ? value : `https://${value}`;
 }
@@ -175,30 +317,35 @@ function sameOrigin(url: URL, href: string) {
 interface LocalPageHtml {
   source: string;
   html: string;
+  url?: string;
 }
 
 async function fetchLikelyLocalPageEntries(origin: string): Promise<LocalPageHtml[]> {
   const pages = [
+    ["/", "homepage"],
     ["/contact/", "contact page"],
     ["/contact-us/", "contact page"],
+    ["/reach-us/", "contact page"],
+    ["/get-in-touch/", "contact page"],
     ["/about/", "about page"],
     ["/about-us/", "about page"],
+    ["/store-locator/", "store locator page"],
     ["/locations/", "location page"],
     ["/location/", "location page"]
   ] satisfies Array<[string, string]>;
 
-  const fetched = await Promise.all(pages.map(async ([path, source]) => {
+  const fetched = await Promise.all(pages.map(async ([path, source]): Promise<LocalPageHtml | null> => {
     try {
       const { response, text } = await fetchText(`${origin}${path}`, 2000);
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return null;
-      return { source, html: text } satisfies LocalPageHtml;
+      return { source, html: text, url: `${origin}${path}` } satisfies LocalPageHtml;
     } catch {
       return null;
     }
   }));
 
-  return fetched.filter((page): page is LocalPageHtml => Boolean(page));
+  return fetched.filter((page): page is LocalPageHtml => page !== null);
 }
 
 export async function fetchLikelyLocalPages(origin: string): Promise<string[]> {
@@ -438,38 +585,819 @@ function robotGroupAllows(robotsText: string, bot: string) {
   });
 }
 
+function robotGroupFor(robotsText: string, bot: string) {
+  return robotsText
+    .split(/\n(?=user-agent\s*:)/i)
+    .map((group) => group.trim())
+    .find((group) => [...group.matchAll(/^user-agent\s*:\s*(.+)$/gim)].some((match) => match[1].trim().toLowerCase() === bot.toLowerCase())) ?? "";
+}
+
+function challengeDetected(status: number, text: string) {
+  if (status === 403 || status === 503) return true;
+  if (status !== 200) return false;
+  if (text.length >= 5000) return false;
+  return /\b(captcha|challenge|blocked|cloudflare)\b/i.test(text);
+}
+
+function htmlContentExists(text: string) {
+  return /<html[\s>]|<!doctype html|<body[\s>]|<main[\s>]|<article[\s>]/i.test(text) || cheerio.load(text)("body").text().trim().length > 0;
+}
+
+function h2Texts($: cheerio.CheerioAPI) {
+  return $("h2").toArray().map((el) => $(el).text().trim()).filter(Boolean);
+}
+
+function headingUrlSignals(pages: LocalPageHtml[], url: URL, pattern: RegExp) {
+  const pageSignals = pages.filter((page) => {
+    const page$ = cheerio.load(page.html);
+    const headings = page$("h1,h2").toArray().map((el) => page$(el).text()).join(" ");
+    return pattern.test(`${page.source} ${headings}`);
+  }).length;
+  return pattern.test(url.pathname) || pageSignals > 0;
+}
+
+function pageSearchText(page: LocalPageHtml) {
+  const page$ = cheerio.load(page.html);
+  return `${page.url ?? ""} ${page$("title").first().text()} ${page$("h1,h2").text()}`.replace(/\s+/g, " ").trim();
+}
+
+function urlPathSearchText(href: string) {
+  try {
+    const parsed = new URL(href);
+    return decodeURIComponent(parsed.pathname).replace(/[-_]+/g, " ");
+  } catch {
+    return href.replace(/[-_]+/g, " ");
+  }
+}
+
+function compactSignals(signals: string[], limit = 10) {
+  return [...new Set(signals.filter(Boolean))].slice(0, limit);
+}
+
+function pageUrlSignals(pages: LocalPageHtml[], urls: string[], pattern: RegExp) {
+  const urlMatches = urls.filter((href) => pattern.test(`${href} ${urlPathSearchText(href)}`)).length;
+  const headingMatches = pages.filter((page) => pattern.test(pageSearchText(page))).length;
+  return { urlMatches, headingMatches, total: urlMatches + headingMatches };
+}
+
+function alternativesPageDetection(pages: LocalPageHtml[], urls: string[]) {
+  const strongUrlPattern = /\/(?:alternatives?|alternative-to|vs|compare|comparison)(?:\/|$)|\/[^/?#]+-(?:alternative|alternatives)(?:\/|$)|\/[^/?#]+-vs-[^/?#]+(?:\/|$)|\/best-[^/?#]+(?:\/|$)|\/[^/?#]+-alternatives?(?:\/|$)/i;
+  const textPattern = /\b(vs|versus|alternative|alternatives|compare|comparison|instead of|switch from)\b/i;
+  const blogPartialPattern = /\/(?:blog|articles?|resources?|posts?)\/[^?#]*(?:\bvs\b|compare)/i;
+
+  const strongSignals = [
+    ...urls.filter((href) => strongUrlPattern.test(href) || textPattern.test(urlPathSearchText(href))),
+    ...pages
+      .filter((page) => textPattern.test(pageSearchText(page)))
+      .map((page) => page.url ?? pageSearchText(page))
+  ];
+  const partialSignals = urls.filter((href) => blogPartialPattern.test(href));
+  const signals = compactSignals(strongSignals.length ? strongSignals : partialSignals);
+  const score = strongSignals.length ? 10 : partialSignals.length ? 5 : 0;
+
+  return { found: score > 0, signals, score };
+}
+
+function useCasePageDetection(pages: LocalPageHtml[], urls: string[]) {
+  const urlPattern = /\/(?:for-[^/?#]+|use-cases?|solutions?)(?:\/|$)|\/personal-loan-for-[^/?#]+|\/(?:salaried|freelancers?|self-employed|medical|travel|home-renovation|education|wedding|business|professionals?)(?:\/|$)/i;
+  const textPattern = /\b(personal loan for (?:medical expenses?|travel|home renovation|education|wedding|business)|loans? for (?:freelancers?|salaried professionals?|self-employed|medical|travel|home renovation|education|wedding|business)|for (?:medical expenses?|travel|home renovation|freelancers?|salaried professionals?|self-employed))\b/i;
+  const signals = compactSignals([
+    ...urls.filter((href) => urlPattern.test(href) || textPattern.test(urlPathSearchText(href))),
+    ...pages
+      .filter((page) => urlPattern.test(page.url ?? "") || textPattern.test(pageSearchText(page)))
+      .map((page) => page.url ?? pageSearchText(page))
+  ]);
+  const score = signals.length >= 3 ? 10 : signals.length >= 1 ? 5 : 0;
+
+  return { score, signalCount: signals.length, signals };
+}
+
+interface TrustPageCandidate {
+  url: string;
+  anchorText: string;
+}
+
+function footerTrustUrls(pageHtml: string, root: URL): TrustPageCandidate[] {
+  const footerStart = Math.floor(pageHtml.length * 0.8);
+  const footerHtml = pageHtml.slice(footerStart);
+  const footer$ = cheerio.load(footerHtml);
+  return footer$("a[href]").toArray()
+    .map((el) => {
+      try {
+        return {
+          url: new URL(footer$(el).attr("href") ?? "", root).toString(),
+          anchorText: footer$(el).text().replace(/\s+/g, " ").trim()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is TrustPageCandidate => item !== null);
+}
+
+function trustCandidateText(candidate: TrustPageCandidate, title = "", h1 = "") {
+  let path = candidate.url;
+  try {
+    const parsed = new URL(candidate.url);
+    path = decodeURIComponent(`${parsed.pathname} ${parsed.search}`);
+  } catch {
+    path = candidate.url;
+  }
+
+  return `${path} ${candidate.anchorText} ${title} ${h1}`.replace(/[_-]+/g, " ");
+}
+
+async function merchantTrustEvidence(candidates: TrustPageCandidate[]) {
+  const trustTypes = [
+    { type: "Privacy/Terms", pattern: /\b(policies privacy policy|policies terms of service|policies legal|privacy|privacy policy|terms|terms of service|terms and conditions|tnc|t and c|legal|disclaimer|cookie policy)\b/i },
+    { type: "Refund/Returns", pattern: /\b(policies refund policy|policies return policy|policies cancellation policy|refund|refund policy|cancellation|cancellation policy|return|returns|return policy|money back)\b/i },
+    { type: "Shipping/Delivery", pattern: /\b(policies shipping policy|policies delivery policy|shipping|shipping policy|delivery|delivery policy|fulfillment)\b/i },
+    { type: "Contact/Support", pattern: /\b(pages contact|contact|contact us|support|help|helpdesk|grievance|reach us|get in touch)\b/i }
+  ];
+
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [candidate.url, candidate])).values()];
+  const found = new Map<string, Set<string>>();
+  const markFound = (type: string, href: string) => {
+    if (!found.has(type)) found.set(type, new Set());
+    found.get(type)?.add(href);
+  };
+
+  for (const candidate of uniqueCandidates) {
+    const text = trustCandidateText(candidate);
+    trustTypes.forEach((item) => {
+      if (item.pattern.test(text)) markFound(item.type, candidate.url);
+    });
+  }
+
+  const broadTrustPattern = /\b(privacy|terms?|tnc|legal|disclaimer|cookie|refund|returns?|cancellation|money back|shipping|delivery|fulfillment|contact|support|helpdesk|grievance|reach|get in touch)\b/i;
+  const titleCandidates = uniqueCandidates
+    .filter((candidate) => broadTrustPattern.test(trustCandidateText(candidate)))
+    .slice(0, 20);
+
+  await Promise.all(titleCandidates.map(async (candidate) => {
+    try {
+      const { response, text } = await fetchText(candidate.url, 2500);
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return;
+      const page$ = cheerio.load(text);
+      const pageText = trustCandidateText(candidate, page$("title").first().text(), page$("h1").first().text());
+      trustTypes.forEach((item) => {
+        if (item.pattern.test(pageText)) markFound(item.type, candidate.url);
+      });
+    } catch {
+      // Trust page discovery should keep going when an individual candidate times out.
+    }
+  }));
+
+  const foundList = trustTypes
+    .filter((item) => found.has(item.type))
+    .map((item) => ({ type: item.type, urls: [...(found.get(item.type) ?? [])].slice(0, 3) }));
+  const missing = trustTypes.filter((item) => !found.has(item.type)).map((item) => item.type);
+  const score = foundList.length === 4 ? 10 : foundList.length >= 2 ? 6 : 0;
+  return { score, found: foundList, missing };
+}
+
+async function directTrustPageCandidates(origin: string): Promise<TrustPageCandidate[]> {
+  const paths = [
+    "/policies/privacy-policy",
+    "/policies/refund-policy",
+    "/policies/shipping-policy",
+    "/policies/terms-of-service",
+    "/contact-us",
+    "/privacy-policy",
+    "/refund-policy",
+    "/shipping-policy",
+    "/terms-of-service"
+  ];
+
+  const fetched = await Promise.all(paths.map(async (path): Promise<TrustPageCandidate | null> => {
+    const href = `${origin}${path}`;
+    try {
+      const { response } = await fetchText(href, 2000);
+      return response.status === 200 ? { url: href, anchorText: path.replace(/[-/]/g, " ") } : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  return fetched.filter((item): item is TrustPageCandidate => item !== null);
+}
+
+function productSchemaFieldScore(records: Record<string, unknown>[]) {
+  const required = ["name", "brand", "offers", "aggregateRating"];
+  const present = new Set<string>();
+  records.forEach((record) => {
+    required.forEach((field) => {
+      if (record[field]) present.add(field);
+    });
+  });
+  const percent = records.length ? Math.round((present.size / required.length) * 100) : 100;
+  const score = percent >= 80 ? 10 : percent >= 60 ? 6 : 0;
+  return { present: present.size, total: required.length, percent, score };
+}
+
+function reviewDiversity(records: Record<string, unknown>[]) {
+  const ratings = findObjects(records, (record) => Boolean(record.ratingValue || record.reviewRating || record.aggregateRating));
+  const aggregate = findObjects(records, (record) => Boolean(record.ratingValue && record.reviewCount)).at(0);
+  const ratingValue = Number(aggregate?.ratingValue ?? 0);
+  const reviewCount = Number(aggregate?.reviewCount ?? 0);
+  const suspiciousPerfect = ratingValue === 5 && reviewCount >= 20;
+  return { ratings: ratings.length, ratingValue, reviewCount, suspiciousPerfect };
+}
+
+function schemaScriptCount(html: string) {
+  return cheerio.load(html)("script[type='application/ld+json']").length;
+}
+
+async function renderedWordCount(url: string, timeoutMs = 8000) {
+  try {
+    const loadPuppeteer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<{
+      default: {
+        launch(options: { args: string[]; headless: "new" }): Promise<{
+          newPage(): Promise<{
+            goto(url: string, options: { waitUntil: "networkidle2"; timeout: number }): Promise<unknown>;
+            content(): Promise<string>;
+          }>;
+          close(): Promise<void>;
+        }>;
+      };
+    }>;
+    const puppeteer = await loadPuppeteer("puppeteer");
+    const browser = await puppeteer.default.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    try {
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
+      const html = await page.content();
+      return {
+        words: wordCount(cheerio.load(html)("body").text()),
+        schemaCount: schemaScriptCount(html)
+      };
+    } finally {
+      await browser.close();
+    }
+  } catch (error) {
+    return { words: null, schemaCount: null, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function geminiWafEvidence(page: { response: Response; text: string } | null) {
+  const status = page?.response.status ?? 0;
+  const htmlLength = page?.text.length ?? 0;
+  const text = page?.text ?? "";
+  const challengeDetected = /captcha|challenge|blocked|access denied/i.test(text) && htmlLength < 10000;
+  const pass = Boolean(page && status === 200 && htmlLength > 5000 && (htmlLength > 50000 || !challengeDetected));
+  return { pass: status === 403 || status === 503 ? false : pass, status, htmlLength };
+}
+
+function schemaTextValue(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (value && typeof value === "object") {
+      const nested = value as Record<string, unknown>;
+      const nestedValue: string = schemaTextValue(nested, ["streetAddress", "addressLocality", "addressRegion", "postalCode"]);
+      if (nestedValue) return nestedValue;
+    }
+  }
+  return "";
+}
+
+function extractNapFromHtml(html: string, source = "page") {
+  const page$ = cheerio.load(html);
+  const parsed = parseJsonLd(page$);
+  const businessRecords = findObjects(parsed.blocks, (record) =>
+    flattenSchemaTypes(record).some((type) => /LocalBusiness|Organization|Store|Corporation/i.test(type))
+  );
+  const schemaRecord = businessRecords.at(0);
+  const metaText = page$("meta[name],meta[property]").toArray().map((el) => page$(el).attr("content") ?? "").join(" ");
+  const visibleText = page$("body").text().replace(/\s+/g, " ").trim();
+  const footerText = page$("body").text().slice(Math.floor(page$("body").text().length * 0.7)).replace(/\s+/g, " ").trim();
+  const contactText = page$("[class*='contact'],[class*='address'],[class*='phone'],[class*='email'],[class*='location'],[class*='office']")
+    .text()
+    .replace(/\s+/g, " ")
+    .trim();
+  const napText = `${contactText} ${footerText} ${visibleText}`;
+  const phonePattern = /(\+91[\s-]?)?[6-9]\d{9}|1800[\s-]?\d{3}[\s-]?\d{4}/i;
+  const addressPattern = /\b(?:street|road|nagar|mumbai|delhi|bangalore|bengaluru|floor|building|plot|sector|phase)\b.{0,140}/i;
+  const phone = schemaRecord ? schemaTextValue(schemaRecord, ["telephone", "phone"]) : "";
+  const addressValue = schemaRecord?.address;
+  const address = typeof addressValue === "string"
+    ? addressValue
+    : addressValue && typeof addressValue === "object"
+      ? ["streetAddress", "addressLocality", "addressRegion", "postalCode"].map((key) => (addressValue as Record<string, unknown>)[key]).filter(Boolean).join(", ")
+      : "";
+
+  const name = schemaRecord ? schemaTextValue(schemaRecord, ["name", "legalName"]) : page$("meta[property='og:site_name']").attr("content") ?? page$("title").first().text().trim();
+  const foundAddress = address || (napText.match(addressPattern)?.[0] ?? "");
+  const foundPhone = phone || (napText.match(phonePattern)?.[0] ?? metaText.match(phonePattern)?.[0] ?? "");
+  const sources = [
+    ...(schemaRecord ? [`${source}: schema`] : []),
+    ...(page$("meta[property='og:site_name']").attr("content") ? [`${source}: meta`] : []),
+    ...(footerText.match(phonePattern) || footerText.match(addressPattern) ? [`${source}: footer`] : []),
+    ...(contactText.match(phonePattern) || contactText.match(addressPattern) ? [`${source}: contact html`] : [])
+  ];
+
+  return { name, address: foundAddress, phone: foundPhone, sources };
+}
+
+function normalizeNap(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function napConsistency(pages: LocalPageHtml[]) {
+  const checked = pages.slice(0, 10).map((page) => ({ url: page.url ?? page.source, nap: extractNapFromHtml(page.html, page.source) }));
+  const found = checked.filter((page) => page.nap.name || page.nap.address || page.nap.phone);
+  const first = found.at(0)?.nap;
+  const consistent = first ? found.every((page) =>
+    (!first.name || !page.nap.name || normalizeNap(first.name) === normalizeNap(page.nap.name)) &&
+    (!first.address || !page.nap.address || normalizeNap(first.address) === normalizeNap(page.nap.address)) &&
+    (!first.phone || !page.nap.phone || normalizeNap(first.phone).slice(-8) === normalizeNap(page.nap.phone).slice(-8))
+  ) : false;
+  const pass = found.length === 1 || (found.length > 1 && consistent);
+
+  return {
+    pass,
+    napFound: found.length > 0,
+    name: first?.name ?? "",
+    address: first?.address ?? "",
+    phone: first?.phone ?? "",
+    consistent,
+    pages_checked: checked.length,
+    sources: [...new Set(found.flatMap((page) => page.nap.sources))],
+    ...(found.length === 1 ? { note: "NAP found on one page only - verify across all pages manually" } : {}),
+    ...(!found.length ? { reason: "No NAP data found in schema, footer, or contact page - add LocalBusiness schema" } : {})
+  };
+}
+
+function cookieConsentEvidence(html: string) {
+  const page$ = cheerio.load(html);
+  const rawWordCount = wordCount(page$("body").text());
+  const consentPatternFound = /cookie consent|accept cookies|gdpr|before you continue/i.test(html);
+  const consentWallDetected = consentPatternFound && rawWordCount < 200;
+  return { pass: rawWordCount > 200 && !consentWallDetected, rawWordCount, consentWallDetected };
+}
+
+function speakableEvidence(blocks: unknown[]) {
+  const found = findObjects(blocks, (record) =>
+    flattenSchemaTypes(record).some((type) => /SpeakableSpecification/i.test(type)) ||
+    Object.prototype.hasOwnProperty.call(record, "speakable")
+  ).length > 0;
+  return { pass: found, found };
+}
+
+function imageSources($: cheerio.CheerioAPI) {
+  return $("img").toArray().map((el) => ({
+    src: $(el).attr("src") ?? $(el).attr("data-src") ?? "",
+    alt: $(el).attr("alt") ?? ""
+  })).filter((image) => image.src);
+}
+
+function stockPhotoEvidence(images: ReturnType<typeof imageSources>) {
+  const stockPattern = /shutterstock\.com|gettyimages\.com|istockphoto\.com|unsplash\.com|pexels\.com|freepik\.com|depositphotos\.com|stock\.adobe\.com|dreamstime\.com|123rf\.com/i;
+  const stockImages = images.map((image) => image.src).filter((src) => stockPattern.test(src)).slice(0, 10);
+  const score = stockImages.length === 0 ? 10 : stockImages.length <= 2 ? 5 : 0;
+  return { score, stockCount: stockImages.length, stockImages, totalImages: images.length };
+}
+
+function ocrLegibilityEvidence(images: ReturnType<typeof imageSources>) {
+  const withAlt = images.filter((image) => image.alt.trim().length > 10).length;
+  const withoutAlt = images.length - withAlt;
+  const score = images.length ? Math.round((withAlt / images.length) * 10) : 10;
+  return { score, totalImages: images.length, withAlt, withoutAlt, advisory: withoutAlt > 0 };
+}
+
+function videoSchemaEvidence($: cheerio.CheerioAPI, blocks: unknown[]) {
+  const videosFound = $("video,iframe[src*='youtube'],iframe[src*='youtu.be'],iframe[src*='vimeo']").length;
+  const schemasFound = findObjects(blocks, (record) => flattenSchemaTypes(record).some((type) => /VideoObject/i.test(type))).length;
+  const ratio = videosFound ? schemasFound / videosFound : 1;
+  const score = !videosFound ? 10 : ratio >= 0.7 ? 10 : ratio >= 0.3 ? 5 : 0;
+  return { score, videosFound, schemasFound, ratio: Number(ratio.toFixed(2)) };
+}
+
+function entitySet(text: string) {
+  return new Set((text.match(/\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*|\d+(?:\.\d+)?%?|\d{4})\b/g) ?? []).map((item) => item.toLowerCase()));
+}
+
+function transcriptAlignmentEvidence($: cheerio.CheerioAPI, body: string) {
+  const videoCount = $("video,iframe[src*='youtube'],iframe[src*='youtu.be'],iframe[src*='vimeo']").length;
+  const transcriptText = $("[class*='transcript'],[id*='transcript'],section:contains('Transcript'),track").text().replace(/\s+/g, " ").trim();
+  if (!videoCount) return { skipped: true, reason: "No video content detected" };
+  if (!transcriptText) return { skipped: true, reason: "Videos found but no transcript detected - add transcript to enable this check" };
+  const transcriptEntities = entitySet(transcriptText);
+  const contentEntities = entitySet(body);
+  const overlap = [...transcriptEntities].filter((entity) => contentEntities.has(entity)).length;
+  const overlapPct = transcriptEntities.size ? Math.round((overlap / transcriptEntities.size) * 100) : 0;
+  const score = overlapPct >= 70 ? 10 : overlapPct >= 40 ? 5 : 0;
+  return { score, entitiesInTranscript: transcriptEntities.size, entitiesInContent: contentEntities.size, overlapPct };
+}
+
+function headerCanonical(response?: Response | null) {
+  const link = response?.headers.get("link") ?? "";
+  return link.match(/<([^>]+)>\s*;\s*rel=["']?canonical["']?/i)?.[1] ?? "";
+}
+
+function rawHtmlCanonicalHref(html: string) {
+  const page$ = cheerio.load(html);
+  let href = "";
+  page$("link").each((_, el) => {
+    if (href) return;
+    const rel = page$(el).attr("rel") ?? "";
+    if (/(^|\s)canonical(\s|$)/i.test(rel)) href = (page$(el).attr("href") ?? "").trim();
+  });
+  return href;
+}
+
+function canonicalHref(html: string, baseUrl: string, response?: Response | null) {
+  const page$ = cheerio.load(html);
+  let href = "";
+  page$("link").each((_, el) => {
+    if (href) return;
+    const rel = page$(el).attr("rel") ?? "";
+    if (/(^|\s)canonical(\s|$)/i.test(rel)) href = (page$(el).attr("href") ?? "").trim();
+  });
+  href ||= headerCanonical(response).trim();
+  if (!href) return "";
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeComparableUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    parsed.search = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/$/, "");
+  }
+}
+
+function safeAbsoluteUrl(value: string, baseUrl: string) {
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function robotsDirectives(html: string, response?: Response | null) {
+  const page$ = cheerio.load(html);
+  const meta = page$("meta[name='robots' i],meta[name='googlebot' i]").toArray().map((el) => page$(el).attr("content") ?? "").join(",");
+  const header = response?.headers.get("x-robots-tag") ?? "";
+  return `${meta},${header}`;
+}
+
+function noindexFoundIn(html: string, response?: Response | null) {
+  const directives = robotsDirectives(html, response);
+  return /(^|,|\s)noindex(,|\s|$)/i.test(directives);
+}
+
+function nosnippetFound(html: string, response?: Response | null) {
+  return /nosnippet/i.test(robotsDirectives(html, response));
+}
+
+function maxSnippetValue(html: string, response?: Response | null) {
+  const directives = robotsDirectives(html, response);
+  const match = directives.match(/max-snippet\s*:\s*(-?\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function maxImagePreviewValue(html: string, response?: Response | null) {
+  return robotsDirectives(html, response).match(/max-image-preview\s*:\s*([a-z]+)/i)?.[1]?.toLowerCase() ?? "";
+}
+
+async function fetchNoRedirect(url: string, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      redirect: "manual",
+      signal: controller.signal,
+      headers: { "user-agent": "AIVisibilityAnalyzer/1.0", accept: "text/html,*/*" }
+    });
+    const text = await response.text().catch(() => "");
+    return { response, text };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function httpToHttpsEvidence(currentUrl: URL) {
+  const httpUrl = new URL(currentUrl.toString());
+  httpUrl.protocol = "http:";
+  const fetched = await fetchNoRedirect(httpUrl.toString()).catch(() => null);
+  const location = fetched?.response.headers.get("location") ?? "";
+  const redirectTarget = safeAbsoluteUrl(location || currentUrl.toString(), httpUrl.toString());
+  const redirectsToHttps = [301, 308].includes(fetched?.response.status ?? 0) && /^https:\/\//i.test(redirectTarget);
+  return { pass: redirectsToHttps, httpStatus: fetched?.response.status ?? 0, redirectsToHttps };
+}
+
+async function wwwVariantEvidence(currentUrl: URL) {
+  const host = currentUrl.hostname;
+  const wwwHost = host.startsWith("www.") ? host : `www.${host}`;
+  const nonWwwHost = host.replace(/^www\./, "");
+  const wwwUrl = new URL(currentUrl.toString());
+  wwwUrl.hostname = wwwHost;
+  const nonWwwUrl = new URL(currentUrl.toString());
+  nonWwwUrl.hostname = nonWwwHost;
+  const [www, nonWww] = await Promise.all([
+    fetchNoRedirect(wwwUrl.toString()).catch(() => null),
+    fetchNoRedirect(nonWwwUrl.toString()).catch(() => null)
+  ]);
+  const wwwStatus = www?.response.status ?? 0;
+  const nonWwwStatus = nonWww?.response.status ?? 0;
+  const wwwLocation = www?.response.headers.get("location") ?? "";
+  const nonWwwLocation = nonWww?.response.headers.get("location") ?? "";
+  const wwwRedirectsToNon = [301, 308].includes(wwwStatus) && wwwLocation.includes(nonWwwHost);
+  const nonRedirectsToWww = [301, 308].includes(nonWwwStatus) && nonWwwLocation.includes(wwwHost);
+  const pass = wwwRedirectsToNon || nonRedirectsToWww || wwwHost === nonWwwHost;
+  return { pass, wwwStatus, nonWwwStatus, canonicalVariant: wwwRedirectsToNon ? nonWwwHost : nonRedirectsToWww ? wwwHost : "" };
+}
+
+function hiddenContentEvidence($: cheerio.CheerioAPI) {
+  const hiddenClassPattern = /\b(d-none|hidden|invisible|sr-only|visually-hidden|hide|collapsed)\b/i;
+  const responsiveClassPattern = /(?:^|\s)(elementor-hidden-(?:desktop|tablet|mobile|phone)|e-con-inner|vc_hidden-(?:xs|sm|md|lg)|et_pb_hidden|et-hide-(?:mobile|tablet)|d(?:-(?:sm|md|lg|xl))?-none|hidden-(?:xs|sm|md|lg)|(?:sm|md|lg|xl):hidden|oxy-hide-on-(?:mobile|tablet)|hide-(?:mobile|tablet|desktop)|(?:mobile|tablet|desktop)-hidden|show-(?:mobile|desktop))(?:\s|$)/i;
+  const hiddenTriggerFor = (style: string, classes: string, hasHiddenAttribute: boolean) => {
+    if (/display\s*:\s*none/i.test(style)) return "style:display:none";
+    if (/visibility\s*:\s*hidden/i.test(style)) return "style:visibility:hidden";
+    if (/opacity\s*:\s*0/i.test(style)) return "style:opacity:0";
+    if (hasHiddenAttribute) return "hidden attribute";
+    const classTrigger = classes.split(/\s+/).find((className) => hiddenClassPattern.test(className) || responsiveClassPattern.test(` ${className} `));
+    return classTrigger ? `class:${classTrigger}` : "unknown hidden selector";
+  };
+  const hiddenElements = $("*").toArray().filter((el) => {
+    const node = $(el);
+    const style = node.attr("style") ?? "";
+    const classes = node.attr("class") ?? "";
+    return /display\s*:\s*none/i.test(style) ||
+      /visibility\s*:\s*hidden/i.test(style) ||
+      /opacity\s*:\s*0/i.test(style) ||
+      node.attr("hidden") !== undefined ||
+      hiddenClassPattern.test(classes);
+  });
+  const semanticClassPattern = /\b(modal|menu|nav|sidebar|overlay|drawer|offcanvas|dropdown|tooltip|popup|burger|hamburger|flyout|panel|skip|screen-reader|sr-only|visually-hidden|showBottomAction|hover|show-on-hover|reveal|product-action|card-action|quick-action)\b/i;
+  const autoExemptCategoryPattern: Record<string, RegExp> = {
+    accordion: /\b(accordion|collapse|collapsible|faq)\b/i,
+    tab: /\b(tab-pane|tab-content)\b/i,
+    offscreen: /\b(offscreen|off-screen|visually-hidden|sr-only)\b/i,
+    animation: /\b(animate|aos|fade|slide)\b/i
+  };
+  const uiActionPattern = /^(?:wishlist|add to bag|add to cart|preview|preview shades|quick view|buy now)(?:\s+(?:wishlist|add to bag|add to cart|preview|preview shades|quick view|buy now))*$/i;
+  const visibleText = $("body").clone().find("[style*='display:none'],[style*='visibility:hidden'],[style*='opacity:0'],[hidden],script,style").remove().end().text().replace(/\s+/g, " ").trim().toLowerCase();
+  const categories = { accordion: 0, tab: 0, offscreen: 0, animation: 0, duplicate: 0, unknown: 0 };
+  let hiddenWordCount = 0;
+  let excludedWordCount = 0;
+  let responsiveExcludedWordCount = 0;
+  let unknownElementCount = 0;
+  const excludedClasses = new Set<string>();
+  const hiddenSamples: Array<{ tag: string; classNames: string; text: string; hiddenBy: string; category: string }> = [];
+
+  hiddenElements.forEach((el) => {
+    const node = $(el);
+    const tag = String(node.prop("tagName") ?? "").toLowerCase();
+    const text = node.clone().find("script,style").remove().end().text().replace(/\s+/g, " ").trim();
+    const words = wordCount(text);
+    const style = node.attr("style") ?? "";
+    const classes = node.attr("class") ?? "";
+    const role = node.attr("role") ?? "";
+    const hasResponsiveClass = responsiveClassPattern.test(` ${classes} `);
+    const semanticExcluded =
+      hasResponsiveClass ||
+      ["nav", "header", "footer", "aside", "script", "style"].includes(tag) ||
+      /dialog|modal|navigation/i.test(role) ||
+      node.attr("aria-hidden") === "true" ||
+      semanticClassPattern.test(classes) ||
+      node.parents("nav,header,footer").length > 0;
+    const autoCategory = Object.entries(autoExemptCategoryPattern).find(([, pattern]) => pattern.test(classes))?.[0] as keyof typeof categories | undefined;
+    const isDuplicate = text.length >= 30 && visibleText.includes(text.toLowerCase().slice(0, 120));
+    const isShortUiText = words < 10 || uiActionPattern.test(text);
+    const category = semanticExcluded
+      ? "semantic"
+      : isShortUiText
+        ? "ui-action"
+        : autoCategory ?? (isDuplicate ? "duplicate" : "unknown");
+
+    if (category in categories) categories[category as keyof typeof categories] += words;
+
+    if (semanticExcluded || category !== "unknown") {
+      excludedWordCount += words;
+      if (hasResponsiveClass) responsiveExcludedWordCount += words;
+      classes.split(/\s+/).filter(Boolean).forEach((className) => {
+        if (
+          semanticClassPattern.test(className) ||
+          hiddenClassPattern.test(className) ||
+          responsiveClassPattern.test(` ${className} `) ||
+          Object.values(autoExemptCategoryPattern).some((pattern) => pattern.test(className))
+        ) excludedClasses.add(className);
+      });
+    } else {
+      hiddenWordCount += words;
+      unknownElementCount += 1;
+      if (hiddenSamples.length < 10 && words > 0) {
+        hiddenSamples.push({
+          tag,
+          classNames: classes,
+          text: text.slice(0, 100),
+          hiddenBy: hiddenTriggerFor(style, classes, node.attr("hidden") !== undefined),
+          category
+        });
+      }
+    }
+  });
+
+  const totalHidden = hiddenWordCount + excludedWordCount;
+  const isResponsiveOnly = totalHidden > 0 && hiddenWordCount === 0 && responsiveExcludedWordCount === totalHidden;
+  const averageUnknownWords = unknownElementCount ? hiddenWordCount / unknownElementCount : 0;
+  const isUiActionOnly = unknownElementCount > 0 && averageUnknownWords < 5;
+  return {
+    pass: isResponsiveOnly || isUiActionOnly || hiddenWordCount < 100 || averageUnknownWords <= 20,
+    hiddenWordCount,
+    excludedWordCount,
+    totalHidden,
+    categories,
+    hiddenSamples,
+    averageUnknownWords: Number(averageUnknownWords.toFixed(1)),
+    excludedClasses: [...excludedClasses].slice(0, 25),
+    isResponsiveOnly,
+    ...(isResponsiveOnly ? { note: "Hidden content is responsive layout only, not spam" } : {}),
+    ...(isUiActionOnly ? { note: "Hidden content is short UI action labels, not spam" } : {})
+  };
+}
+
+function dataNosnippetEvidence($: cheerio.CheerioAPI) {
+  const affectedElements = $("[data-nosnippet]").toArray()
+    .map((el) => ({ tag: el.tagName?.toLowerCase() ?? "element", words: wordCount($(el).text()) }))
+    .filter((item) => item.words > 50);
+  return { pass: affectedElements.length === 0, count: $("[data-nosnippet]").length, affectedElements };
+}
+
+function backButtonHijackEvidence(html: string) {
+  const scriptsFound = (html.match(/history\.(?:pushState|replaceState)|onpopstate/gi) ?? []);
+  return { pass: scriptsFound.length === 0, scriptsFound: [...new Set(scriptsFound)] };
+}
+
+function infiniteScrollEvidence(html: string, $: cheerio.CheerioAPI) {
+  const paginationFound = $("a[href*='page='],a[href*='?p='],a[href*='/page/2'],link[rel='next'],link[rel='prev']").length > 0;
+  const infiniteScrollSignals = [
+    ...new Set((html.match(/IntersectionObserver|addEventListener\(['"]scroll|onscroll/gi) ?? []))
+  ];
+  return { pass: paginationFound || infiniteScrollSignals.length === 0, paginationFound, infiniteScrollSignals };
+}
+
+function hreflangEvidence($: cheerio.CheerioAPI, currentUrl: string) {
+  const hreflangTags = $("link[rel='alternate'][hreflang]").toArray().map((el) => ({
+    hreflang: $(el).attr("hreflang") ?? "",
+    href: $(el).attr("href") ?? ""
+  }));
+  if (!hreflangTags.length) return { pass: true, reason: "Not multilingual", hreflangTags, issues: [] as string[] };
+  const issues: string[] = [];
+  if (!hreflangTags.some((tag) => tag.hreflang.toLowerCase() === "x-default")) issues.push("x-default missing");
+  hreflangTags.forEach((tag) => {
+    if (tag.hreflang.toLowerCase() !== "x-default" && !/^[a-z]{2}(?:-[a-z]{2})?$/i.test(tag.hreflang)) issues.push(`Invalid hreflang ${tag.hreflang}`);
+  });
+  if (!hreflangTags.some((tag) => {
+    const href = safeAbsoluteUrl(tag.href, currentUrl);
+    return href && normalizeComparableUrl(href) === normalizeComparableUrl(currentUrl);
+  })) issues.push("Self-referencing hreflang missing");
+  return { pass: issues.length === 0, hreflangTags, issues };
+}
+
+function paginationEvidence($: cheerio.CheerioAPI, currentUrl: string, canonicalUrl: string) {
+  const relNextPrev = $("link[rel='next'],link[rel='prev']").length;
+  const paginationLinks = $("a[href*='page='],a[href*='?p='],a[href*='/page/']").length;
+  const hasPagination = relNextPrev > 0 || paginationLinks > 0 || /(?:[?&]page=|\/page\/\d+)/i.test(currentUrl);
+  const canonicalToPageOne = hasPagination && canonicalUrl ? !/[?&]page=\d+|\/page\/\d+/i.test(canonicalUrl) : false;
+  const handledCorrectly = !hasPagination || relNextPrev > 0 || !canonicalToPageOne;
+  const score = !hasPagination ? 10 : handledCorrectly ? 10 : relNextPrev > 0 ? 5 : 0;
+  return { score, hasPagination, handledCorrectly };
+}
+
+function soft404Evidence(response: Response | null | undefined, body: string, currentUrl: string, title = "", h1 = "") {
+  const status = response?.status ?? 0;
+  const words = wordCount(body);
+  let reason = "";
+  let isHomepage = false;
+  try {
+    const parsed = new URL(currentUrl);
+    isHomepage = parsed.pathname === "/" || /\/index\.(?:html?|php)$/i.test(parsed.pathname);
+  } catch {
+    isHomepage = false;
+  }
+
+  const titleSuggestsMissing = /\b(not found|404|error)\b/i.test(title);
+  const h1SuggestsMissing = /\b(not found|page not found|doesn't exist)\b/i.test(h1);
+  const softFourOhFourDetected = !isHomepage && status === 200 && words < 300 && (titleSuggestsMissing || h1SuggestsMissing);
+
+  if (isHomepage) reason = "Homepage skipped for soft-404 detection";
+  else if (words > 500) reason = "Page has more than 500 words, not a soft-404";
+  else if (softFourOhFourDetected) reason = "Thin 200 page with not-found title or H1";
+  else reason = "No soft-404 signals";
+
+  return { pass: !softFourOhFourDetected, status, softFourOhFourDetected, wordCount: words, reason };
+}
+
+function parameterUrlEvidence(currentUrl: URL, canonicalUrl: string) {
+  const hasParameters = Boolean(currentUrl.search);
+  const canonicalTarget = canonicalUrl ? safeAbsoluteUrl(canonicalUrl, currentUrl.toString()) : "";
+  const canonicalClean = !hasParameters || (canonicalTarget ? !new URL(canonicalTarget).search : false);
+  return { pass: !hasParameters || canonicalClean, hasParameters, canonicalClean };
+}
+
+async function searchIndexEvidence(searchUrl: string, domain: string, note: string) {
+  const result = await fetchText(searchUrl, 3500).catch(() => null);
+  const indexed = Boolean(result?.response.ok && result.text.toLowerCase().includes(domain.toLowerCase()));
+  return { pass: indexed, indexed, note };
+}
+
+async function sitemapNoindexEvidence(urls: string[]) {
+  const sample = urls.slice(0, 50);
+  const checked = await Promise.all(sample.map(async (href) => {
+    const page = await fetchText(href, 2500).catch(() => null);
+    return page && noindexFoundIn(page.text, page.response) ? href : "";
+  }));
+  const noindexedUrls = checked.filter(Boolean);
+  return { pass: noindexedUrls.length === 0, checkedUrls: sample.length, noindexedUrls: noindexedUrls.slice(0, 10) };
+}
+
+function fleschReadingEase(text: string) {
+  const sentences = Math.max((text.match(/[.!?]+/g) ?? []).length, 1);
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const syllables = words.reduce((sum, word) => {
+    const clean = word.toLowerCase().replace(/[^a-z]/g, "");
+    const groups = clean.match(/[aeiouy]+/g)?.length ?? 1;
+    return sum + Math.max(1, groups - (clean.endsWith("e") ? 1 : 0));
+  }, 0);
+  return 206.835 - 1.015 * (words.length / sentences) - 84.6 * (syllables / Math.max(words.length, 1));
+}
+
+function standaloneH2Sections($: cheerio.CheerioAPI) {
+  const headings = $("h2").toArray();
+  return headings.map((heading) => {
+    const title = $(heading).text().trim();
+    let text = "";
+    let node = $(heading).next();
+    while (node.length && node.get(0)?.tagName?.toLowerCase() !== "h2") {
+      text += ` ${node.text()}`;
+      node = node.next();
+    }
+    const words = wordCount(text);
+    return { title, words, answerLike: words >= 40 && /\b(is|are|means|includes|helps|use|should|can|will|because|for example)\b/i.test(text) };
+  });
+}
+
+function productSchemaComplete(records: Record<string, unknown>[]) {
+  return records.some((record) => Boolean(record.name && (record.offers || record.aggregateRating || record.review)));
+}
+
 function addCheck(results: GeoAeoCheckResult[], id: number, passed: boolean, evidence: string) {
   const def = CHECKS.find((check) => check.id === id);
   if (!def) return;
   results.push({ ...def, passed, evidence });
 }
 
-function categorySummaries(checks: GeoAeoCheckResult[]): GeoAeoCategorySummary[] {
+function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: string) {
+  const def = CHECKS.find((check) => check.id === id);
+  if (!def) return;
+  results.push({ ...def, passed: true, evidence, skipped: true });
+}
+
+function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFailedCheckDetail[] = [], skippedDetails: GeoAeoSkippedCheckDetail[] = []): GeoAeoCategorySummary[] {
   return CATEGORY_ORDER.map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
-    const failedChecks = categoryChecks.filter((check) => !check.passed).length;
-    const warningChecks = categoryChecks.filter((check) => !check.passed && check.severity === "MINOR").length;
+    const scorableChecks = categoryChecks.filter((check) => !check.skipped);
+    const failedChecks = scorableChecks.filter((check) => !check.passed).length;
+    const warningChecks = scorableChecks.filter((check) => !check.passed && check.severity === "MINOR").length;
+    const categoryFailedDetails = failedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
+    const categorySkippedDetails = skippedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
 
     return {
       categoryName,
-      totalChecks: categoryChecks.length,
-      passedChecks: categoryChecks.length - failedChecks,
+      totalChecks: scorableChecks.length,
+      passedChecks: scorableChecks.length - failedChecks,
       failedChecks,
       warningChecks,
-      score: categoryChecks.length ? clamp(((categoryChecks.length - failedChecks) / categoryChecks.length) * 100) : 0,
-      status: statusFor(failedChecks)
+      score: scorableChecks.length ? clamp(((scorableChecks.length - failedChecks) / scorableChecks.length) * 100) : 0,
+      status: statusFor(failedChecks),
+      ...(categoryFailedDetails.length ? { failedCheckDetails: categoryFailedDetails } : {}),
+      ...(categorySkippedDetails.length ? { skippedCheckDetails: categorySkippedDetails } : {})
     };
   });
 }
 
 function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
-  const scoped = checks.filter((check) => check.scope === scope);
+  const scoped = checks.filter((check) => check.scope === scope && !check.skipped);
   if (!scoped.length) return 0;
   return clamp((scoped.filter((check) => check.passed).length / scoped.length) * 100);
 }
 
 function opportunityCounts(checks: GeoAeoCheckResult[]): GeoAeoOpportunityCounts {
-  const failed = checks.filter((check) => !check.passed);
+  const failed = checks.filter((check) => !check.passed && !check.skipped);
   return {
     high: failed.filter((check) => check.severity === "BLOCKER").length,
     medium: failed.filter((check) => check.severity === "MAJOR").length,
@@ -486,13 +1414,20 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     fetchText(`${origin}/robots.txt`, 2500).catch(() => null),
     fetchText(`${origin}/llms.txt`, 1800).catch(() => null),
     fetchLikelyLocalPageEntries(origin),
-    crawlSite(normalizedUrl, { maxPages: 8, maxDepth: 2, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
+    crawlSite(normalizedUrl, { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
+  const oaiPage = await fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 3000).catch(() => null);
+  const googleExtendedPage = await fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 3000).catch(() => null);
+  const serverPage = await fetchText(normalizedUrl, 3000).catch(() => null);
+  const browserPage = await fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 3000).catch(() => null);
+  const extraSitemapResult = await fetchSitemapUrls(origin, 10000, 50).catch(() => null);
+  const extraSitemapUrls = extraSitemapResult?.urls ?? [];
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
     source: page.source === "homepage" ? "homepage" : page.source === "sitemap" ? "sitemap page" : "internal page",
-    html: page.html
+    html: page.html,
+    url: page.finalUrl
   }));
-  const sitePages = crawledPages.length ? crawledPages : [{ source: "homepage", html: pageHtml }];
+  const sitePages = crawledPages.length ? crawledPages : [{ source: "homepage", html: pageHtml, url: normalizedUrl }];
   const siteHtml = sitePages.map((page) => page.html).join("\n");
   const localGeoPages: LocalPageHtml[] = [...sitePages, ...localPages];
   const localGeoHtml = localGeoPages.map((page) => page.html).join("\n");
@@ -519,6 +1454,128 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const localEvidence = localGeoEvidence(localGeoPages);
   const productObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /Product/i.test(type)));
   const faqObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /FAQPage/i.test(type)));
+  const directTrustCandidates = await directTrustPageCandidates(origin);
+  const robotsText = robots?.text ?? "";
+  const h2s = h2Texts($);
+  const h2Progression = ["what", "why", "how", "benefit", "comparison|compare|vs", "faq|question", "next|action"].filter((pattern) => h2s.some((text) => new RegExp(pattern, "i").test(text)));
+  const followUpSections = ["pricing", "comparison|compare|vs", "alternatives?", "setup", "implementation", "faq|questions"].filter((pattern) => new RegExp(pattern, "i").test(`${bodyText} ${h2s.join(" ")}`));
+  const readability = fleschReadingEase(bodyText);
+  const sectionScores = standaloneH2Sections($);
+  const extractableSections = sectionScores.filter((section) => section.answerLike).length;
+  const factCount = (bodyText.match(/\b\d+(?:\.\d+)?%|\b\d{4}\b|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g) ?? []).length;
+  const factDensity = wordCount(bodyText) ? (factCount / wordCount(bodyText)) * 100 : 0;
+  const evidenceSignals = $("a[href^='http'], cite, blockquote").length + (bodyText.match(/\b(source|reference|according to|study|report|research)\b/gi) ?? []).length;
+  const reviewSignals = (bodyText.match(/\b(review|reviews|rating|ratings|testimonial|testimonials)\b/gi) ?? []).length;
+  const freshReviewSignals = (bodyText.match(/\b(2024|2025|2026|recent|latest|verified)\b/gi) ?? []).length;
+  const reviewSourceSignals = ["google", "trustpilot", "g2", "capterra", "facebook", "yelp"].filter((source) => lowerBody.includes(source)).length;
+  const nosnippet = /nosnippet|max-snippet:0/i.test(`${pageHtml} ${oaiPage?.response.headers.get("x-robots-tag") ?? ""}`) || $("[data-nosnippet]").length > 0;
+  const oaiWords = wordCount(cheerio.load(oaiPage?.text ?? "")("body").text());
+  const browserWords = wordCount(cheerio.load(browserPage?.text ?? pageHtml)("body").text());
+  const rawWords = wordCount(bodyText);
+  const renderedResult = await renderedWordCount(normalizedUrl);
+  const renderedWords = renderedResult.words;
+  const renderedSchemaCount = renderedResult.schemaCount;
+  const oaiChallengeDetected = oaiPage ? challengeDetected(oaiPage.response.status, oaiPage.text) : true;
+  const oaiHtmlLength = oaiPage?.text.length ?? 0;
+  const oaiHasHtml = oaiPage ? htmlContentExists(oaiPage.text) : false;
+  const oaiWafDebug = {
+    pass: false,
+    status: oaiPage?.response.status ?? 0,
+    htmlLength: oaiHtmlLength,
+    challengeDetected: oaiChallengeDetected
+  };
+  const oaiNotChallenged = Boolean(oaiPage && oaiPage.response.status === 200 && oaiHasHtml && !oaiChallengeDetected);
+  oaiWafDebug.pass = oaiNotChallenged;
+  const paywallRatio = browserWords ? oaiWords / browserWords : 0;
+  const paywallStatus = paywallRatio >= 0.8 ? "green" : paywallRatio >= 0.5 ? "amber" : "red";
+  const sitemapAndPageUrls = [...new Set([...crawled.sitemapUrls, ...extraSitemapUrls, ...sitePages.map((page) => page.url ?? "").filter(Boolean)])];
+  const alternativesSignals = alternativesPageDetection(sitePages, sitemapAndPageUrls);
+  const useCaseSignals = useCasePageDetection(sitePages, sitemapAndPageUrls);
+  const productFieldScore = productSchemaFieldScore(productObjects);
+  const reviewDiversitySignal = reviewDiversity(productObjects);
+  const merchantTrust = await merchantTrustEvidence([
+    ...sitemapAndPageUrls.map((href) => ({ url: href, anchorText: "" })),
+    ...footerTrustUrls(pageHtml, url),
+    ...directTrustCandidates
+  ]);
+  const geminiWaf = geminiWafEvidence(googleExtendedPage);
+  const serverHtmlLength = serverPage?.text.length ?? 0;
+  const ipAccessible = Boolean(serverPage && serverPage.response.status === 200 && htmlContentExists(serverPage.text));
+  const ipRangeEvidence = {
+    pass: ipAccessible,
+    advisory: !geminiWaf.pass,
+    note: !geminiWaf.pass
+      ? "Manual verification recommended because Google-Extended WAF check failed; true Google IP range testing is not possible server-side."
+      : "Server-side fetch returned accessible HTML from this audit server perspective.",
+    status: serverPage?.response.status ?? 0,
+    htmlLength: serverHtmlLength
+  };
+  const napEvidence = napConsistency(localGeoPages);
+  const consentEvidence = cookieConsentEvidence(pageHtml);
+  const rawSchemaCount = schemaScriptCount(pageHtml);
+  const schemaInjectionEvidence = renderedSchemaCount === null
+    ? { skipped: true, reason: renderedResult.error ?? "Puppeteer unavailable" }
+    : { pass: rawSchemaCount >= renderedSchemaCount, rawSchemaCount, renderedSchemaCount, jsInjected: rawSchemaCount < renderedSchemaCount };
+  const speakable = speakableEvidence(jsonLd.blocks);
+  const images = imageSources($);
+  const stockPhoto = stockPhotoEvidence(images);
+  const ocrLegibility = ocrLegibilityEvidence(images);
+  const videoSchema = videoSchemaEvidence($, jsonLd.blocks);
+  const transcriptAlignment = transcriptAlignmentEvidence($, bodyText);
+  const rawCanonicalUrl = rawHtmlCanonicalHref(pageHtml);
+  const responseHeaderCanonical = headerCanonical(serverPage?.response);
+  const canonicalUrl = canonicalHref(pageHtml, normalizedUrl, serverPage?.response);
+  const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 3000).catch(() => null) : null;
+  const canonicalTargetNoRedirect = canonicalUrl ? await fetchNoRedirect(canonicalUrl).catch(() => null) : null;
+  const secondCanonicalUrl = canonicalTarget ? canonicalHref(canonicalTarget.text, canonicalUrl, canonicalTarget.response) : "";
+  const noindexFound = [
+    ...(noindexFoundIn(pageHtml, serverPage?.response) ? ["page"] : []),
+    ...(canonicalTarget && noindexFoundIn(canonicalTarget.text, canonicalTarget.response) ? ["canonicalTarget"] : [])
+  ];
+  const htmlCanonical = rawCanonicalUrl ? safeAbsoluteUrl(rawCanonicalUrl, normalizedUrl) : "";
+  const maxSnippet = maxSnippetValue(pageHtml, serverPage?.response);
+  const maxImagePreview = maxImagePreviewValue(pageHtml, serverPage?.response);
+  const hiddenEvidence = hiddenContentEvidence($);
+  const dataNosnippet = dataNosnippetEvidence($);
+  const [httpHttps, wwwVariant] = await Promise.all([
+    httpToHttpsEvidence(url),
+    wwwVariantEvidence(url)
+  ]);
+  const anonymousWordCount = wordCount(cheerio.load(serverPage?.text ?? pageHtml)("body").text());
+  const backButtonHijack = backButtonHijackEvidence(pageHtml);
+  const infiniteScroll = infiniteScrollEvidence(pageHtml, $);
+  const hreflang = hreflangEvidence($, normalizedUrl);
+  const pagination = paginationEvidence($, normalizedUrl, canonicalUrl);
+  const soft404 = soft404Evidence(serverPage?.response, bodyText, normalizedUrl, $("title").first().text(), $("h1").first().text());
+  const parameterUrl = parameterUrlEvidence(url, canonicalUrl);
+  const [googleIndex, bingIndex, sitemapNoindex] = await Promise.all([
+    searchIndexEvidence(`https://www.google.com/search?q=site:${encodeURIComponent(url.hostname)}`, url.hostname, "Advisory only - verify in GSC"),
+    searchIndexEvidence(`https://www.bing.com/search?q=site:${encodeURIComponent(url.hostname)}`, url.hostname, "Advisory only - verify in Bing WMT"),
+    sitemapNoindexEvidence(sitemapAndPageUrls)
+  ]);
+  const ssrRatio = renderedWords ? oaiWords / renderedWords : null;
+  const pageUrl = (page: LocalPageHtml, index: number) => page.url ?? `${origin}/#sample-${index + 1}`;
+  const pageText = (page: LocalPageHtml) => cheerio.load(page.html)("body").text().replace(/\s+/g, " ").trim();
+  const failingPages = (predicate: (page: LocalPageHtml) => boolean) => sitePages.filter(predicate);
+  const affectedPagesFor = (check: GeoAeoCheckResult) => {
+    const domain = () => check.passed ? [] : sitePages;
+    const pageFailures = (() => {
+      switch (check.id) {
+        case 42:
+        case 66:
+          return check.passed ? [] : sitePages;
+        case 65:
+          return failingPages((page) => /nosnippet|max-snippet:0/i.test(page.html) || cheerio.load(page.html)("[data-nosnippet]").length > 0);
+        default:
+          return check.scope === "domain" ? domain() : check.passed ? [] : sitePages;
+      }
+    })();
+    const urls = pageFailures.map(pageUrl).filter(Boolean);
+    return {
+      affectedPages: urls.length,
+      sampleUrls: urls.slice(0, 3)
+    };
+  };
   const result: GeoAeoCheckResult[] = [];
 
   [
@@ -604,12 +1661,110 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     return !productName || lowerBody.includes(productName);
   }), "Product schema-DOM consistency scan");
   addCheck(result, 37, jsonLd.errors.length === 0, `${jsonLd.errors.length} JSON-LD errors`);
+  addCheck(result, 38, robotGroupAllows(robotsText, "OAI-SearchBot"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
+  addCheck(result, 39, robotGroupAllows(robotsText, "ChatGPT-User"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
+  addCheck(result, 40, robotGroupAllows(robotsText, "OAI-SearchBot") && robotGroupAllows(robotsText, "ChatGPT-User"), robotGroupFor(robotsText, "GPTBot") ? "GPTBot group checked against OAI agents" : "No explicit GPTBot group");
+  addCheck(result, 41, oaiNotChallenged, JSON.stringify(oaiWafDebug));
+  addCheck(result, 42, paywallStatus !== "red", JSON.stringify({ anonWords: browserWords, oaiWords, ratio: Number(paywallRatio.toFixed(2)), status: paywallStatus }));
+  addCheck(result, 49, alternativesSignals.score > 0, JSON.stringify(alternativesSignals));
+  addCheck(result, 50, useCaseSignals.score > 0, JSON.stringify(useCaseSignals));
+  addCheck(result, 52, productFieldScore.score >= 6, `${productFieldScore.present}/${productFieldScore.total} Product schema fields present (${productFieldScore.percent}%); score ${productFieldScore.score}/10`);
+  addCheck(result, 54, !reviewDiversitySignal.suspiciousPerfect, reviewDiversitySignal.reviewCount ? `rating ${reviewDiversitySignal.ratingValue}, reviewCount ${reviewDiversitySignal.reviewCount}` : "No suspicious aggregateRating detected");
+  addCheck(result, 55, merchantTrust.score > 0, JSON.stringify(merchantTrust));
+  addCheck(result, 65, !nosnippet, nosnippet ? "nosnippet/max-snippet/data-nosnippet found" : "No nosnippet restrictions found");
+  if (renderedWords === null) {
+    addCheck(result, 66, false, JSON.stringify({ score: 0, error: renderedResult.error ?? "Puppeteer failed", skipped: false }));
+  } else {
+    const renderedRatio = ssrRatio ?? 0;
+    addCheck(result, 66, renderedRatio >= 0.6, JSON.stringify({ score: renderedRatio >= 0.8 ? 10 : renderedRatio >= 0.6 ? 5 : 0, skipped: false, ratio: Number(renderedRatio.toFixed(2)), oaiWords, renderedWords }));
+  }
+  addCheck(result, 67, robotGroupAllows(robotsText, "Google-Extended"), JSON.stringify({ pass: robotGroupAllows(robotsText, "Google-Extended"), raw: robotGroupFor(robotsText, "Google-Extended") || "No explicit Google-Extended group" }));
+  addCheck(result, 68, geminiWaf.pass, JSON.stringify(geminiWaf));
+  addCheck(result, 69, ipRangeEvidence.pass, JSON.stringify(ipRangeEvidence));
+  addCheck(result, 70, napEvidence.pass, JSON.stringify(napEvidence));
+  addCheck(result, 71, consentEvidence.pass, JSON.stringify(consentEvidence));
+  if ("skipped" in schemaInjectionEvidence && schemaInjectionEvidence.skipped) {
+    addSkippedCheck(result, 72, JSON.stringify(schemaInjectionEvidence));
+  } else {
+    addCheck(result, 72, Boolean(schemaInjectionEvidence.pass), JSON.stringify(schemaInjectionEvidence));
+  }
+  addCheck(result, 73, robotGroupAllows(robotsText, "GoogleOther"), JSON.stringify({ pass: robotGroupAllows(robotsText, "GoogleOther") }));
+  addCheck(result, 74, speakable.pass, JSON.stringify(speakable));
+  addCheck(result, 75, stockPhoto.score >= 5, JSON.stringify(stockPhoto));
+  addCheck(result, 76, ocrLegibility.score >= 5, JSON.stringify(ocrLegibility));
+  addCheck(result, 77, videoSchema.score >= 5, JSON.stringify(videoSchema));
+  if ("skipped" in transcriptAlignment && transcriptAlignment.skipped) {
+    addSkippedCheck(result, 78, JSON.stringify(transcriptAlignment));
+  } else {
+    const transcriptScore = transcriptAlignment.score ?? 0;
+    addCheck(result, 78, transcriptScore >= 5, JSON.stringify(transcriptAlignment));
+  }
+  addCheck(result, 79, noindexFound.length === 0, JSON.stringify({ pass: noindexFound.length === 0, foundIn: noindexFound }));
+  const canonicalSelfReferences = Boolean(canonicalUrl && normalizeComparableUrl(canonicalUrl) === normalizeComparableUrl(normalizedUrl));
+  addCheck(result, 80, canonicalSelfReferences, JSON.stringify(canonicalUrl
+    ? { pass: canonicalSelfReferences, pageUrl: normalizedUrl, canonicalUrl }
+    : { pass: false, reason: "No canonical tag found", canonicalUrl: null }
+  ));
+  if (!canonicalUrl) {
+    addSkippedCheck(result, 81, JSON.stringify({ skipped: true, reason: "Canonical URL not found - fix canonical detection first" }));
+    addSkippedCheck(result, 82, JSON.stringify({ skipped: true, reason: "Canonical URL not found - fix canonical detection first" }));
+  } else {
+    addCheck(result, 81, /^https:\/\//i.test(rawCanonicalUrl || responseHeaderCanonical) && /^https:\/\//i.test(canonicalUrl), JSON.stringify({ pass: /^https:\/\//i.test(rawCanonicalUrl || responseHeaderCanonical) && /^https:\/\//i.test(canonicalUrl), canonicalUrl }));
+    addCheck(result, 82, canonicalTargetNoRedirect?.response.status === 200, JSON.stringify({ pass: canonicalTargetNoRedirect?.response.status === 200, canonicalUrl, status: canonicalTargetNoRedirect?.response.status ?? 0 }));
+  }
+  addCheck(result, 83, !canonicalUrl || !secondCanonicalUrl || normalizeComparableUrl(secondCanonicalUrl) === normalizeComparableUrl(canonicalUrl), JSON.stringify({ pass: !canonicalUrl || !secondCanonicalUrl || normalizeComparableUrl(secondCanonicalUrl) === normalizeComparableUrl(canonicalUrl), hops: secondCanonicalUrl && normalizeComparableUrl(secondCanonicalUrl) !== normalizeComparableUrl(canonicalUrl) ? 2 : canonicalUrl ? 1 : 0, chain: [normalizedUrl, canonicalUrl, secondCanonicalUrl].filter(Boolean) }));
+  addCheck(result, 84, !responseHeaderCanonical || !htmlCanonical || normalizeComparableUrl(responseHeaderCanonical) === normalizeComparableUrl(htmlCanonical), JSON.stringify({ pass: !responseHeaderCanonical || !htmlCanonical || normalizeComparableUrl(responseHeaderCanonical) === normalizeComparableUrl(htmlCanonical), headerCanonical: responseHeaderCanonical, htmlCanonical }));
+  addCheck(result, 85, !canonicalTarget || !noindexFoundIn(canonicalTarget.text, canonicalTarget.response), JSON.stringify({ pass: !canonicalTarget || !noindexFoundIn(canonicalTarget.text, canonicalTarget.response), canonicalUrl, targetNoindex: Boolean(canonicalTarget && noindexFoundIn(canonicalTarget.text, canonicalTarget.response)) }));
+  addCheck(result, 86, !nosnippetFound(pageHtml, serverPage?.response), JSON.stringify({ pass: !nosnippetFound(pageHtml, serverPage?.response) }));
+  addCheck(result, 87, maxSnippet === null || maxSnippet === -1 || maxSnippet >= 1, JSON.stringify({
+    pass: maxSnippet === null || maxSnippet === -1 || maxSnippet >= 1,
+    value: maxSnippet,
+    status: maxSnippet === 0 ? "red" : maxSnippet !== null && maxSnippet >= 1 && maxSnippet < 50 ? "amber" : "green",
+    note: "max-snippet:-1 means unlimited"
+  }));
+  addCheck(result, 88, dataNosnippet.pass, JSON.stringify(dataNosnippet));
+  addCheck(result, 89, maxImagePreview !== "none", JSON.stringify({ score: maxImagePreview === "none" ? 0 : maxImagePreview === "standard" ? 5 : 10, value: maxImagePreview || "default" }));
+  addCheck(result, 90, httpHttps.pass, JSON.stringify(httpHttps));
+  addCheck(result, 91, wwwVariant.pass, JSON.stringify(wwwVariant));
+  addCheck(result, 92, anonymousWordCount > 200, JSON.stringify({ pass: anonymousWordCount > 200, anonymousWordCount }));
+  addCheck(result, 93, hiddenEvidence.pass, JSON.stringify(hiddenEvidence));
+  addCheck(result, 94, consentEvidence.pass, JSON.stringify({ pass: consentEvidence.pass, rawWordCount: consentEvidence.rawWordCount, consentDetected: consentEvidence.consentWallDetected }));
+  addCheck(result, 95, backButtonHijack.pass, JSON.stringify(backButtonHijack));
+  addCheck(result, 96, infiniteScroll.pass, JSON.stringify(infiniteScroll));
+  addCheck(result, 97, hreflang.pass, JSON.stringify(hreflang));
+  addCheck(result, 98, pagination.score >= 5, JSON.stringify(pagination));
+  addCheck(result, 99, soft404.pass, JSON.stringify(soft404));
+  addCheck(result, 100, parameterUrl.pass, JSON.stringify(parameterUrl));
+  addCheck(result, 101, googleIndex.pass, JSON.stringify(googleIndex));
+  addCheck(result, 102, bingIndex.pass, JSON.stringify(bingIndex));
+  addCheck(result, 103, sitemapNoindex.pass, JSON.stringify(sitemapNoindex));
 
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
-  const categories = categorySummaries(result);
+  const citationFailedDetails = result
+    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation" || check.category === "Indexability") && !check.passed && !check.skipped)
+    .map((check) => {
+      const affected = affectedPagesFor(check);
+      return {
+        id: check.id,
+        name: check.name,
+        severity: check.severity,
+        evidence: check.evidence,
+        recommendation: CITATION_RECOMMENDATIONS[check.id] ?? "Review this failed citation-readiness signal on key pages.",
+        affectedPages: affected.affectedPages,
+        sampleUrls: affected.sampleUrls
+      };
+    });
+  const citationSkippedDetails = result
+    .filter((check) => (check.category === "ChatGPT Citation" || check.category === "Gemini Citation" || check.category === "Indexability") && check.skipped)
+    .map((check) => ({
+      id: check.id,
+      name: check.name,
+      reason: check.evidence
+    }));
+  const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
 const rawScore = weightedCategoryScore(categories);
-  const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed);
+  const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed && !check.skipped);
   const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   const grade = gradeFor(score);
 
