@@ -1127,10 +1127,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(21, everyPage((p) => !metaRobots(p).includes("noindex")), pageCountEvidence);
   add(22, duplicateTitleRate <= 0.1, `${duplicateTitlePages} duplicate title pages out of ${pages.length} (${Math.round(duplicateTitleRate * 100)}%)`);
   add(23, duplicateDescriptionRate <= 0.15, `${duplicateDescriptionPages} duplicate description pages out of ${availableDescriptions.length} (${Math.round(duplicateDescriptionRate * 100)}%)`);
-  const headingStats = pages.map((p) => {
-  const h1Count = p.$("h1").length;
-  const h1Text = p.$("h1").first().text().trim();
-
+  const visibleHeadings = (p: FetchedPage, selector = "h1,h2,h3,h4,h5,h6") => p.$(selector).toArray().filter((el) => {
     const hiddenAncestor = p.$(el).parents().toArray().some((parent) => {
       const style = (p.$(parent).attr("style") ?? "").replace(/\s+/g, "").toLowerCase();
       return p.$(parent).attr("hidden") !== undefined || p.$(parent).attr("aria-hidden") === "true" || style.includes("display:none") || style.includes("visibility:hidden");
@@ -1138,7 +1135,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
     if (hiddenAncestor) return false;
 
     const style = (p.$(el).attr("style") ?? "").replace(/\s+/g, "").toLowerCase();
-    return !style.includes("display:none") && !style.includes("visibility:hidden");
+    return p.$(el).attr("hidden") === undefined && p.$(el).attr("aria-hidden") !== "true" && !style.includes("display:none") && !style.includes("visibility:hidden");
   });
 
   const headingStats = pages.map((p) => {
