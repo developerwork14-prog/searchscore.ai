@@ -23,15 +23,16 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
   return <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-bold ${classes[tone]}`}>{children}</span>;
 }
 
+const CHATGPT_CITATION_CATEGORIES = ["Crawlability", "Technical Access", "Content Structure", "Content Quality"];
+const GEMINI_CITATION_CATEGORIES = ["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"];
+
 export default function ReportPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
   const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation" | "gemini" | "indexability">("technical");
-  const [showCitationFailures, setShowCitationFailures] = useState(false);
   const [showGeminiFailures, setShowGeminiFailures] = useState(false);
-  const [showIndexabilityFailures, setShowIndexabilityFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -81,13 +82,17 @@ export default function ReportPage() {
     opportunity_counts: { high: 0, medium: 0, low: 0 },
     categories: []
   };
-  const geoCategories = geoAeoAudit.categories.filter((category) => category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation" && category.categoryName !== "Indexability");
-  const citationCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "ChatGPT Citation");
-  const geminiCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "Gemini Citation");
-  const indexabilityCategories = geoAeoAudit.categories.filter((category) => category.categoryName === "Indexability");
-  const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityCategories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
-  const showCitationLikeFailures = activeAuditTab === "indexability" ? showIndexabilityFailures : activeAuditTab === "gemini" ? showGeminiFailures : showCitationFailures;
-  const setShowCitationLikeFailures = activeAuditTab === "indexability" ? setShowIndexabilityFailures : activeAuditTab === "gemini" ? setShowGeminiFailures : setShowCitationFailures;
+  const indexabilityAudit = report.indexability_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
+  const geoCategories = geoAeoAudit.categories.filter((category) => !CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) && !GEMINI_CITATION_CATEGORIES.includes(category.categoryName) && category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
+  const citationCategories = geoAeoAudit.categories.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
+  const geminiCategories = geoAeoAudit.categories.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
+  const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityAudit.categories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
+  const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
@@ -274,77 +279,70 @@ export default function ReportPage() {
           </div>
         ) : (
           <div className="grid gap-4">
-            {citationLikeCategories.map((category) => {
-              const failedDetails = category.failedCheckDetails ?? [];
-              const skippedDetails = category.skippedCheckDetails ?? [];
+            {activeAuditTab === "gemini" && geminiFailedDetails.length ? (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowGeminiFailures((current) => !current)}
+                  className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
+                >
+                  {showGeminiFailures ? "Hide Failed Results" : "Show Failed Results"}
+                </button>
+              </div>
+            ) : null}
 
-              return (
-                <Card key={category.categoryName} className="p-5">
-                  <div className="flex min-h-16 items-start justify-between gap-3">
-                    <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                    <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {citationLikeCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {activeAuditTab === "gemini" && showGeminiFailures && geminiFailedDetails.length ? (
+              <div className="grid gap-3">
+                {geminiFailedDetails.map((detail) => (
+                  <div key={`${detail.categoryName}-${detail.id}`} className="rounded-md border border-black/10 bg-cloud p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">{detail.categoryName}</p>
+                        <p className="mt-1 text-sm font-black text-ink">{detail.name}</p>
+                        <p className="mt-1 text-sm font-semibold text-ink/60">{detail.evidence}</p>
+                      </div>
+                      <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
+                    </div>
+                    <p className="mt-3 text-sm font-semibold text-ink/75">{detail.recommendation}</p>
                   </div>
-                  <div className="mt-5 grid grid-cols-3 gap-3">
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                      <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                      <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                      <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                    <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                    <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
-                  </div>
-                  {failedDetails.length || skippedDetails.length ? (
-                    <div className="mt-5">
-                      <button
-                        type="button"
-                        onClick={() => setShowCitationLikeFailures((current) => !current)}
-                        className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
-                      >
-                        {showCitationLikeFailures ? "Hide Failed Checks" : "Show Failed Checks"}
-                      </button>
-                        {showCitationLikeFailures ? (
-                        <div className="mt-4 grid gap-3">
-                          {failedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Failed Checks</p> : null}
-                          {failedDetails.map((detail) => (
-                            <div key={detail.id} className="rounded-md border border-black/10 bg-cloud p-4">
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-black text-ink">{detail.name}</p>
-                                  <p className="mt-1 text-sm font-semibold text-ink/60">{detail.evidence}</p>
-                                </div>
-                                <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
-                              </div>
-                              <p className="mt-3 text-sm font-semibold text-ink/75">{detail.recommendation}</p>
-                            </div>
-                          ))}
-                          {skippedDetails.length ? <p className="text-sm font-black uppercase text-ink/45">Skipped Checks</p> : null}
-                          {skippedDetails.map((detail) => (
-                            <div key={detail.id} className="rounded-md border border-black/10 bg-white p-4">
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-black text-ink">{detail.name}</p>
-                                  <p className="mt-1 text-sm font-semibold text-ink/60">{detail.reason}</p>
-                                </div>
-                                <Badge tone="neutral">Skipped</Badge>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </Card>
-              );
-            })}
+                ))}
+              </div>
+            ) : null}
           </div>
         )}
       </section>

@@ -89,7 +89,7 @@ export interface VisibilityIssueSummary {
   summaryMessages: string[];
 }
 
-export type TechnicalCategoryStatus = "Passed" | "Minor Attention" | "Needs Attention";
+export type TechnicalCategoryStatus = "Passed" | "Minor Attention" | "Needs Attention" | "Skipped";
 
 export interface TechnicalCategorySummary {
   categoryName: string;
@@ -156,6 +156,45 @@ export interface GeoAeoAuditResult {
   checks: GeoAeoCheckResult[];
 }
 
+export type IndexabilitySeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface IndexabilityCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: IndexabilitySeverity;
+  maxScore: number;
+  passed: boolean;
+  skipped: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface IndexabilityCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface IndexabilityAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: IndexabilityCategorySummary[];
+  checks: IndexabilityCheckResult[];
+}
+
+export interface PublicIndexabilityAudit {
+  score: number;
+  issues_found: number;
+  categories: IndexabilityCategorySummary[];
+  checks: IndexabilityCheckResult[];
+}
+
 export interface PublicGeoAeoAudit {
   score: number;
   grade: GeoAeoGrade;
@@ -205,6 +244,7 @@ export interface AiVisibilityReport {
   technicalCategorySummaries: TechnicalCategorySummary[];
   technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
   geoAeoAudit: GeoAeoAuditResult;
+  indexabilityAudit?: IndexabilityAuditResult;
   visibilityOpportunities: string[];
   aiMarketPosition?: AiMarketPosition;
   losingPrompts: LosingPrompt[];
@@ -261,6 +301,7 @@ export interface StructuredAiVisibilityReport {
   technical_categories: TechnicalCategorySummary[];
   technical_audit: PublicTechnicalAudit;
   geo_aeo_audit: PublicGeoAeoAudit;
+  indexability_audit: PublicIndexabilityAudit;
   playground_questions: string[];
 }
 
