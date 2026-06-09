@@ -23,6 +23,15 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
   return <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-bold ${classes[tone]}`}>{children}</span>;
 }
 
+function EmptyAuditState({ title, message }: { title: string; message: string }) {
+  return (
+    <Card className="p-6">
+      <p className="text-sm font-black text-ink">{title}</p>
+      <p className="mt-2 text-sm font-semibold leading-6 text-ink/60">{message}</p>
+    </Card>
+  );
+}
+
 const CHATGPT_CITATION_CATEGORIES = ["Crawlability", "Technical Access", "Content Structure", "Content Quality"];
 const GEMINI_CITATION_CATEGORIES = ["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"];
 
@@ -31,7 +40,7 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "geo" | "citation" | "gemini" | "indexability">("technical");
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "crawlability" | "structuredData" | "imageSeo" | "geo" | "citation" | "gemini" | "indexability">("technical");
   const [showGeminiFailures, setShowGeminiFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
@@ -88,9 +97,31 @@ export default function ReportPage() {
     categories: [],
     checks: []
   };
+  const structuredDataAudit = report.structured_data_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
+  const imageSeoAudit = report.image_seo_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
   const geoCategories = geoAeoAudit.categories.filter((category) => !CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) && !GEMINI_CITATION_CATEGORIES.includes(category.categoryName) && category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
   const citationCategories = geoAeoAudit.categories.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
   const geminiCategories = geoAeoAudit.categories.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
+  const crawlabilityCategories = technicalCategories.filter((category) =>
+    [
+      "Robots.txt & Sitemap",
+      "Indexability & Crawlability",
+      "Internal Linking",
+      "AI Crawl Readiness"
+    ].includes(category.categoryName)
+  );
+  const structuredDataCategories = structuredDataAudit.categories;
+  const imageSeoCategories = imageSeoAudit.categories;
   const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityAudit.categories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
   const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
@@ -159,6 +190,24 @@ export default function ReportPage() {
               Technical Audit
             </button>
             <button
+              onClick={() => setActiveAuditTab("crawlability")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "crawlability" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Crawlability
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("structuredData")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "structuredData" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Structured data
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("imageSeo")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "imageSeo" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Image SEO
+            </button>
+            <button
               onClick={() => setActiveAuditTab("geo")}
               className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "geo" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
             >
@@ -218,27 +267,16 @@ export default function ReportPage() {
               );
             })}
           </div>
-        ) : activeAuditTab === "geo" ? (
-          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-            <Card className="overflow-hidden">
-              <div className="bg-ink p-6 text-white">
-                <p className="text-sm font-bold text-mint">GEO / AEO Score</p>
-                <p className={`mt-3 text-7xl font-black ${scoreColor(geoAeoAudit.score)}`}>{geoAeoAudit.score}%</p>
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <Badge tone={geoAeoAudit.score < 40 ? "bad" : geoAeoAudit.score < 70 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
-                  {geoAeoAudit.blocker_cap_applied ? <Badge tone="bad">Blocker Cap Applied</Badge> : null}
-                </div>
-                <p className="mt-4 text-sm font-semibold text-white/70">{geoAeoAudit.grade_description}</p>
-              </div>
-              
-            </Card>
+        ) : activeAuditTab === "crawlability" ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {crawlabilityCategories.map((category) => {
+              const hasIssues = category.failedChecks >= 1;
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {geoCategories.map((category) => (
+              return (
                 <Card key={category.categoryName} className="p-5">
                   <div className="flex min-h-16 items-start justify-between gap-3">
                     <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                    <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
+                    <Badge tone={hasIssues ? "bad" : "good"}>{hasIssues ? "Issues Found" : "Passed"}</Badge>
                   </div>
                   <div className="mt-5 grid grid-cols-3 gap-3">
                     <div>
@@ -247,7 +285,7 @@ export default function ReportPage() {
                     </div>
                     <div>
                       <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                      <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
                     </div>
                     <div>
                       <p className="text-xs font-black uppercase text-ink/45">Score</p>
@@ -256,43 +294,16 @@ export default function ReportPage() {
                   </div>
                   <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
                     <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                    <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
+                    <p className={`text-sm font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.status}</p>
                   </div>
                 </Card>
-              ))}
-            </div>
-
-            <Card className="bg-ink p-6 text-white lg:col-span-2">
-              <p className="text-sm font-black uppercase text-mint">Unlock Full GEO / AEO Report</p>
-              <ul className="mt-5 grid gap-2 text-sm font-semibold text-white/75 md:grid-cols-2">
-                {["Complete GEO issue breakdown", "AI visibility roadmap", "Entity optimization strategy", "FAQ & answer optimization plan", "Implementation recommendations"].map((item) => (
-                  <li key={item}>✓ {item}</li>
-                ))}
-              </ul>
-              <a href={pdfExportUrl} download>
-                <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral md:w-auto">
-                  <Download className="size-4" />
-                  Get My Full Report
-                </Button>
-              </a>
-            </Card>
+              );
+            })}
           </div>
-        ) : (
-          <div className="grid gap-4">
-            {activeAuditTab === "gemini" && geminiFailedDetails.length ? (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowGeminiFailures((current) => !current)}
-                  className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
-                >
-                  {showGeminiFailures ? "Hide Failed Results" : "Show Failed Results"}
-                </button>
-              </div>
-            ) : null}
-
+        ) : activeAuditTab === "structuredData" ? (
+          structuredDataCategories.length ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {citationLikeCategories.map((category) => {
+              {structuredDataCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
@@ -325,6 +336,174 @@ export default function ReportPage() {
                 );
               })}
             </div>
+          ) : (
+            <EmptyAuditState
+              title="No structured data categories available"
+              message="This report does not include structured data category data. Regenerate the report after restarting the audit server so the latest audit code is used."
+            />
+          )
+        ) : activeAuditTab === "imageSeo" ? (
+          imageSeoCategories.length ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {imageSeoCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyAuditState
+              title="No Image SEO categories available"
+              message="This report does not include Image SEO category data. Regenerate the report after restarting the audit server so the latest audit code is used."
+            />
+          )
+        ) : activeAuditTab === "geo" ? (
+          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+            <Card className="overflow-hidden">
+              <div className="bg-ink p-6 text-white">
+                <p className="text-sm font-bold text-mint">GEO / AEO Score</p>
+                <p className={`mt-3 text-7xl font-black ${scoreColor(geoAeoAudit.score)}`}>{geoAeoAudit.score}%</p>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Badge tone={geoAeoAudit.score < 40 ? "bad" : geoAeoAudit.score < 70 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
+                  {geoAeoAudit.blocker_cap_applied ? <Badge tone="bad">Blocker Cap Applied</Badge> : null}
+                </div>
+                <p className="mt-4 text-sm font-semibold text-white/70">{geoAeoAudit.grade_description}</p>
+              </div>
+            </Card>
+
+            {geoCategories.length ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {geoCategories.map((category) => (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <EmptyAuditState
+                title="No GEO / AEO categories available"
+                message={geoAeoAudit.grade_description || "This report does not include GEO / AEO category data. Regenerate the report after restarting the audit server."}
+              />
+            )}
+
+            <Card className="bg-ink p-6 text-white lg:col-span-2">
+              <p className="text-sm font-black uppercase text-mint">Unlock Full GEO / AEO Report</p>
+              <ul className="mt-5 grid gap-2 text-sm font-semibold text-white/75 md:grid-cols-2">
+                {["Complete GEO issue breakdown", "AI visibility roadmap", "Entity optimization strategy", "FAQ & answer optimization plan", "Implementation recommendations"].map((item) => (
+                  <li key={item}>✓ {item}</li>
+                ))}
+              </ul>
+              <a href={pdfExportUrl} download>
+                <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral md:w-auto">
+                  <Download className="size-4" />
+                  Get My Full Report
+                </Button>
+              </a>
+            </Card>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {activeAuditTab === "gemini" && geminiFailedDetails.length ? (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowGeminiFailures((current) => !current)}
+                  className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
+                >
+                  {showGeminiFailures ? "Hide Failed Results" : "Show Failed Results"}
+                </button>
+              </div>
+            ) : null}
+
+            {citationLikeCategories.length ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {citationLikeCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
+                    </div>
+                  </Card>
+                );
+                })}
+              </div>
+            ) : (
+              <EmptyAuditState
+                title={activeAuditTab === "gemini" ? "No Gemini Citation categories available" : "No ChatGPT Citation categories available"}
+                message="This report does not include citation category data. Regenerate the report after restarting the audit server so the latest GEO / AEO audit code is used."
+              />
+            )}
 
             {activeAuditTab === "gemini" && showGeminiFailures && geminiFailedDetails.length ? (
               <div className="grid gap-3">

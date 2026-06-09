@@ -802,36 +802,53 @@ function schemaScriptCount(html: string) {
 }
 
 async function renderedWordCount(url: string, timeoutMs = 8000) {
+  if (process.env.AIVA_ENABLE_RENDERED_AUDIT !== "true") {
+    return { words: null, schemaCount: null, error: "Rendered browser audit disabled" };
+  }
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    const loadPuppeteer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<{
-      default: {
-        launch(options: { args: string[]; headless: "new" }): Promise<{
-          newPage(): Promise<{
-            goto(url: string, options: { waitUntil: "networkidle2"; timeout: number }): Promise<unknown>;
-            content(): Promise<string>;
-          }>;
-          close(): Promise<void>;
-        }>;
-      };
-    }>;
-    const puppeteer = await loadPuppeteer("puppeteer");
-    const browser = await puppeteer.default.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(`Rendered browser audit timed out after ${timeoutMs}ms`)), timeoutMs);
     });
-    try {
-      const page = await browser.newPage();
-      await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
-      const html = await page.content();
-      return {
-        words: wordCount(cheerio.load(html)("body").text()),
-        schemaCount: schemaScriptCount(html)
-      };
-    } finally {
-      await browser.close();
-    }
+    const work = (async () => {
+      const loadPuppeteer = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<{
+        default: {
+          launch(options: { args: string[]; headless: "new" }): Promise<{
+            newPage(): Promise<{
+              goto(url: string, options: { waitUntil: "networkidle2"; timeout: number }): Promise<unknown>;
+              content(): Promise<string>;
+            }>;
+            close(): Promise<void>;
+          }>;
+        };
+      }>;
+      const puppeteer = await loadPuppeteer("puppeteer");
+      const browser = await puppeteer.default.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"]
+      });
+      try {
+        const page = await browser.newPage();
+        await page.goto(url, { waitUntil: "networkidle2", timeout: timeoutMs });
+        const html = await page.content();
+        return {
+          words: wordCount(cheerio.load(html)("body").text()),
+          schemaCount: schemaScriptCount(html)
+        };
+      } finally {
+        await Promise.race([
+          browser.close(),
+          new Promise((resolve) => setTimeout(resolve, 1000))
+        ]);
+      }
+    })();
+
+    return await Promise.race([work, timeoutPromise]);
   } catch (error) {
     return { words: null, schemaCount: null, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -1675,7 +1692,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   addCheck(result, 55, merchantTrust.score > 0, JSON.stringify(merchantTrust));
   addCheck(result, 65, !nosnippet, nosnippet ? "nosnippet/max-snippet/data-nosnippet found" : "No nosnippet restrictions found");
   if (renderedWords === null) {
-    addCheck(result, 66, false, JSON.stringify({ score: 0, error: renderedResult.error ?? "Puppeteer failed", skipped: false }));
+    addSkippedCheck(result, 66, JSON.stringify({ error: renderedResult.error ?? "Rendered browser audit unavailable", skipped: true }));
   } else {
     const renderedRatio = ssrRatio ?? 0;
     addCheck(result, 66, renderedRatio >= 0.6, JSON.stringify({ score: renderedRatio >= 0.8 ? 10 : renderedRatio >= 0.6 ? 5 : 0, skipped: false, ratio: Number(renderedRatio.toFixed(2)), oaiWords, renderedWords }));

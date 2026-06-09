@@ -1,7 +1,9 @@
 import {
   AiVisibilityReport,
+  PublicImageSeoAudit,
   PublicIndexabilityAudit,
   PublicGeoAeoAudit,
+  PublicStructuredDataAudit,
   PublicTechnicalAudit,
   StructuredAiVisibilityReport,
   StructuredImpact,
@@ -129,10 +131,34 @@ function publicIndexabilityAudit(report: AiVisibilityReport): PublicIndexability
   };
 }
 
+function publicStructuredDataAudit(report: AiVisibilityReport): PublicStructuredDataAudit {
+  const audit = report.structuredDataAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicImageSeoAudit(report: AiVisibilityReport): PublicImageSeoAudit {
+  const audit = report.imageSeoAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
 export function toStructuredAiVisibilityReport(report: AiVisibilityReport): StructuredAiVisibilityReport {
   const technicalAudit = publicTechnicalAudit(report);
   const geoAeoAudit = publicGeoAeoAudit(report);
   const indexabilityAudit = publicIndexabilityAudit(report);
+  const structuredDataAudit = publicStructuredDataAudit(report);
+  const imageSeoAudit = publicImageSeoAudit(report);
   const overallScore = clamp(technicalAudit.score * 0.4 + geoAeoAudit.score * 0.6);
   const label = ratingLabel(overallScore);
   const opportunities = previewOpportunities(report);
@@ -156,6 +182,8 @@ export function toStructuredAiVisibilityReport(report: AiVisibilityReport): Stru
     technical_audit: technicalAudit,
     geo_aeo_audit: geoAeoAudit,
     indexability_audit: indexabilityAudit,
+    structured_data_audit: structuredDataAudit,
+    image_seo_audit: imageSeoAudit,
     playground_questions: [
       `What does ${report.brandName} offer in ${category}?`,
       `Is ${report.brandName} a trusted option for ${category}?`,

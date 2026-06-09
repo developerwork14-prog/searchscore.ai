@@ -188,11 +188,91 @@ export interface IndexabilityAuditResult {
   checks: IndexabilityCheckResult[];
 }
 
+export type StructuredDataSeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface StructuredDataCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: StructuredDataSeverity;
+  weight: number;
+  passed: boolean;
+  skipped: boolean;
+  warning: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface StructuredDataCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface StructuredDataAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: StructuredDataCategorySummary[];
+  checks: StructuredDataCheckResult[];
+}
+
+export type ImageSeoSeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface ImageSeoCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: ImageSeoSeverity;
+  weight: number;
+  passed: boolean;
+  skipped: boolean;
+  warning: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface ImageSeoCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface ImageSeoAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: ImageSeoCategorySummary[];
+  checks: ImageSeoCheckResult[];
+}
+
 export interface PublicIndexabilityAudit {
   score: number;
   issues_found: number;
   categories: IndexabilityCategorySummary[];
   checks: IndexabilityCheckResult[];
+}
+
+export interface PublicImageSeoAudit {
+  score: number;
+  issues_found: number;
+  categories: ImageSeoCategorySummary[];
+  checks: ImageSeoCheckResult[];
+}
+
+export interface PublicStructuredDataAudit {
+  score: number;
+  issues_found: number;
+  categories: StructuredDataCategorySummary[];
+  checks: StructuredDataCheckResult[];
 }
 
 export interface PublicGeoAeoAudit {
@@ -245,6 +325,8 @@ export interface AiVisibilityReport {
   technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
   geoAeoAudit: GeoAeoAuditResult;
   indexabilityAudit?: IndexabilityAuditResult;
+  structuredDataAudit?: StructuredDataAuditResult;
+  imageSeoAudit?: ImageSeoAuditResult;
   visibilityOpportunities: string[];
   aiMarketPosition?: AiMarketPosition;
   losingPrompts: LosingPrompt[];
@@ -302,6 +384,8 @@ export interface StructuredAiVisibilityReport {
   technical_audit: PublicTechnicalAudit;
   geo_aeo_audit: PublicGeoAeoAudit;
   indexability_audit: PublicIndexabilityAudit;
+  structured_data_audit: PublicStructuredDataAudit;
+  image_seo_audit: PublicImageSeoAudit;
   playground_questions: string[];
 }
 

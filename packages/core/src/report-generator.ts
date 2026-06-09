@@ -7,13 +7,20 @@ import {
   ReportInput,
   RiskLevel,
   ScoringPillars,
+  GeoAeoAuditResult,
+  GeoAeoCategorySummary,
+  ImageSeoAuditResult,
+  IndexabilityAuditResult,
+  StructuredDataAuditResult,
   TechnicalCategoryStatus,
   TechnicalCategorySummary,
   VisibilityLevel
 } from "./types.js";
 import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult, TechnicalSeverity } from "./technical-audit.js";
 import { runGeoAeoAudit } from "./geo-aeo-audit.js";
+import { runImageSeoAudit } from "./image-seo-audit.js";
 import { runIndexabilityAudit } from "./indexability-audit.js";
+import { runStructuredDataAudit } from "./structured-data-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
 
 function clamp(value: number, min = 0, max = 100) {
@@ -61,6 +68,161 @@ function marketPosition(score: number, categoryVisibility: number, authority: nu
   if (score >= 65 && categoryVisibility >= 60) return "Established AI visibility within the detected category";
   if (score >= 45) return "Developing AI presence with clear optimization upside";
   return "Early-stage AI visibility with limited supporting evidence";
+}
+
+async function withAuditTimeout<T>(promise: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutPromise = new Promise<T>((resolve) => {
+      timeout = setTimeout(() => {
+        console.warn(`${label} timed out after ${ms}ms; using fallback result`);
+        resolve(fallback);
+      }, ms);
+    });
+    return await Promise.race([
+      promise.catch((error) => {
+        console.warn(`${label} failed; using fallback result`, error);
+        return fallback;
+      }),
+      timeoutPromise
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function fallbackTechnicalAudit(reason: string): TechnicalAuditResult {
+  return {
+    score: 0,
+    rawScore: 0,
+    pageScore: 0,
+    domainScore: 0,
+    grade: "F",
+    blockerFailed: true,
+    checkedAt: new Date().toISOString(),
+    checks: [],
+    categoryDebug: [{
+      category: "Technical Audit",
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      failedCheckDetails: [{ id: 0, name: "Technical audit unavailable", evidence: reason }]
+    }]
+  };
+}
+
+function fallbackGeoAeoAudit(reason: string): GeoAeoAuditResult {
+  const categoryNames = [
+    "AI Bot Access",
+    "AI Readiness",
+    "Entity & Trust Signals",
+    "FAQ & Answer Optimization",
+    "Content Authority",
+    "Local GEO Signals",
+    "AI Crawlability",
+    "Structured Data Integrity",
+    "Crawlability",
+    "Technical Access",
+    "Content Structure",
+    "Content Quality",
+    "Gemini Crawlability",
+    "Local & E-Commerce",
+    "Schema & Technical",
+    "Media & Visuals",
+    "Robots & Bot Access",
+    "AI Discovery Files"
+  ];
+  const categories: GeoAeoCategorySummary[] = categoryNames.map((categoryName) => ({
+    categoryName,
+    totalChecks: 0,
+    passedChecks: 0,
+    failedChecks: 0,
+    warningChecks: 0,
+    score: 0,
+    status: "Skipped",
+    skippedCheckDetails: [{ id: 0, name: `${categoryName} unavailable`, reason }]
+  }));
+
+  return {
+    score: 0,
+    rawScore: 0,
+    pageScore: 0,
+    domainScore: 0,
+    grade: "F",
+    gradeDescription: reason,
+    blockerFailed: true,
+    opportunityCounts: { high: 0, medium: 0, low: 0 },
+    checkedAt: new Date().toISOString(),
+    categories,
+    checks: []
+  };
+}
+
+function fallbackIndexabilityAudit(reason: string): IndexabilityAuditResult {
+  return {
+    score: 0,
+    checkedAt: new Date().toISOString(),
+    categories: [{
+      categoryName: "Indexability",
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 0,
+      status: "Skipped"
+    }],
+    checks: []
+  };
+}
+
+function fallbackStructuredDataAudit(reason: string): StructuredDataAuditResult {
+  const categoryNames = [
+    "Organization Schema",
+    "LocalBusiness Schema",
+    "Article Schema",
+    "Person Schema",
+    "FAQ & HowTo Schema",
+    "Product Schema",
+    "Supporting Schema Types",
+    "Schema Validation & Quality",
+    "Schema-DOM Parity",
+    "Specialist Schema Types"
+  ];
+  return {
+    score: 100,
+    checkedAt: new Date().toISOString(),
+    categories: categoryNames.map((categoryName) => ({
+      categoryName,
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 100,
+      status: "Skipped"
+    })),
+    checks: []
+  };
+}
+
+function fallbackImageSeoAudit(reason: string): ImageSeoAuditResult {
+  const categoryNames = ["Alt Text", "Image Format & Performance", "Content & Accessibility", "Schema & Markup"];
+  return {
+    score: 100,
+    checkedAt: new Date().toISOString(),
+    categories: categoryNames.map((categoryName) => ({
+      categoryName,
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 100,
+      status: "Skipped"
+    })),
+    checks: []
+  };
 }
 
 function priorityFromSeverity(severities: TechnicalSeverity[]): RecommendationPriority {
@@ -392,14 +554,43 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   const normalizedUrl = input.websiteUrl.startsWith("http") ? input.websiteUrl : `https://${input.websiteUrl}`;
   const seed = stableHash(`${input.brandName}:${normalizedUrl}:${input.businessEmail}`);
   const htmlContentPromise = fetchHomepageHtml(normalizedUrl);
-  const technicalAuditPromise = runTechnicalAudit(normalizedUrl);
-  const geoAeoAuditPromise = htmlContentPromise.then((html) => runGeoAeoAudit(normalizedUrl, html));
-  const indexabilityAuditPromise = htmlContentPromise.then((html) => runIndexabilityAudit(normalizedUrl, html));
-  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit] = await Promise.all([
+  const technicalAuditPromise = withAuditTimeout(
+    runTechnicalAudit(normalizedUrl),
+    35000,
+    fallbackTechnicalAudit("Technical audit timed out"),
+    "Technical audit"
+  );
+  const geoAeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runGeoAeoAudit(normalizedUrl, html),
+    55000,
+    fallbackGeoAeoAudit("GEO / AEO audit timed out"),
+    "GEO / AEO audit"
+  ));
+  const indexabilityAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runIndexabilityAudit(normalizedUrl, html),
+    30000,
+    fallbackIndexabilityAudit("Indexability audit timed out"),
+    "Indexability audit"
+  ));
+  const structuredDataAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runStructuredDataAudit(normalizedUrl, html),
+    12000,
+    fallbackStructuredDataAudit("Structured data audit timed out"),
+    "Structured data audit"
+  ));
+  const imageSeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runImageSeoAudit(normalizedUrl, html),
+    12000,
+    fallbackImageSeoAudit("Image SEO audit timed out"),
+    "Image SEO audit"
+  ));
+  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit, structuredDataAudit, imageSeoAudit] = await Promise.all([
     technicalAuditPromise,
     htmlContentPromise,
     geoAeoAuditPromise,
-    indexabilityAuditPromise
+    indexabilityAuditPromise,
+    structuredDataAuditPromise,
+    imageSeoAuditPromise
   ]);
   const classification = classifyBusiness(normalizedUrl, htmlContent);
   const category = classification.subIndustry;
@@ -462,6 +653,8 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     technicalCategoryDebug: technicalAudit.categoryDebug,
     geoAeoAudit,
     indexabilityAudit,
+    structuredDataAudit,
+    imageSeoAudit,
     visibilityOpportunities: [
       "AI systems found opportunities to improve brand understanding.",
       "Authority and trust signals can be strengthened.",
