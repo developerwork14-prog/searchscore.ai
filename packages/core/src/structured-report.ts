@@ -1,10 +1,12 @@
 import {
   AiVisibilityReport,
+  PublicEeatAudit,
   PublicImageSeoAudit,
   PublicIndexabilityAudit,
   PublicGeoAeoAudit,
   PublicStructuredDataAudit,
   PublicTechnicalAudit,
+  PublicTrustSignalsAudit,
   StructuredAiVisibilityReport,
   StructuredImpact,
   StructuredMetricCategory,
@@ -153,12 +155,36 @@ function publicImageSeoAudit(report: AiVisibilityReport): PublicImageSeoAudit {
   };
 }
 
+function publicEeatAudit(report: AiVisibilityReport): PublicEeatAudit {
+  const audit = report.eeatAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicTrustSignalsAudit(report: AiVisibilityReport): PublicTrustSignalsAudit {
+  const audit = report.trustSignalsAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
 export function toStructuredAiVisibilityReport(report: AiVisibilityReport): StructuredAiVisibilityReport {
   const technicalAudit = publicTechnicalAudit(report);
   const geoAeoAudit = publicGeoAeoAudit(report);
   const indexabilityAudit = publicIndexabilityAudit(report);
   const structuredDataAudit = publicStructuredDataAudit(report);
   const imageSeoAudit = publicImageSeoAudit(report);
+  const eeatAudit = publicEeatAudit(report);
+  const trustSignalsAudit = publicTrustSignalsAudit(report);
   const overallScore = clamp(technicalAudit.score * 0.4 + geoAeoAudit.score * 0.6);
   const label = ratingLabel(overallScore);
   const opportunities = previewOpportunities(report);
@@ -184,6 +210,8 @@ export function toStructuredAiVisibilityReport(report: AiVisibilityReport): Stru
     indexability_audit: indexabilityAudit,
     structured_data_audit: structuredDataAudit,
     image_seo_audit: imageSeoAudit,
+    eeat_audit: eeatAudit,
+    trust_signals_audit: trustSignalsAudit,
     playground_questions: [
       `What does ${report.brandName} offer in ${category}?`,
       `Is ${report.brandName} a trusted option for ${category}?`,

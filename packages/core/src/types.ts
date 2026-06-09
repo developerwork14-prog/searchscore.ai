@@ -254,6 +254,72 @@ export interface ImageSeoAuditResult {
   checks: ImageSeoCheckResult[];
 }
 
+export type EeatSeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface EeatCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: EeatSeverity;
+  weight: number;
+  passed: boolean;
+  skipped: boolean;
+  warning: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface EeatCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface EeatAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: EeatCategorySummary[];
+  checks: EeatCheckResult[];
+}
+
+export type TrustSignalsSeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface TrustSignalsCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: TrustSignalsSeverity;
+  weight: number;
+  passed: boolean;
+  skipped: boolean;
+  warning: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface TrustSignalsCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface TrustSignalsAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: TrustSignalsCategorySummary[];
+  checks: TrustSignalsCheckResult[];
+}
+
 export interface PublicIndexabilityAudit {
   score: number;
   issues_found: number;
@@ -266,6 +332,20 @@ export interface PublicImageSeoAudit {
   issues_found: number;
   categories: ImageSeoCategorySummary[];
   checks: ImageSeoCheckResult[];
+}
+
+export interface PublicEeatAudit {
+  score: number;
+  issues_found: number;
+  categories: EeatCategorySummary[];
+  checks: EeatCheckResult[];
+}
+
+export interface PublicTrustSignalsAudit {
+  score: number;
+  issues_found: number;
+  categories: TrustSignalsCategorySummary[];
+  checks: TrustSignalsCheckResult[];
 }
 
 export interface PublicStructuredDataAudit {
@@ -327,6 +407,8 @@ export interface AiVisibilityReport {
   indexabilityAudit?: IndexabilityAuditResult;
   structuredDataAudit?: StructuredDataAuditResult;
   imageSeoAudit?: ImageSeoAuditResult;
+  eeatAudit?: EeatAuditResult;
+  trustSignalsAudit?: TrustSignalsAuditResult;
   visibilityOpportunities: string[];
   aiMarketPosition?: AiMarketPosition;
   losingPrompts: LosingPrompt[];
@@ -386,6 +468,8 @@ export interface StructuredAiVisibilityReport {
   indexability_audit: PublicIndexabilityAudit;
   structured_data_audit: PublicStructuredDataAudit;
   image_seo_audit: PublicImageSeoAudit;
+  eeat_audit: PublicEeatAudit;
+  trust_signals_audit: PublicTrustSignalsAudit;
   playground_questions: string[];
 }
 

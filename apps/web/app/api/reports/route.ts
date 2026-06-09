@@ -5,7 +5,7 @@ import { reportStore } from "@/lib/server/report-store";
 import { createdPublicReportView } from "@/lib/server/report-views";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 const reportInputSchema = z.object({
   brandName: z.string().min(2).max(120),

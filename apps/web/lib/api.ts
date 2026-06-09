@@ -1,7 +1,7 @@
 import type { CreatedPublicReport, PlaygroundResult, ReportInput, StructuredAiVisibilityReport } from "@aiva/core";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
-const REPORT_REQUEST_TIMEOUT_MS = 120000;
+const REPORT_REQUEST_TIMEOUT_MS = 180000;
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {

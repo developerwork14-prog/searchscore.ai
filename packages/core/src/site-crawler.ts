@@ -187,7 +187,7 @@ async function responseText(response: Response, url: string) {
 
 async function fetchSitemapText(url: string, timeoutMs: number) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(timeoutMs, 10000));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       redirect: "follow",
@@ -243,7 +243,7 @@ async function urlsFromSitemapFile(
 
 export async function fetchSitemapUrls(origin: string, timeoutMs: number, maxSitemapFiles: number): Promise<SitemapFetchResult> {
   const root = new URL(origin);
-  const robots = await fetchText(`${origin}/robots.txt`, Math.max(timeoutMs, 10000)).catch(() => null);
+  const robots = await fetchText(`${origin}/robots.txt`, timeoutMs).catch(() => null);
   const robotsSitemaps = [...(robots?.text.matchAll(/^sitemap:\s*(.+)$/gim) ?? [])]
     .map((match) => resolveLoc(origin, match[1].trim()))
     .filter(Boolean);

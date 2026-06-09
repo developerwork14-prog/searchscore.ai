@@ -1327,13 +1327,16 @@ function parameterUrlEvidence(currentUrl: URL, canonicalUrl: string) {
 }
 
 async function searchIndexEvidence(searchUrl: string, domain: string, note: string) {
+  if (process.env.AIVA_ENABLE_LIVE_SERP_AUDIT !== "true") {
+    return { pass: true, indexed: null, skipped: true, note: `${note}; live SERP fetch disabled` };
+  }
   const result = await fetchText(searchUrl, 3500).catch(() => null);
   const indexed = Boolean(result?.response.ok && result.text.toLowerCase().includes(domain.toLowerCase()));
   return { pass: indexed, indexed, note };
 }
 
 async function sitemapNoindexEvidence(urls: string[]) {
-  const sample = urls.slice(0, 50);
+  const sample = urls.slice(0, 10);
   const checked = await Promise.all(sample.map(async (href) => {
     const page = await fetchText(href, 2500).catch(() => null);
     return page && noindexFoundIn(page.text, page.response) ? href : "";
@@ -1429,17 +1432,29 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const url = new URL(normalizedUrl);
   const origin = `${url.protocol}//${url.host}`;
   const pageHtml = html ?? await fetchText(normalizedUrl, 3000).then((result) => result.text).catch(() => "");
-  const [robots, llms, localPages, crawled] = await Promise.all([
+  const [
+    robots,
+    llms,
+    localPages,
+    crawled,
+    oaiPage,
+    googleExtendedPage,
+    serverPage,
+    browserPage,
+    extraSitemapResult,
+    directTrustCandidates
+  ] = await Promise.all([
     fetchText(`${origin}/robots.txt`, 2500).catch(() => null),
     fetchText(`${origin}/llms.txt`, 1800).catch(() => null),
     fetchLikelyLocalPageEntries(origin),
-    crawlSite(normalizedUrl, { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
+    crawlSite(normalizedUrl, { maxPages: 8, maxDepth: 2, timeoutMs: 1600, concurrency: 4, maxSitemapFiles: 1 }),
+    fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 2500).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 2500).catch(() => null),
+    fetchText(normalizedUrl, 2500).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 2500).catch(() => null),
+    fetchSitemapUrls(origin, 2200, 1).catch(() => null),
+    directTrustPageCandidates(origin)
   ]);
-  const oaiPage = await fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 3000).catch(() => null);
-  const googleExtendedPage = await fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 3000).catch(() => null);
-  const serverPage = await fetchText(normalizedUrl, 3000).catch(() => null);
-  const browserPage = await fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 3000).catch(() => null);
-  const extraSitemapResult = await fetchSitemapUrls(origin, 10000, 50).catch(() => null);
   const extraSitemapUrls = extraSitemapResult?.urls ?? [];
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
     source: page.source === "homepage" ? "homepage" : page.source === "sitemap" ? "sitemap page" : "internal page",
@@ -1473,7 +1488,6 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const localEvidence = localGeoEvidence(localGeoPages);
   const productObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /Product/i.test(type)));
   const faqObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /FAQPage/i.test(type)));
-  const directTrustCandidates = await directTrustPageCandidates(origin);
   const robotsText = robots?.text ?? "";
   const h2s = h2Texts($);
   const h2Progression = ["what", "why", "how", "benefit", "comparison|compare|vs", "faq|question", "next|action"].filter((pattern) => h2s.some((text) => new RegExp(pattern, "i").test(text)));

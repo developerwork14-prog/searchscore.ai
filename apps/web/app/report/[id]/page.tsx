@@ -32,6 +32,10 @@ function EmptyAuditState({ title, message }: { title: string; message: string })
   );
 }
 
+function categoriesUnavailable(categories: { totalChecks: number; status: string }[]) {
+  return categories.length > 0 && categories.every((category) => category.totalChecks === 0 && category.status === "Skipped");
+}
+
 const CHATGPT_CITATION_CATEGORIES = ["Crawlability", "Technical Access", "Content Structure", "Content Quality"];
 const GEMINI_CITATION_CATEGORIES = ["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"];
 
@@ -40,7 +44,7 @@ export default function ReportPage() {
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "crawlability" | "structuredData" | "imageSeo" | "geo" | "citation" | "gemini" | "indexability">("technical");
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "crawlability" | "structuredData" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability">("technical");
   const [showGeminiFailures, setShowGeminiFailures] = useState(false);
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
@@ -109,6 +113,18 @@ export default function ReportPage() {
     categories: [],
     checks: []
   };
+  const eeatAudit = report.eeat_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
+  const trustSignalsAudit = report.trust_signals_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
   const geoCategories = geoAeoAudit.categories.filter((category) => !CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) && !GEMINI_CITATION_CATEGORIES.includes(category.categoryName) && category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
   const citationCategories = geoAeoAudit.categories.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
   const geminiCategories = geoAeoAudit.categories.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
@@ -122,10 +138,18 @@ export default function ReportPage() {
   );
   const structuredDataCategories = structuredDataAudit.categories;
   const imageSeoCategories = imageSeoAudit.categories;
+  const eeatCategories = eeatAudit.categories;
+  const trustSignalsCategories = trustSignalsAudit.categories;
   const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityAudit.categories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
+  const structuredDataUnavailable = categoriesUnavailable(structuredDataCategories);
+  const imageSeoUnavailable = categoriesUnavailable(imageSeoCategories);
+  const eeatUnavailable = categoriesUnavailable(eeatCategories);
+  const trustSignalsUnavailable = categoriesUnavailable(trustSignalsCategories);
+  const geoUnavailable = categoriesUnavailable(geoCategories);
+  const citationLikeUnavailable = categoriesUnavailable(citationLikeCategories);
   const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
-  const geoStatusTone = (status: string) => status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
+  const geoStatusTone = (status: string) => status === "Skipped" ? "neutral" : status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
 
   return (
@@ -206,6 +230,18 @@ export default function ReportPage() {
               className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "imageSeo" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
             >
               Image SEO
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("eeat")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "eeat" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              EEAT Audit
+            </button>
+            <button
+              onClick={() => setActiveAuditTab("trustSignals")}
+              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "trustSignals" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
+            >
+              Trust Signal
             </button>
             <button
               onClick={() => setActiveAuditTab("geo")}
@@ -301,11 +337,11 @@ export default function ReportPage() {
             })}
           </div>
         ) : activeAuditTab === "structuredData" ? (
-          structuredDataCategories.length ? (
+          structuredDataCategories.length && !structuredDataUnavailable ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {structuredDataCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
-                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
@@ -339,15 +375,15 @@ export default function ReportPage() {
           ) : (
             <EmptyAuditState
               title="No structured data categories available"
-              message="This report does not include structured data category data. Regenerate the report after restarting the audit server so the latest audit code is used."
+              message={structuredDataUnavailable ? "Structured data audit timed out. Regenerate the report after restarting the audit server." : "This report does not include structured data category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
             />
           )
         ) : activeAuditTab === "imageSeo" ? (
-          imageSeoCategories.length ? (
+          imageSeoCategories.length && !imageSeoUnavailable ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {imageSeoCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
-                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
@@ -381,7 +417,91 @@ export default function ReportPage() {
           ) : (
             <EmptyAuditState
               title="No Image SEO categories available"
-              message="This report does not include Image SEO category data. Regenerate the report after restarting the audit server so the latest audit code is used."
+              message={imageSeoUnavailable ? "Image SEO audit timed out. Regenerate the report after restarting the audit server." : "This report does not include Image SEO category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
+            />
+          )
+        ) : activeAuditTab === "eeat" ? (
+          eeatCategories.length && !eeatUnavailable ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {eeatCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyAuditState
+              title="No EEAT categories available"
+              message={eeatUnavailable ? "EEAT audit timed out. Regenerate the report after restarting the audit server." : "This report does not include EEAT category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
+            />
+          )
+        ) : activeAuditTab === "trustSignals" ? (
+          trustSignalsCategories.length && !trustSignalsUnavailable ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {trustSignalsCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <Card key={category.categoryName} className="p-5">
+                    <div className="flex min-h-16 items-start justify-between gap-3">
+                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
+                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
+                    </div>
+                    <div className="mt-5 grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
+                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
+                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+                      </div>
+                    </div>
+                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
+                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyAuditState
+              title="No Trust Signal categories available"
+              message={trustSignalsUnavailable ? "Trust Signal audit timed out. Regenerate the report after restarting the audit server." : "This report does not include Trust Signal category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
             />
           )
         ) : activeAuditTab === "geo" ? (
@@ -398,13 +518,15 @@ export default function ReportPage() {
               </div>
             </Card>
 
-            {geoCategories.length ? (
+            {geoCategories.length && !geoUnavailable ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {geoCategories.map((category) => (
+                {geoCategories.map((category) => {
+                  const isSkipped = category.status === "Skipped";
+                  return (
                   <Card key={category.categoryName} className="p-5">
                     <div className="flex min-h-16 items-start justify-between gap-3">
                       <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={geoStatusTone(category.status)}>{category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
+                      <Badge tone={geoStatusTone(category.status)}>{isSkipped ? "Skipped" : category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
                     </div>
                     <div className="mt-5 grid grid-cols-3 gap-3">
                       <div>
@@ -417,20 +539,21 @@ export default function ReportPage() {
                       </div>
                       <div>
                         <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
+                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
                       </div>
                     </div>
                     <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
                       <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
+                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
                     </div>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <EmptyAuditState
                 title="No GEO / AEO categories available"
-                message={geoAeoAudit.grade_description || "This report does not include GEO / AEO category data. Regenerate the report after restarting the audit server."}
+                message={geoUnavailable ? geoAeoAudit.grade_description || "GEO / AEO audit timed out. Regenerate the report after restarting the audit server." : geoAeoAudit.grade_description || "This report does not include GEO / AEO category data. Regenerate the report after restarting the audit server."}
               />
             )}
 
@@ -463,11 +586,11 @@ export default function ReportPage() {
               </div>
             ) : null}
 
-            {citationLikeCategories.length ? (
+            {citationLikeCategories.length && !citationLikeUnavailable ? (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {citationLikeCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
-                const isSkipped = "skippedChecks" in category && category.skippedChecks === category.totalChecks;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
@@ -501,7 +624,7 @@ export default function ReportPage() {
             ) : (
               <EmptyAuditState
                 title={activeAuditTab === "gemini" ? "No Gemini Citation categories available" : "No ChatGPT Citation categories available"}
-                message="This report does not include citation category data. Regenerate the report after restarting the audit server so the latest GEO / AEO audit code is used."
+                message={citationLikeUnavailable ? "Citation audit timed out because the GEO / AEO audit did not complete. Regenerate the report after restarting the audit server." : "This report does not include citation category data. Regenerate the report after restarting the audit server so the latest GEO / AEO audit code is used."}
               />
             )}
 

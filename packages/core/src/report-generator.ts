@@ -1,6 +1,7 @@
 import {
   AiVisibilityReport,
   AiMarketPosition,
+  EeatAuditResult,
   LeadGenerationMetric,
   Recommendation,
   RecommendationPriority,
@@ -14,13 +15,16 @@ import {
   StructuredDataAuditResult,
   TechnicalCategoryStatus,
   TechnicalCategorySummary,
+  TrustSignalsAuditResult,
   VisibilityLevel
 } from "./types.js";
 import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult, TechnicalSeverity } from "./technical-audit.js";
+import { runEeatAudit } from "./eeat-audit.js";
 import { runGeoAeoAudit } from "./geo-aeo-audit.js";
 import { runImageSeoAudit } from "./image-seo-audit.js";
 import { runIndexabilityAudit } from "./indexability-audit.js";
 import { runStructuredDataAudit } from "./structured-data-audit.js";
+import { runTrustSignalsAudit } from "./trust-signals-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
 
 function clamp(value: number, min = 0, max = 100) {
@@ -208,6 +212,44 @@ function fallbackStructuredDataAudit(reason: string): StructuredDataAuditResult 
 
 function fallbackImageSeoAudit(reason: string): ImageSeoAuditResult {
   const categoryNames = ["Alt Text", "Image Format & Performance", "Content & Accessibility", "Schema & Markup"];
+  return {
+    score: 100,
+    checkedAt: new Date().toISOString(),
+    categories: categoryNames.map((categoryName) => ({
+      categoryName,
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 100,
+      status: "Skipped"
+    })),
+    checks: []
+  };
+}
+
+function fallbackEeatAudit(reason: string): EeatAuditResult {
+  const categoryNames = ["Author & Expertise", "Editorial Standards", "Trust & Transparency", "Trust Signals & Reviews", "Citations & Evidence"];
+  return {
+    score: 100,
+    checkedAt: new Date().toISOString(),
+    categories: categoryNames.map((categoryName) => ({
+      categoryName,
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 100,
+      status: "Skipped"
+    })),
+    checks: []
+  };
+}
+
+function fallbackTrustSignalsAudit(reason: string): TrustSignalsAuditResult {
+  const categoryNames = ["NAP & Brand Consistency", "Schema-DOM Parity", "Technical Trust"];
   return {
     score: 100,
     checkedAt: new Date().toISOString(),
@@ -562,7 +604,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   );
   const geoAeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runGeoAeoAudit(normalizedUrl, html),
-    55000,
+    110000,
     fallbackGeoAeoAudit("GEO / AEO audit timed out"),
     "GEO / AEO audit"
   ));
@@ -584,13 +626,27 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     fallbackImageSeoAudit("Image SEO audit timed out"),
     "Image SEO audit"
   ));
-  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit, structuredDataAudit, imageSeoAudit] = await Promise.all([
+  const eeatAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runEeatAudit(normalizedUrl, html),
+    14000,
+    fallbackEeatAudit("EEAT audit timed out"),
+    "EEAT audit"
+  ));
+  const trustSignalsAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runTrustSignalsAudit(normalizedUrl, html, input.brandName, input.businessEmail),
+    14000,
+    fallbackTrustSignalsAudit("Trust Signals audit timed out"),
+    "Trust Signals audit"
+  ));
+  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit, structuredDataAudit, imageSeoAudit, eeatAudit, trustSignalsAudit] = await Promise.all([
     technicalAuditPromise,
     htmlContentPromise,
     geoAeoAuditPromise,
     indexabilityAuditPromise,
     structuredDataAuditPromise,
-    imageSeoAuditPromise
+    imageSeoAuditPromise,
+    eeatAuditPromise,
+    trustSignalsAuditPromise
   ]);
   const classification = classifyBusiness(normalizedUrl, htmlContent);
   const category = classification.subIndustry;
@@ -655,6 +711,8 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     indexabilityAudit,
     structuredDataAudit,
     imageSeoAudit,
+    eeatAudit,
+    trustSignalsAudit,
     visibilityOpportunities: [
       "AI systems found opportunities to improve brand understanding.",
       "Authority and trust signals can be strengthened.",
