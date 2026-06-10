@@ -235,6 +235,39 @@ export interface StructuredDataAuditResult {
   checks: StructuredDataCheckResult[];
 }
 
+export type OnPageSeoSeverity = "Critical" | "High" | "Medium" | "Low";
+
+export interface OnPageSeoCheckResult {
+  id: number;
+  category: string;
+  name: string;
+  severity: OnPageSeoSeverity;
+  weight: number;
+  passed: boolean;
+  skipped: boolean;
+  warning: boolean;
+  score: number;
+  evidence: Record<string, unknown>;
+}
+
+export interface OnPageSeoCategorySummary {
+  categoryName: string;
+  totalChecks: number;
+  passedChecks: number;
+  failedChecks: number;
+  warningChecks: number;
+  skippedChecks: number;
+  score: number;
+  status: TechnicalCategoryStatus;
+}
+
+export interface OnPageSeoAuditResult {
+  score: number;
+  checkedAt: string;
+  categories: OnPageSeoCategorySummary[];
+  checks: OnPageSeoCheckResult[];
+}
+
 export type ImageSeoSeverity = "Critical" | "High" | "Medium" | "Low";
 
 export interface ImageSeoCheckResult {
@@ -369,6 +402,13 @@ export interface PublicStructuredDataAudit {
   checks: StructuredDataCheckResult[];
 }
 
+export interface PublicOnPageSeoAudit {
+  score: number;
+  issues_found: number;
+  categories: OnPageSeoCategorySummary[];
+  checks: OnPageSeoCheckResult[];
+}
+
 export interface PublicGeoAeoAudit {
   score: number;
   grade: GeoAeoGrade;
@@ -422,6 +462,7 @@ export interface AiVisibilityReport {
   geoAeoAudit: GeoAeoAuditResult;
   indexabilityAudit?: IndexabilityAuditResult;
   structuredDataAudit?: StructuredDataAuditResult;
+  onPageSeoAudit?: OnPageSeoAuditResult;
   imageSeoAudit?: ImageSeoAuditResult;
   eeatAudit?: EeatAuditResult;
   trustSignalsAudit?: TrustSignalsAuditResult;
@@ -483,6 +524,7 @@ export interface StructuredAiVisibilityReport {
   geo_aeo_audit: PublicGeoAeoAudit;
   indexability_audit: PublicIndexabilityAudit;
   structured_data_audit: PublicStructuredDataAudit;
+  on_page_seo_audit: PublicOnPageSeoAudit;
   image_seo_audit: PublicImageSeoAudit;
   eeat_audit: PublicEeatAudit;
   trust_signals_audit: PublicTrustSignalsAudit;

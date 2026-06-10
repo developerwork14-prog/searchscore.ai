@@ -245,7 +245,55 @@ const CHECKS: CheckDefinition[] = [
   [187, "Asset Optimisation", "Total Page Weight <3MB", 2, "MAJOR"],
   [188, "INP & Interactivity", "TTI <3800ms", 2, "MAJOR"],
   [189, "PageSpeed Scores", "Speed Index <3400ms", 1.5, "MINOR"],
-  [190, "INP & Interactivity", "TBT <200ms", 2.5, "MAJOR"]
+  [190, "INP & Interactivity", "TBT <200ms", 2.5, "MAJOR"],
+  [191, "Security & HTTPS", "HTTP 200 on All Target Pages", 3.96, "BLOCKER"],
+  [192, "Security & HTTPS", "HTTPS + Valid SSL Certificate", 3.38, "BLOCKER"],
+  [193, "Security & HTTPS", "HSTS Header", 1.69, "MINOR"],
+  [194, "Security & HTTPS", "SSL Covers All Subdomains", 1.69, "MAJOR"],
+  [195, "Performance & Caching", "Compression on All Text Assets", 1.69, "MINOR"],
+  [196, "Performance & Caching", "Cache-Control Configured", 1.69, "MINOR"],
+  [197, "Crawl & Redirect Control", "No Infinite Scroll", 2.25, "MAJOR"],
+  [198, "Performance & Caching", "LCP Image Not Lazy-Loaded", 2.82, "BLOCKER"],
+  [199, "Crawl & Redirect Control", "Canonical in HTTP Header", 1.13, "ADVISORY"],
+  [200, "Crawl & Redirect Control", "Canonical on All Indexable Pages", 2.82, "BLOCKER"],
+  [201, "Crawl & Redirect Control", "Self-Referencing Canonical", 2.82, "BLOCKER"],
+  [202, "Crawl & Redirect Control", "Canonical Not -> Noindex", 2.25, "BLOCKER"],
+  [203, "Crawl & Redirect Control", "No Canonical Chains", 2.25, "MAJOR"],
+  [204, "Security & HTTPS", "No Back-Button Hijacking", 2.25, "BLOCKER"],
+  [205, "Security & HTTPS", "No Exit-Intent Redirects", 1.69, "MAJOR"],
+  [206, "Crawl & Redirect Control", "No Noindex in Sitemap", 1.69, "MAJOR"],
+  [207, "Crawl & Redirect Control", "No Soft-404s", 1.69, "MAJOR"],
+  [208, "Crawl & Redirect Control", "301 for Permanent Redirects", 1.69, "MAJOR"],
+  [209, "Crawl & Redirect Control", "No URL Path Case Inconsistency", 1.13, "MINOR"],
+  [210, "Security & HTTPS", "No Broken External Links", 1.69, "MINOR"],
+  [211, "Security & HTTPS", "No Mixed Content", 2.25, "MAJOR"],
+  [212, "Performance & Caching", "GZIP/Brotli on HTML", 2.25, "MINOR"],
+  [213, "Performance & Caching", "CDN Edge Caching", 2.25, "MINOR"],
+  [214, "Performance & Caching", "ETag/Last-Modified Headers", 1.69, "ADVISORY"],
+  [215, "Rendering & DOM", "SSR Contains Primary Content", 4.51, "BLOCKER"],
+  [216, "Rendering & DOM", "No Empty-Shell SPA", 3.38, "BLOCKER"],
+  [217, "Rendering & DOM", "No Key Content in Accordions/Tabs", 2.25, "MAJOR"],
+  [218, "Rendering & DOM", "No Consent Wall Blocking DOM", 2.25, "BLOCKER"],
+  [219, "Rendering & DOM", "DOM Node Count <1500", 1.69, "MINOR"],
+  [220, "Rendering & DOM", "CSS Hidden Content <100w", 2.25, "MAJOR"],
+  [221, "Rendering & DOM", "No CSS-Hidden Keyword Text", 2.25, "BLOCKER"],
+  [222, "Rendering & DOM", "No Render-Blocking Scripts in <head>", 2.25, "MAJOR"],
+  [223, "Rendering & DOM", "Critical CSS Inlined", 1.69, "MINOR"],
+  [224, "Performance & Caching", "All Images width+height", 2.25, "MAJOR"],
+  [225, "Performance & Caching", "Below-Fold Images Lazy-Loaded", 1.69, "MINOR"],
+  [226, "Performance & Caching", "font-display: swap", 1.69, "MINOR"],
+  [227, "Rendering & DOM", "Server-Side Schema Injection", 2.82, "BLOCKER"],
+  [228, "AI Accessibility & Discoverability", "RSS Feed Full-Text", 1.69, "MINOR"],
+  [229, "AI Accessibility & Discoverability", "ai.txt Exists", 0.85, "ADVISORY"],
+  [230, "AI Accessibility & Discoverability", "llms.txt Present+Valid", 1.69, "MAJOR"],
+  [231, "Security & HTTPS", "CORS on Public APIs", 1.13, "ADVISORY"],
+  [232, "Performance & Caching", "TTFB <800ms Pass / <200ms Competitive", 2.82, "MAJOR"],
+  [233, "AI Accessibility & Discoverability", "AI Crawler IP Accessibility", 2.25, "BLOCKER"],
+  [234, "AI Accessibility & Discoverability", "Headless Browser Content Match", 1.69, "MAJOR"],
+  [235, "AI Accessibility & Discoverability", "IndexNow Implemented", 1.69, "MINOR"],
+  [236, "Crawl & Redirect Control", "Internal Search Blocked", 1.69, "MAJOR"],
+  [237, "Crawl & Redirect Control", "URL Params Stripped from Internal Links", 1.69, "MINOR"],
+  [238, "Security & HTTPS", "Correct Content-Type Headers", 1.13, "MINOR"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
@@ -985,9 +1033,10 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const origin = `${url.protocol}//${url.host}`;
   const robots = await fetchText(`${origin}/robots.txt`, {}, 2500).catch(() => null);
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
-  const [sitemap, aiSitemap, llms, psi, desktopPsi, crux, crawled] = await Promise.all([
+  const [sitemap, aiSitemap, aiTxt, llms, psi, desktopPsi, crux, crawled] = await Promise.all([
     fetchText(sitemapUrl, {}, 2500).catch(() => null),
     fetchText(`${origin}/ai-sitemap.xml`, {}, 1800).catch(() => null),
+    fetchText(`${origin}/ai.txt`, {}, 1800).catch(() => null),
     fetchText(`${origin}/llms.txt`, {}, 1800).catch(() => null),
     fetchPageSpeedInsights(page.finalUrl, "mobile"),
     fetchPageSpeedInsights(page.finalUrl, "desktop"),
@@ -1485,6 +1534,54 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(188, psi?.tti !== undefined ? psi.tti < 3800 : page.responseTimeMs < 3800 && headBlockingScripts === 0, psi?.tti !== undefined ? `${Math.round(psi.tti)}ms via PageSpeed` : "Local TTI fallback");
   add(189, psi?.speedIndex !== undefined ? psi.speedIndex < 3400 : page.responseTimeMs < 3400, psi?.speedIndex !== undefined ? `${Math.round(psi.speedIndex)}ms via PageSpeed` : `Local fallback ${page.responseTimeMs}ms`);
   add(190, psi?.tbt !== undefined ? psi.tbt < 200 : headBlockingScripts === 0, psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms via PageSpeed` : "Local TBT fallback");
+  add(191, pages.every((p) => p.status === 200), `${pages.filter((p) => p.status === 200).length}/${pages.length} target pages returned HTTP 200`);
+  add(192, url.protocol === "https:" && await sslValid(url), `${url.protocol} TLS certificate checked`);
+  add(193, hstsMaxAge > 0, hsts ? `HSTS max-age=${hstsMaxAge}` : "HSTS header missing");
+  add(194, subdomainSslResults.every((item) => item.valid), subdomainSslResults.length ? `${subdomainSslResults.filter((item) => item.valid).length}/${subdomainSslResults.length} discovered subdomains have valid SSL` : "No linked subdomains discovered");
+  add(195, compressedTextAssets.length === 0 || compressionPercent >= 80, compressedTextAssets.length === 0 ? "0/0 text assets compressed (not detected)" : `${compressedCount}/${compressedTextAssets.length} text assets compressed (${compressionPercent}%)`);
+  add(196, headerAssetSamples.length === 0 || cachePercent >= 80, `${cacheOkCount}/${headerAssetSamples.length} assets have appropriate Cache-Control`);
+  add(197, everyPage((p) => !/infinite|load more|IntersectionObserver/i.test(p.html)), pageCountEvidence);
+  add(198, psi?.lcpLazyLoadedPass ?? !firstImgLazy, psi?.lcpLazyLoadedPass !== undefined ? `PageSpeed lcp-lazy-loaded ${psi.lcpLazyLoadedPass ? "passed" : "failed"}` : "First image loading attribute checked");
+  add(199, Boolean(headerCanonical), headerCanonical ? `Link canonical: ${headerCanonical}` : "missing");
+  add(200, everyPage((p) => !metaRobots(p).includes("noindex") && Boolean(p.$("link[rel='canonical']").attr("href"))), pageCountEvidence);
+  add(201, canonicalSelfRef.rate >= 0.9, `${canonicalSelfRef.passed}/${canonicalSelfRef.total} pages have self-referencing canonical (${canonicalSelfRef.percent}%)`);
+  add(202, !canonicalAbs || await fetchPage(canonicalAbs, 1800).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
+  add(203, canonicalChain.hops <= 1 && !canonicalChain.loop, `${canonicalChain.hops} canonical hops${canonicalChain.loop ? ", loop detected" : ""}`);
+  add(204, !historyMatch, historyMatch ? `Matched pattern: ${historyMatch}` : "No suspicious history manipulation found");
+  add(205, !exitIntentMatch, exitIntentMatch ? `Matched pattern: ${exitIntentMatch}` : "No exit-intent redirects found");
+  add(206, pages.every(robotsContentAllowsIndex), pageCountEvidence);
+  add(207, soft404Status === 404 || soft404Status === 410, `Fake URL returned status ${soft404Status || "missing"}${soft404Status === 200 && /\b(not found|page not found|no results|error)\b/i.test(soft404Body) ? " with soft error language" : ""}`);
+  add(208, slashRedirectStatus === 0 || slashRedirectStatus === 301 || slashRedirectStatus === 308 || caseVariantStatus === 0 || caseVariantStatus === 301 || caseVariantStatus === 308 || caseVariantStatus === 404, `Slash variant status ${slashRedirectStatus || "missing"}, case variant status ${caseVariantStatus || "missing"}`);
+  add(209, everyPage((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()), pageCountEvidence);
+  add(210, externalLinkResponses.length === 0 || externalLiveCount / externalLinkResponses.length >= 0.9, `${externalLiveCount}/${externalLinkResponses.length} external links live (${Math.round((externalLinkResponses.length ? externalLiveCount / externalLinkResponses.length : 1) * 100)}%)`);
+  add(211, url.protocol !== "https:" || page.$("[src^='http://'],[href^='http://']").length === 0, "HTTP assets/links on HTTPS page");
+  add(212, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
+  add(213, Boolean(cdnEvidence), cdnEvidence || "No CDN/cache header signal detected");
+  add(214, validatorHeaders.length > 0 || assetValidatorCount > 0, validatorHeaders.length ? validatorHeaders.join(", ") : assetValidatorCount > 0 ? `${assetValidatorCount}/${headerAssetSamples.length} sampled assets have ETag or Last-Modified` : "missing");
+  add(215, ssrPassCount / Math.max(pages.length, 1) >= 0.7, `${ssrPassCount}/${pages.length} pages have primary content in raw HTML`);
+  add(216, emptyShells.length === 0, emptyShells.length ? `${emptyShells.length} empty-shell SPA pages found` : "No empty-shell SPA detected");
+  add(217, accordionWords < 100, `${accordionWords} words hidden in accordions/tabs`);
+  add(218, everyPage((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html)), pageCountEvidence);
+  add(219, maxDomNodes < 1500, `${maxDomNodes} DOM nodes on largest sampled page`);
+  add(220, hiddenWords < 100, `${hiddenWords} words hidden on primary page`);
+  add(221, hiddenKeywordCount === 0, `${hiddenKeywordCount} CSS-hidden keyword text blocks`);
+  add(222, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
+  add(223, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
+  add(224, imageAggregate.dimensionsRate >= 0.9, `${imageAggregate.dimensionsPresent}/${imageAggregate.count} images have width and height (${Math.round(imageAggregate.dimensionsRate * 100)}%)`);
+  add(225, imageAggregate.belowFoldLazyRate >= 0.8, imageAggregate.belowFoldCount ? `${imageAggregate.belowFoldLazy}/${imageAggregate.belowFoldCount} below-fold images lazy-loaded (${Math.round(imageAggregate.belowFoldLazyRate * 100)}%)` : "No below-fold images detected");
+  add(226, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
+  add(227, schemaInjection.passed, schemaInjection.evidence);
+  add(228, Boolean(foundFeed) && avgFeedWords >= 120, foundFeed ? `Feed found at ${foundFeed.url}, avg item words ${avgFeedWords}` : "No feed found at /feed, /rss, or /atom.xml");
+  add(229, aiTxt?.response.status === 200, `Status ${aiTxt?.response.status ?? "missing"}`);
+  add(230, llms?.response.status === 200 && /text|plain|markdown/i.test(llmsContentType) && llmsWordStats.words >= 100 && llmsWordStats.sections >= 2, `Status ${llms?.response.status ?? "missing"}, ${llmsWordStats.words} words, ${llmsWordStats.sections} sections`);
+  add(231, apiUrls.length === 0 || corsValues.length > 0, apiUrls.length === 0 ? "No public API found" : corsValues.length ? `CORS header: ${corsValues[0]}` : `${apiUrls.length} public API endpoints found without CORS header`);
+  add(232, medianTtfb < 800, `${Math.round(medianTtfb)}ms median TTFB${medianTtfb < 200 ? " (competitive)" : ""}`);
+  add(233, aiCrawlerOk, aiCrawlerResponses.length ? `${aiCrawlerResponses.length}/3 AI crawler user-agents returned accessible content` : "AI crawler fetches failed");
+  add(234, minHeadlessRatio >= 0.8, `${Math.round(minHeadlessRatio * 100)}% minimum bot/default content match`);
+  add(235, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found");
+  add(236, robotsBlocksInternalSearch(robots?.text ?? "") || searchLinks.length === 0, robotsBlocksInternalSearch(robots?.text ?? "") ? "Search URLs blocked in robots.txt" : searchLinks.length ? `${searchLinks.length} internal search URLs found` : "Search URLs not found");
+  add(237, trackingInternalLinks.length === 0, `${trackingInternalLinks.length} tracking-param internal links`);
+  add(238, headerAssetSamples.length === 0 || contentTypeOkCount === headerAssetSamples.length, `${contentTypeOkCount}/${headerAssetSamples.length} sampled assets have correct Content-Type`);
 
   return scoreChecks(results);
 }

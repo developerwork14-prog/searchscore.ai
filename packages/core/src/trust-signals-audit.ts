@@ -276,9 +276,9 @@ function addMonths(date: Date, months: number) {
 export async function runTrustSignalsAudit(inputUrl: string, html?: string, brandName = "", businessEmail = ""): Promise<TrustSignalsAuditResult> {
   const normalized = normalizeUrl(inputUrl);
   const base = new URL(normalized);
-  const fetchedHomepage = await fetchPage(normalized);
+  const fetchedHomepagePromise = fetchPage(normalized);
+  const fetchedHomepage = html === undefined ? await fetchedHomepagePromise : null;
   const homepage = html ?? fetchedHomepage?.html ?? "";
-  const headers = fetchedHomepage?.headers ?? {};
   const $ = cheerio.load(homepage);
   const records = parseJsonLd($);
   const org = findByType(records, (type) => ORG_TYPES.has(type))[0];
@@ -294,8 +294,12 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   const body = $("body").text().replace(/\s+/g, " ").trim();
   const contactLink = findLink($, base, /contact|get in touch/i);
   const privacyLink = findLink($, base, /privacy/i);
-  const contactPage = contactLink?.href ? await fetchPage(contactLink.href) : null;
-  const privacyPage = privacyLink?.href ? await fetchPage(privacyLink.href) : null;
+  const [headerPage, contactPage, privacyPage] = await Promise.all([
+    html === undefined ? Promise.resolve(fetchedHomepage) : fetchedHomepagePromise,
+    contactLink?.href ? fetchPage(contactLink.href) : Promise.resolve(null),
+    privacyLink?.href ? fetchPage(privacyLink.href) : Promise.resolve(null)
+  ]);
+  const headers = headerPage?.headers ?? {};
   const contactText = cheerio.load(contactPage?.html ?? "")("body").text().replace(/\s+/g, " ").trim();
   const privacyText = cheerio.load(privacyPage?.html ?? "")("body").text().replace(/\s+/g, " ").trim();
   const allText = [body, footer, contactText, privacyText].join(" ");

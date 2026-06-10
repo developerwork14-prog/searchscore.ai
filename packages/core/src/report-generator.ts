@@ -12,6 +12,7 @@ import {
   GeoAeoCategorySummary,
   ImageSeoAuditResult,
   IndexabilityAuditResult,
+  OnPageSeoAuditResult,
   StructuredDataAuditResult,
   TechnicalCategoryStatus,
   TechnicalCategorySummary,
@@ -23,6 +24,7 @@ import { runEeatAudit } from "./eeat-audit.js";
 import { runGeoAeoAudit } from "./geo-aeo-audit.js";
 import { runImageSeoAudit } from "./image-seo-audit.js";
 import { runIndexabilityAudit } from "./indexability-audit.js";
+import { runOnPageSeoAudit } from "./on-page-seo-audit.js";
 import { runStructuredDataAudit } from "./structured-data-audit.js";
 import { runTrustSignalsAudit } from "./trust-signals-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
@@ -192,6 +194,31 @@ function fallbackStructuredDataAudit(reason: string): StructuredDataAuditResult 
     "Schema Validation & Quality",
     "Schema-DOM Parity",
     "Specialist Schema Types"
+  ];
+  return {
+    score: 100,
+    checkedAt: new Date().toISOString(),
+    categories: categoryNames.map((categoryName) => ({
+      categoryName,
+      totalChecks: 0,
+      passedChecks: 0,
+      failedChecks: 0,
+      warningChecks: 0,
+      skippedChecks: 0,
+      score: 100,
+      status: "Skipped"
+    })),
+    checks: []
+  };
+}
+
+function fallbackOnPageSeoAudit(reason: string): OnPageSeoAuditResult {
+  const categoryNames = [
+    "Headings & Titles",
+    "Content Signals & Clarity",
+    "Structured Markup & Lists",
+    "Internal Linking",
+    "Image & Media Optimisation"
   ];
   return {
     score: 100,
@@ -452,10 +479,12 @@ function categoryStatus(failedChecks: number): TechnicalCategoryStatus {
 function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCategorySummary[] {
   const categoryOrder = [
     "HTTP & Server Health",
+    "Security & HTTPS",
     "Robots.txt & Sitemap",
     "Meta Tags",
     "Heading Structure",
     "Canonicalization",
+    "Crawl & Redirect Control",
     "Indexability & Crawlability",
     "URL Structure",
     "Core Web Vitals",
@@ -469,7 +498,9 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     "Image SEO",
     "Security & Trust Pages",
     "Performance",
+    "Performance & Caching",
     "Asset Optimisation",
+    "Rendering & DOM",
     "Schema Markup",
     "Social Metadata",
     "External Link Trust",
@@ -480,7 +511,8 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     "Content Basics",
     "Trust Signals",
     "Security & Spam",
-    "AI Crawl Readiness"
+    "AI Crawl Readiness",
+    "AI Accessibility & Discoverability"
   ];
   const categories = new Map<string, TechnicalCheckResult[]>();
 
@@ -632,6 +664,12 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     fallbackStructuredDataAudit("Structured data audit timed out"),
     "Structured data audit"
   ));
+  const onPageSeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
+    runOnPageSeoAudit(normalizedUrl, html),
+    12000,
+    fallbackOnPageSeoAudit("On-Page SEO audit timed out"),
+    "On-Page SEO audit"
+  ));
   const imageSeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runImageSeoAudit(normalizedUrl, html),
     12000,
@@ -650,12 +688,13 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     fallbackTrustSignalsAudit("Trust Signals audit timed out"),
     "Trust Signals audit"
   ));
-  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit, structuredDataAudit, imageSeoAudit, eeatAudit, trustSignalsAudit] = await Promise.all([
+  const [technicalAudit, htmlContent, geoAeoAudit, indexabilityAudit, structuredDataAudit, onPageSeoAudit, imageSeoAudit, eeatAudit, trustSignalsAudit] = await Promise.all([
     technicalAuditPromise,
     htmlContentPromise,
     geoAeoAuditPromise,
     indexabilityAuditPromise,
     structuredDataAuditPromise,
+    onPageSeoAuditPromise,
     imageSeoAuditPromise,
     eeatAuditPromise,
     trustSignalsAuditPromise
@@ -723,6 +762,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     geoAeoAudit,
     indexabilityAudit,
     structuredDataAudit,
+    onPageSeoAudit,
     imageSeoAudit,
     eeatAudit,
     trustSignalsAudit,

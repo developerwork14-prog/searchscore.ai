@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { StructuredAiVisibilityReport } from "@aiva/core";
 import { CalendarCheck, Download, ExternalLink, Link2, Sparkles } from "lucide-react";
 import { API_BASE, getReport, submitStrategyCall } from "@/lib/api";
+import { CHATGPT_CITATION_CATEGORIES, GEMINI_CITATION_CATEGORIES } from "@/lib/audit-citation-categories";
 import { Button, Card } from "@/components/ui";
 
 function scoreColor(score: number) {
@@ -33,13 +34,6 @@ type AuditCategoryCardData = {
   status: string;
 };
 
-type AuditSubcheckData = {
-  id: number;
-  name: string;
-  passed: boolean;
-  severity: string;
-};
-
 type TabStatus = "passed" | "issues" | "attention";
 
 function categoryAccent(category: AuditCategoryCardData, isSkipped = false) {
@@ -63,6 +57,64 @@ function tabStatus(categories: AuditCategoryCardData[], unavailable = false): Ta
   if (categories.some((category) => category.failedChecks > 0 || category.status === "Needs Attention")) return "issues";
   if (categories.some((category) => (category.warningChecks ?? 0) > 0 || category.status === "Minor Attention")) return "attention";
   return "passed";
+}
+
+function clampScore(score: number) {
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function scoreFromCategories(categories: AuditCategoryCardData[], fallback = 0) {
+  const scorable = categories.filter((category) => category.totalChecks > 0 && category.status !== "Skipped");
+  if (!scorable.length) return clampScore(fallback);
+  const totalChecks = scorable.reduce((sum, category) => sum + category.totalChecks, 0);
+  if (!totalChecks) return clampScore(fallback);
+  return clampScore(scorable.reduce((sum, category) => sum + category.score * category.totalChecks, 0) / totalChecks);
+}
+
+function averageScore(scores: number[]) {
+  if (!scores.length) return 0;
+  return clampScore(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function scoreBadgeTone(score: number): "good" | "warn" | "bad" {
+  if (score >= 80) return "good";
+  if (score >= 50) return "warn";
+  return "bad";
+}
+
+function visibilityRatingLabel(score: number) {
+  if (score <= 40) return "Poor";
+  if (score <= 55) return "Below Average";
+  if (score <= 70) return "Average";
+  if (score <= 85) return "Good";
+  return "Excellent";
+}
+
+type IssueImpactCounts = { high: number; medium: number; low: number };
+type CountableAuditCheck = { passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string };
+
+function impactFromSeverity(severity = ""): keyof IssueImpactCounts {
+  if (["BLOCKER", "Critical", "High"].includes(severity)) return "high";
+  if (["MAJOR", "Medium"].includes(severity)) return "medium";
+  return "low";
+}
+
+function addIssueCounts(left: IssueImpactCounts, right: IssueImpactCounts): IssueImpactCounts {
+  return {
+    high: left.high + right.high,
+    medium: left.medium + right.medium,
+    low: left.low + right.low
+  };
+}
+
+function issueCountsFromChecks(checks: CountableAuditCheck[] = []): IssueImpactCounts {
+  return checks.reduce<IssueImpactCounts>((counts, check) => {
+    if (check.skipped) return counts;
+    const hasIssue = check.passed === false || check.warning === true;
+    if (!hasIssue) return counts;
+    const impact = impactFromSeverity(check.severity);
+    return { ...counts, [impact]: counts[impact] + 1 };
+  }, { high: 0, medium: 0, low: 0 });
 }
 
 function statusDot(status: TabStatus) {
@@ -125,13 +177,15 @@ function SummaryScoreCard({
   score,
   badges,
   description,
-  dark = false
+  dark = false,
+  footer
 }: {
   title: string;
   score: number;
   badges: React.ReactNode;
   description?: string;
   dark?: boolean;
+  footer?: React.ReactNode;
 }) {
   return (
     <Card className={`flex min-h-[176px] flex-col justify-between overflow-hidden p-5 ${dark ? "border-[#263238] bg-ink text-white" : "bg-white text-ink"}`}>
@@ -146,6 +200,7 @@ function SummaryScoreCard({
       <div className={`mt-5 h-1 overflow-hidden rounded-full ${dark ? "bg-[#263238]" : "bg-black/10"}`}>
         <div className="h-full rounded-full bg-[#f4b942]" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
       </div>
+      {footer ? <div className={`mt-4 border-t pt-4 ${dark ? "border-white/10" : "border-black/10"}`}>{footer}</div> : null}
     </Card>
   );
 }
@@ -167,24 +222,40 @@ function AuditTabButton({ active, status, onClick, children }: { active: boolean
   );
 }
 
+function ScorePill({ label, score, onClick }: { label: string; score: number; onClick: () => void }) {
+  const tone = scoreBadgeTone(score);
+  const classes = {
+    good: "border-[#22c55e] bg-[#22c55e]/10 text-[#22c55e]",
+    warn: "border-[#f97316] bg-[#f97316]/10 text-[#f97316]",
+    bad: "border-[#ef4444] bg-[#ef4444]/10 text-[#ef4444]"
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex shrink-0 snap-start items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-black transition hover:bg-white/10 ${classes[tone]}`}
+    >
+      <span>{label}</span>
+      <span>{score}%</span>
+    </button>
+  );
+}
+
 function AuditCategoryCard({
   category,
   badgeTone,
   badgeLabel,
   isSkipped = false,
-  statusLabel,
-  subchecks = []
+  statusLabel
 }: {
   category: AuditCategoryCardData;
   badgeTone: "neutral" | "good" | "warn" | "bad";
   badgeLabel: string;
   isSkipped?: boolean;
   statusLabel: string;
-  subchecks?: AuditSubcheckData[];
 }) {
   const hasIssues = category.failedChecks >= 1;
-  const visibleSubchecks = subchecks.slice(0, 4);
-  const hiddenSubchecks = subchecks.slice(4);
 
   return (
     <Card className={`border-l-4 ${categoryAccent(category, isSkipped)} p-4 shadow-soft transition hover:border-black/20`}>
@@ -213,36 +284,6 @@ function AuditCategoryCard({
           {statusLabel}
         </p>
       </div>
-      {subchecks.length ? (
-        <div className="mt-4 border-t border-black/10 pt-3">
-          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Parameters</p>
-          <div className="mt-2 grid gap-1.5">
-            {visibleSubchecks.map((check) => (
-              <div key={check.id} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
-                <span className={`size-2 shrink-0 rounded-full ${check.passed ? "bg-[#0f766e]" : "bg-[#e85d4f]"}`} />
-                <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                <span className="text-[10px] font-black uppercase text-ink/40">{check.severity}</span>
-              </div>
-            ))}
-            {hiddenSubchecks.length ? (
-              <details className="group">
-                <summary className="cursor-pointer list-none text-xs font-black text-ink/55 transition hover:text-ink">
-                  Show {hiddenSubchecks.length} more parameters
-                </summary>
-                <div className="mt-1.5 grid gap-1.5">
-                  {hiddenSubchecks.map((check) => (
-                    <div key={check.id} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
-                      <span className={`size-2 shrink-0 rounded-full ${check.passed ? "bg-[#0f766e]" : "bg-[#e85d4f]"}`} />
-                      <span className="min-w-0 flex-1 truncate">{check.name}</span>
-                      <span className="text-[10px] font-black uppercase text-ink/40">{check.severity}</span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
     </Card>
   );
 }
@@ -260,16 +301,13 @@ function categoriesUnavailable(categories: { totalChecks: number; status: string
   return categories.length > 0 && categories.every((category) => category.totalChecks === 0 && category.status === "Skipped");
 }
 
-const CHATGPT_CITATION_CATEGORIES = ["Crawlability", "Technical Access", "Content Structure", "Content Quality"];
-const GEMINI_CITATION_CATEGORIES = ["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"];
-
 export default function ReportPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const auditSectionRef = useRef<HTMLElement | null>(null);
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "crawlability" | "structuredData" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability">("technical");
-  const [showGeminiFailures, setShowGeminiFailures] = useState(false);
+  const [activeAuditTab, setActiveAuditTab] = useState<"technical" | "crawlability" | "structuredData" | "onPageSeo" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability">("technical");
   const [showStrategyForm, setShowStrategyForm] = useState(false);
   const [isSubmittingStrategy, setIsSubmittingStrategy] = useState(false);
   const [strategyStatus, setStrategyStatus] = useState("");
@@ -332,6 +370,12 @@ export default function ReportPage() {
     categories: [],
     checks: []
   };
+  const onPageSeoAudit = report.on_page_seo_audit ?? {
+    score: 0,
+    issues_found: 0,
+    categories: [],
+    checks: []
+  };
   const imageSeoAudit = report.image_seo_audit ?? {
     score: 0,
     issues_found: 0,
@@ -362,21 +406,13 @@ export default function ReportPage() {
     ].includes(category.categoryName)
   );
   const structuredDataCategories = structuredDataAudit.categories;
+  const onPageSeoCategories = onPageSeoAudit.categories;
   const imageSeoCategories = imageSeoAudit.categories;
   const eeatCategories = eeatAudit.categories;
   const trustSignalsCategories = trustSignalsAudit.categories;
   const indexabilityCategories = indexabilityAudit.categories;
-  const technicalChecks = technicalAudit.checks ?? [];
-  const technicalSubchecks = (categoryName: string): AuditSubcheckData[] =>
-    technicalChecks
-      .filter((check) => check.category === categoryName)
-      .map((check) => ({
-        id: check.id,
-        name: check.name,
-        passed: check.passed,
-        severity: check.severity
-      }));
   const structuredDataUnavailable = categoriesUnavailable(structuredDataCategories);
+  const onPageSeoUnavailable = categoriesUnavailable(onPageSeoCategories);
   const imageSeoUnavailable = categoriesUnavailable(imageSeoCategories);
   const eeatUnavailable = categoriesUnavailable(eeatCategories);
   const trustSignalsUnavailable = categoriesUnavailable(trustSignalsCategories);
@@ -384,14 +420,42 @@ export default function ReportPage() {
   const indexabilityUnavailable = categoriesUnavailable(indexabilityCategories);
   const citationLikeCategories = activeAuditTab === "gemini" ? geminiCategories : citationCategories;
   const citationLikeUnavailable = categoriesUnavailable(citationLikeCategories);
-  const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
-  const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
   const geoStatusTone = (status: string): "neutral" | "good" | "warn" | "bad" => status === "Skipped" ? "neutral" : status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
+  const scorePills = [
+    { id: "onPageSeo" as const, label: "On-Page SEO", score: clampScore(onPageSeoAudit.score) },
+    { id: "imageSeo" as const, label: "Image SEO", score: clampScore(imageSeoAudit.score) },
+    { id: "eeat" as const, label: "EEAT Audit", score: clampScore(eeatAudit.score) },
+    { id: "trustSignals" as const, label: "Trust Signal", score: clampScore(trustSignalsAudit.score) },
+    { id: "geo" as const, label: "GEO/AEO", score: scoreFromCategories(geoCategories, geoAeoAudit.score) },
+    { id: "citation" as const, label: "ChatGPT Citation", score: scoreFromCategories(citationCategories) },
+    { id: "gemini" as const, label: "Gemini Citation", score: scoreFromCategories(geminiCategories) },
+    { id: "indexability" as const, label: "Indexability", score: clampScore(indexabilityAudit.score) },
+    { id: "structuredData" as const, label: "Structured Data", score: clampScore(structuredDataAudit.score) },
+    { id: "technical" as const, label: "Technical Audit", score: clampScore(technicalAudit.score) }
+  ];
+  const aiVisibilityScore = averageScore(scorePills.map((pill) => pill.score));
+  const handleScorePillClick = (tabId: typeof scorePills[number]["id"]) => {
+    setActiveAuditTab(tabId);
+    window.setTimeout(() => {
+      auditSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  };
+  const issueImpactCounts = [
+    issueCountsFromChecks(technicalAudit.checks),
+    issueCountsFromChecks(indexabilityAudit.checks),
+    issueCountsFromChecks(structuredDataAudit.checks),
+    issueCountsFromChecks(onPageSeoAudit.checks),
+    issueCountsFromChecks(imageSeoAudit.checks),
+    issueCountsFromChecks(eeatAudit.checks),
+    issueCountsFromChecks(trustSignalsAudit.checks),
+    geoAeoAudit.opportunity_counts
+  ].reduce(addIssueCounts, { high: 0, medium: 0, low: 0 });
   const auditTabs = [
     { id: "technical" as const, label: "Technical Audit", status: tabStatus(technicalCategories) },
     { id: "crawlability" as const, label: "Crawlability", status: tabStatus(crawlabilityCategories) },
     { id: "structuredData" as const, label: "Structured data", status: tabStatus(structuredDataCategories, structuredDataUnavailable) },
+    { id: "onPageSeo" as const, label: "On-Page SEO", status: tabStatus(onPageSeoCategories, onPageSeoUnavailable) },
     { id: "imageSeo" as const, label: "Image SEO", status: tabStatus(imageSeoCategories, imageSeoUnavailable) },
     { id: "eeat" as const, label: "EEAT Audit", status: tabStatus(eeatCategories, eeatUnavailable) },
     { id: "trustSignals" as const, label: "Trust Signal", status: tabStatus(trustSignalsCategories, trustSignalsUnavailable) },
@@ -425,37 +489,29 @@ export default function ReportPage() {
         </div>
       </header>
 
-      <section className="mb-5 grid gap-4 lg:grid-cols-3">
+      <section className="mb-5">
         <SummaryScoreCard
           dark
           title="AI Visibility Score"
-          score={report.overall_score}
-          badges={<Badge tone={report.overall_score < 50 ? "bad" : report.overall_score < 80 ? "warn" : "good"}>{report.rating_label}</Badge>}
-          description={report.rating_description}
-        />
-        <SummaryScoreCard
-          title="Technical Audit"
-          score={technicalAudit.score}
-          badges={(
-            <>
-              <Badge tone={technicalAudit.score < 50 ? "bad" : technicalAudit.score < 80 ? "warn" : "good"}>Grade {technicalAudit.grade}</Badge>
-              <Badge tone={technicalAudit.issues_found > 0 ? "bad" : "good"}>{technicalAudit.issues_found} Issues Found</Badge>
-            </>
-          )}
-        />
-        <SummaryScoreCard
-          title="GEO / AEO Audit"
-          score={geoAeoAudit.score}
-          badges={(
-            <>
-              <Badge tone={geoAeoAudit.score < 50 ? "bad" : geoAeoAudit.score < 80 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
-              <Badge tone={geoOpportunitiesFound > 0 ? "warn" : "good"}>{geoOpportunitiesFound} Opportunities Found</Badge>
-            </>
+          score={aiVisibilityScore}
+          badges={<Badge tone={scoreBadgeTone(aiVisibilityScore)}>{visibilityRatingLabel(aiVisibilityScore)}</Badge>}
+          description="Average score across all audit tabs below."
+          footer={(
+            <div className="no-scrollbar -mx-1 flex max-w-full snap-x flex-nowrap gap-2 overflow-x-auto whitespace-nowrap px-1 pb-1">
+              {scorePills.map((pill) => (
+                <ScorePill
+                  key={pill.id}
+                  label={pill.label}
+                  score={pill.score}
+                  onClick={() => handleScorePillClick(pill.id)}
+                />
+              ))}
+            </div>
           )}
         />
       </section>
 
-      <section className="mb-5">
+      <section ref={auditSectionRef} className="mb-5 scroll-mt-4">
         <div className="mb-4 flex flex-col gap-3 rounded-lg border border-black/10 bg-white/70 p-3 shadow-soft backdrop-blur">
           <h2 className="text-[13px] font-black uppercase tracking-wider text-ink/60">Audit Categories</h2>
           <div className="no-scrollbar flex w-full snap-x gap-2 overflow-x-auto whitespace-nowrap">
@@ -484,7 +540,6 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
-                  subchecks={technicalSubchecks(category.categoryName)}
                 />
               );
             })}
@@ -501,7 +556,6 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
-                  subchecks={technicalSubchecks(category.categoryName)}
                 />
               );
             })}
@@ -530,6 +584,32 @@ export default function ReportPage() {
             <EmptyAuditState
               title="No structured data categories available"
               message={structuredDataUnavailable ? "Structured data audit timed out. Regenerate the report after restarting the audit server." : "This report does not include structured data category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
+            />
+          )
+        ) : activeAuditTab === "onPageSeo" ? (
+          onPageSeoCategories.length && !onPageSeoUnavailable ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {onPageSeoCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyAuditState
+              title="No On-Page SEO categories available"
+              message={onPageSeoUnavailable ? "On-Page SEO audit timed out. Regenerate the report after restarting the audit server." : "This report does not include On-Page SEO category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
             />
           )
         ) : activeAuditTab === "imageSeo" ? (
@@ -611,24 +691,7 @@ export default function ReportPage() {
             />
           )
         ) : activeAuditTab === "geo" ? (
-          <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
-            <Card className="min-h-[260px] overflow-hidden border-[#263238] bg-ink p-6 text-white">
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <p className="text-sm font-bold text-white/70">GEO / AEO Score</p>
-                <div className="mt-4">
-                  <ScoreDonut score={geoAeoAudit.score} dark />
-                </div>
-                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-                  <Badge tone={geoAeoAudit.score < 50 ? "bad" : geoAeoAudit.score < 80 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
-                  {geoAeoAudit.blocker_cap_applied ? <Badge tone="bad">Blocker Cap Applied</Badge> : null}
-                </div>
-                <p className="mt-4 text-sm font-semibold text-white/70">{geoAeoAudit.grade_description}</p>
-                <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-[#263238]">
-                  <div className="h-full rounded-full bg-[#f4b942]" style={{ width: `${Math.max(0, Math.min(100, geoAeoAudit.score))}%` }} />
-                </div>
-              </div>
-            </Card>
-
+          <div className="grid gap-3">
             {geoCategories.length && !geoUnavailable ? (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {geoCategories.map((category) => {
@@ -652,7 +715,7 @@ export default function ReportPage() {
               />
             )}
 
-            <Card className="bg-ink p-6 text-white lg:col-span-2">
+            <Card className="bg-ink p-6 text-white">
               <p className="text-sm font-black uppercase text-[#f4b942]">Unlock Full GEO / AEO Report</p>
               <ul className="mt-5 grid gap-2 text-sm font-semibold text-white/75 md:grid-cols-2">
                 {["Complete GEO issue breakdown", "AI visibility roadmap", "Entity optimization strategy", "FAQ & answer optimization plan", "Implementation recommendations"].map((item) => (
@@ -695,18 +758,6 @@ export default function ReportPage() {
           )
         ) : (
           <div className="grid gap-4">
-            {activeAuditTab === "gemini" && geminiFailedDetails.length ? (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowGeminiFailures((current) => !current)}
-                  className="min-h-10 rounded-full bg-ink px-4 text-sm font-black text-white transition hover:bg-[#263238]"
-                >
-                  {showGeminiFailures ? "Hide Failed Results" : "Show Failed Results"}
-                </button>
-              </div>
-            ) : null}
-
             {citationLikeCategories.length && !citationLikeUnavailable ? (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {citationLikeCategories.map((category) => {
@@ -732,24 +783,6 @@ export default function ReportPage() {
                 message={citationLikeUnavailable ? "Citation audit timed out because the GEO / AEO audit did not complete. Regenerate the report after restarting the audit server." : "This report does not include citation category data. Regenerate the report after restarting the audit server so the latest GEO / AEO audit code is used."}
               />
             )}
-
-            {activeAuditTab === "gemini" && showGeminiFailures && geminiFailedDetails.length ? (
-              <div className="grid gap-3">
-                {geminiFailedDetails.map((detail) => (
-                  <div key={`${detail.categoryName}-${detail.id}`} className="rounded-lg border border-black/10 bg-white p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/60">{detail.categoryName}</p>
-                        <p className="mt-1 text-sm font-black text-ink">{detail.name}</p>
-                        <p className="mt-1 text-sm font-semibold text-ink/60">{detail.evidence}</p>
-                      </div>
-                      <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
-                    </div>
-                    <p className="mt-3 text-sm font-semibold text-ink">{detail.recommendation}</p>
-                  </div>
-                ))}
-              </div>
-            ) : null}
           </div>
         )}
       </section>
@@ -759,23 +792,23 @@ export default function ReportPage() {
           <h2 className="text-xl font-black text-ink">Visibility Opportunities</h2>
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-[#e85d4f]/20 bg-[#e85d4f]/10 p-4">
-              <p className="text-xs font-black uppercase text-ink/60">High Impact Opportunities</p>
-              <p className="mt-2 text-4xl font-black text-[#e85d4f]">{report.opportunity_counts.high}</p>
+              <p className="text-xs font-black uppercase text-ink/60">High Impact Issues</p>
+              <p className="mt-2 text-4xl font-black text-[#e85d4f]">{issueImpactCounts.high}</p>
             </div>
             <div className="rounded-lg border border-[#f4b942]/30 bg-[#f4b942]/15 p-4">
-              <p className="text-xs font-black uppercase text-ink/60">Medium Impact Opportunities</p>
-              <p className="mt-2 text-4xl font-black text-ink">{report.opportunity_counts.medium}</p>
+              <p className="text-xs font-black uppercase text-ink/60">Medium Impact Issues</p>
+              <p className="mt-2 text-4xl font-black text-ink">{issueImpactCounts.medium}</p>
             </div>
             <div className="rounded-lg border border-[#0f766e]/20 bg-[#0f766e]/10 p-4">
-              <p className="text-xs font-black uppercase text-ink/60">Low Impact Opportunities</p>
-              <p className="mt-2 text-4xl font-black text-[#0f766e]">{report.opportunity_counts.low}</p>
+              <p className="text-xs font-black uppercase text-ink/60">Low Impact Issues</p>
+              <p className="mt-2 text-4xl font-black text-[#0f766e]">{issueImpactCounts.low}</p>
             </div>
           </div>
         </Card>
 
         <Card className="bg-ink p-6 text-white">
           <p className="text-sm font-black uppercase text-[#f4b942]">Unlock Your Complete AI Visibility Report</p>
-          <h2 className="mt-3 text-2xl font-black leading-8">Our analysis identified {report.opportunity_counts.high} high-impact opportunities that may be limiting your visibility in AI-generated recommendations.</h2>
+          <h2 className="mt-3 text-2xl font-black leading-8">Our analysis identified {issueImpactCounts.high} high-impact issues that may be limiting your visibility in AI-generated recommendations.</h2>
           <ul className="mt-5 space-y-2 text-sm font-semibold text-white/75">
             {["Complete issue breakdown", "Priority roadmap", "AI visibility strategy", "Page-level findings", "Implementation recommendations"].map((item) => (
               <li key={item}>✓ {item}</li>

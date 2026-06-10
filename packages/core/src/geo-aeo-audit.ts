@@ -1,4 +1,6 @@
 import * as cheerio from "cheerio";
+import { CHATGPT_CITATION_RECOMMENDATIONS, isChatgptCitationCategory } from "./chatgpt-citation-audit.js";
+import { GEMINI_CITATION_RECOMMENDATIONS, isGeminiCitationCategory } from "./gemini-citation-audit.js";
 import { crawlSite, fetchSitemapUrls } from "./site-crawler.js";
 
 export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR";
@@ -174,34 +176,11 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "AI Discovery Files": 5
 };
 
-const CHATGPT_CITATION_CATEGORIES = new Set(["Crawlability", "Technical Access", "Content Structure", "Content Quality"]);
-const GEMINI_CITATION_CATEGORIES = new Set(["Gemini Crawlability", "Local & E-Commerce", "Schema & Technical", "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"]);
+const FETCH_TEXT_LIMIT_BYTES = 2 * 1024 * 1024;
 
 const CITATION_RECOMMENDATIONS: Record<number, string> = {
-  38: "Allow OAI-SearchBot in robots.txt so ChatGPT search can crawl public pages.",
-  39: "Allow ChatGPT-User in robots.txt for user-triggered browsing and citations.",
-  40: "Separate GPTBot training rules from OAI-SearchBot and ChatGPT-User access rules.",
-  41: "Allow OAI user agents through WAF, bot protection, and challenge pages.",
-  42: "Make citable page content visible without login, interstitials, or paywalls.",
-  49: "Create alternatives pages for high-intent comparison queries.",
-  50: "Create use-case or industry pages that map the offer to specific buyer situations.",
-  52: "Complete Product schema with name plus offers, reviews, or aggregate ratings where applicable.",
-  54: "Show reviews from diverse sources or multiple trust platforms.",
-  55: "Link merchant trust pages such as privacy, terms, refund, warranty, shipping, contact, and secure payment.",
-  65: "Remove nosnippet, max-snippet:0, X-Robots-Tag restrictions, and data-nosnippet from citable content.",
-  66: "Ensure OAI-SearchBot receives raw HTML content comparable to normal page content.",
-  67: "Allow Google-Extended in robots.txt when Gemini citation visibility is desired.",
-  68: "Allow Google-Extended through WAF, bot protection, and challenge rules.",
-  69: "Review server/WAF IP allow rules; true Google IP verification needs manual network testing.",
-  70: "Keep business name, address, and phone consistent across homepage, contact page, footer, and schema.",
-  71: "Ensure cookie consent does not replace the crawlable raw HTML body.",
-  72: "Render JSON-LD schema server-side instead of injecting it only after JavaScript.",
-  73: "Allow GoogleOther in robots.txt for Google systems that support AI and search features.",
-  74: "Add speakable schema only where the content is appropriate for voice-style extraction.",
-  75: "Replace stock imagery with original images where trust and citation quality matter.",
-  76: "Add meaningful alt text to images that communicate important page content.",
-  77: "Add VideoObject schema for embedded videos on key pages.",
-  78: "Publish crawlable transcript or caption text that aligns with the visible page content.",
+  ...CHATGPT_CITATION_RECOMMENDATIONS,
+  ...GEMINI_CITATION_RECOMMENDATIONS,
   79: "Remove noindex directives from meta robots, X-Robots-Tag, and canonical targets for pages meant to rank.",
   80: "Use a self-referencing canonical on the indexable page.",
   81: "Use an absolute https canonical URL.",
@@ -262,6 +241,51 @@ function gradeFor(score: number): { grade: GeoAeoGrade; description: string } {
   return { grade: "F", description: "Critical GEO issues" };
 }
 
+async function limitedResponseText(response: Response, maxBytes = FETCH_TEXT_LIMIT_BYTES) {
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  if (contentLength > maxBytes) return "";
+
+  const reader = response.body?.getReader();
+  if (!reader) return response.text().catch(() => "");
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    if (total + value.byteLength > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    total += value.byteLength;
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  chunks.forEach((chunk) => {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutPromise = new Promise<T>((resolve) => {
+      timeout = setTimeout(() => resolve(fallback), timeoutMs);
+    });
+    return await Promise.race([
+      promise.catch(() => fallback),
+      timeoutPromise
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function fetchText(url: string, timeoutMs = 9000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -271,7 +295,7 @@ async function fetchText(url: string, timeoutMs = 9000) {
       signal: controller.signal,
       headers: { "user-agent": "AIVisibilityAnalyzer/1.0", accept: "text/plain,text/markdown,text/html,*/*" }
     });
-    const text = await response.text().catch(() => "");
+    const text = await limitedResponseText(response).catch(() => "");
     return { response, text };
   } finally {
     clearTimeout(timeout);
@@ -287,7 +311,7 @@ async function fetchTextWithUserAgent(url: string, userAgent: string, timeoutMs 
       signal: controller.signal,
       headers: { "user-agent": userAgent, accept: "text/html,text/plain,*/*" }
     });
-    const text = await response.text().catch(() => "");
+    const text = await limitedResponseText(response).catch(() => "");
     return { response, text };
   } finally {
     clearTimeout(timeout);
@@ -317,18 +341,14 @@ async function fetchLikelyLocalPageEntries(origin: string): Promise<LocalPageHtm
     ["/", "homepage"],
     ["/contact/", "contact page"],
     ["/contact-us/", "contact page"],
-    ["/reach-us/", "contact page"],
-    ["/get-in-touch/", "contact page"],
     ["/about/", "about page"],
     ["/about-us/", "about page"],
-    ["/store-locator/", "store locator page"],
-    ["/locations/", "location page"],
-    ["/location/", "location page"]
+    ["/locations/", "location page"]
   ] satisfies Array<[string, string]>;
 
   const fetched = await Promise.all(pages.map(async ([path, source]): Promise<LocalPageHtml | null> => {
     try {
-      const { response, text } = await fetchText(`${origin}${path}`, 2000);
+      const { response, text } = await fetchText(`${origin}${path}`, 1400);
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return null;
       return { source, html: text, url: `${origin}${path}` } satisfies LocalPageHtml;
@@ -728,7 +748,7 @@ async function merchantTrustEvidence(candidates: TrustPageCandidate[]) {
 
   await Promise.all(titleCandidates.map(async (candidate) => {
     try {
-      const { response, text } = await fetchText(candidate.url, 2500);
+      const { response, text } = await fetchText(candidate.url, 1600);
       const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok || !/html|text/i.test(contentType) || !text.trim()) return;
       const page$ = cheerio.load(text);
@@ -757,15 +777,13 @@ async function directTrustPageCandidates(origin: string): Promise<TrustPageCandi
     "/policies/terms-of-service",
     "/contact-us",
     "/privacy-policy",
-    "/refund-policy",
-    "/shipping-policy",
     "/terms-of-service"
   ];
 
   const fetched = await Promise.all(paths.map(async (path): Promise<TrustPageCandidate | null> => {
     const href = `${origin}${path}`;
     try {
-      const { response } = await fetchText(href, 2000);
+      const { response } = await fetchText(href, 1400);
       return response.status === 200 ? { url: href, anchorText: path.replace(/[-/]/g, " ") } : null;
     } catch {
       return null;
@@ -1098,7 +1116,7 @@ async function fetchNoRedirect(url: string, timeoutMs = 3000) {
       signal: controller.signal,
       headers: { "user-agent": "AIVisibilityAnalyzer/1.0", accept: "text/html,*/*" }
     });
-    const text = await response.text().catch(() => "");
+    const text = await limitedResponseText(response).catch(() => "");
     return { response, text };
   } finally {
     clearTimeout(timeout);
@@ -1336,9 +1354,9 @@ async function searchIndexEvidence(searchUrl: string, domain: string, note: stri
 }
 
 async function sitemapNoindexEvidence(urls: string[]) {
-  const sample = urls.slice(0, 10);
+  const sample = urls.slice(0, 5);
   const checked = await Promise.all(sample.map(async (href) => {
-    const page = await fetchText(href, 2500).catch(() => null);
+    const page = await fetchText(href, 1400).catch(() => null);
     return page && noindexFoundIn(page.text, page.response) ? href : "";
   }));
   const noindexedUrls = checked.filter(Boolean);
@@ -1432,6 +1450,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const url = new URL(normalizedUrl);
   const origin = `${url.protocol}//${url.host}`;
   const pageHtml = html ?? await fetchText(normalizedUrl, 3000).then((result) => result.text).catch(() => "");
+  const emptyCrawl = { origin, sitemapUrls: [], pages: [] };
   const [
     robots,
     llms,
@@ -1444,16 +1463,16 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     extraSitemapResult,
     directTrustCandidates
   ] = await Promise.all([
-    fetchText(`${origin}/robots.txt`, 2500).catch(() => null),
-    fetchText(`${origin}/llms.txt`, 1800).catch(() => null),
-    fetchLikelyLocalPageEntries(origin),
-    crawlSite(normalizedUrl, { maxPages: 8, maxDepth: 2, timeoutMs: 1600, concurrency: 4, maxSitemapFiles: 1 }),
-    fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 2500).catch(() => null),
-    fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 2500).catch(() => null),
-    fetchText(normalizedUrl, 2500).catch(() => null),
-    fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 2500).catch(() => null),
-    fetchSitemapUrls(origin, 2200, 1).catch(() => null),
-    directTrustPageCandidates(origin)
+    fetchText(`${origin}/robots.txt`, 1800).catch(() => null),
+    fetchText(`${origin}/llms.txt`, 1400).catch(() => null),
+    resolveWithin(fetchLikelyLocalPageEntries(origin), 4200, []),
+    resolveWithin(crawlSite(normalizedUrl, { maxPages: 4, maxDepth: 1, timeoutMs: 1200, concurrency: 4, maxSitemapFiles: 1 }), 6500, emptyCrawl),
+    fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 1800).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 1800).catch(() => null),
+    fetchText(normalizedUrl, 1800).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 1800).catch(() => null),
+    fetchSitemapUrls(origin, 1600, 1).catch(() => null),
+    resolveWithin(directTrustPageCandidates(origin), 3200, [])
   ]);
   const extraSitemapUrls = extraSitemapResult?.urls ?? [];
   const crawledPages: LocalPageHtml[] = crawled.pages.map((page) => ({
@@ -1558,8 +1577,10 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const rawCanonicalUrl = rawHtmlCanonicalHref(pageHtml);
   const responseHeaderCanonical = headerCanonical(serverPage?.response);
   const canonicalUrl = canonicalHref(pageHtml, normalizedUrl, serverPage?.response);
-  const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 3000).catch(() => null) : null;
-  const canonicalTargetNoRedirect = canonicalUrl ? await fetchNoRedirect(canonicalUrl).catch(() => null) : null;
+  const [canonicalTarget, canonicalTargetNoRedirect] = await Promise.all([
+    canonicalUrl ? fetchText(canonicalUrl, 1800).catch(() => null) : Promise.resolve(null),
+    canonicalUrl ? fetchNoRedirect(canonicalUrl, 1800).catch(() => null) : Promise.resolve(null)
+  ]);
   const secondCanonicalUrl = canonicalTarget ? canonicalHref(canonicalTarget.text, canonicalUrl, canonicalTarget.response) : "";
   const noindexFound = [
     ...(noindexFoundIn(pageHtml, serverPage?.response) ? ["page"] : []),
@@ -1736,7 +1757,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const pageScore = scoreByScope(result, "page");
   const domainScore = scoreByScope(result, "domain");
   const citationFailedDetails = result
-    .filter((check) => (CHATGPT_CITATION_CATEGORIES.has(check.category) || GEMINI_CITATION_CATEGORIES.has(check.category)) && !check.passed && !check.skipped)
+    .filter((check) => (isChatgptCitationCategory(check.category) || isGeminiCitationCategory(check.category)) && !check.passed && !check.skipped)
     .map((check) => {
       const affected = affectedPagesFor(check);
       return {
@@ -1750,7 +1771,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
       };
     });
   const citationSkippedDetails = result
-    .filter((check) => (CHATGPT_CITATION_CATEGORIES.has(check.category) || GEMINI_CITATION_CATEGORIES.has(check.category)) && check.skipped)
+    .filter((check) => (isChatgptCitationCategory(check.category) || isGeminiCitationCategory(check.category)) && check.skipped)
     .map((check) => ({
       id: check.id,
       name: check.name,
