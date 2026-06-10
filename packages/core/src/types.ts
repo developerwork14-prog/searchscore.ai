@@ -418,6 +418,7 @@ export interface PublicGeoAeoAudit {
   blocker_cap_applied: boolean;
   opportunity_counts: GeoAeoOpportunityCounts;
   categories: GeoAeoCategorySummary[];
+  checks: GeoAeoCheckResult[];
 }
 
 export interface PublicTechnicalAudit {

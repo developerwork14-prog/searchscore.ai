@@ -34,6 +34,13 @@ type AuditCategoryCardData = {
   status: string;
 };
 
+type IssueParameterData = {
+  id: number;
+  name: string;
+  severity: string;
+  warning?: boolean;
+};
+
 type TabStatus = "passed" | "issues" | "attention";
 
 function categoryAccent(category: AuditCategoryCardData, isSkipped = false) {
@@ -91,7 +98,7 @@ function visibilityRatingLabel(score: number) {
 }
 
 type IssueImpactCounts = { high: number; medium: number; low: number };
-type CountableAuditCheck = { passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string };
+type CountableAuditCheck = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string };
 
 function impactFromSeverity(severity = ""): keyof IssueImpactCounts {
   if (["BLOCKER", "Critical", "High"].includes(severity)) return "high";
@@ -115,6 +122,17 @@ function issueCountsFromChecks(checks: CountableAuditCheck[] = []): IssueImpactC
     const impact = impactFromSeverity(check.severity);
     return { ...counts, [impact]: counts[impact] + 1 };
   }, { high: 0, medium: 0, low: 0 });
+}
+
+function issueParametersForCategory(checks: CountableAuditCheck[] = [], categoryName: string): IssueParameterData[] {
+  return checks
+    .filter((check) => check.category === categoryName && !check.skipped && (check.passed === false || check.warning === true))
+    .map((check, index) => ({
+      id: Number(check.id ?? index),
+      name: check.name ?? "Unnamed parameter",
+      severity: check.severity ?? "Issue",
+      warning: check.warning === true && check.passed !== false
+    }));
 }
 
 function statusDot(status: TabStatus) {
@@ -247,15 +265,19 @@ function AuditCategoryCard({
   badgeTone,
   badgeLabel,
   isSkipped = false,
-  statusLabel
+  statusLabel,
+  issueParameters = []
 }: {
   category: AuditCategoryCardData;
   badgeTone: "neutral" | "good" | "warn" | "bad";
   badgeLabel: string;
   isSkipped?: boolean;
   statusLabel: string;
+  issueParameters?: IssueParameterData[];
 }) {
   const hasIssues = category.failedChecks >= 1;
+  const visibleParameters = issueParameters.slice(0, 4);
+  const hiddenParameters = issueParameters.slice(4);
 
   return (
     <Card className={`border-l-4 ${categoryAccent(category, isSkipped)} p-4 shadow-soft transition hover:border-black/20`}>
@@ -284,6 +306,36 @@ function AuditCategoryCard({
           {statusLabel}
         </p>
       </div>
+      {issueParameters.length ? (
+        <div className="mt-4 border-t border-black/10 pt-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Issue parameters</p>
+          <div className="mt-2 grid gap-1.5">
+            {visibleParameters.map((parameter) => (
+              <div key={`${parameter.id}-${parameter.name}`} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                <span className={`size-2 shrink-0 rounded-full ${parameter.warning ? "bg-[#f4b942]" : "bg-[#e85d4f]"}`} />
+                <span className="min-w-0 flex-1 truncate">{parameter.name}</span>
+                <span className="text-[10px] font-black uppercase text-ink/40">{parameter.severity}</span>
+              </div>
+            ))}
+            {hiddenParameters.length ? (
+              <details className="group">
+                <summary className="cursor-pointer list-none text-xs font-black text-ink/55 transition hover:text-ink">
+                  Show {hiddenParameters.length} more issue parameters
+                </summary>
+                <div className="mt-1.5 grid gap-1.5">
+                  {hiddenParameters.map((parameter) => (
+                    <div key={`${parameter.id}-${parameter.name}`} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                      <span className={`size-2 shrink-0 rounded-full ${parameter.warning ? "bg-[#f4b942]" : "bg-[#e85d4f]"}`} />
+                      <span className="min-w-0 flex-1 truncate">{parameter.name}</span>
+                      <span className="text-[10px] font-black uppercase text-ink/40">{parameter.severity}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -540,6 +592,7 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
+                  issueParameters={issueParametersForCategory(technicalAudit.checks, category.categoryName)}
                 />
               );
             })}
@@ -556,6 +609,7 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
+                  issueParameters={issueParametersForCategory(technicalAudit.checks, category.categoryName)}
                 />
               );
             })}
@@ -576,6 +630,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(structuredDataAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -602,6 +657,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(onPageSeoAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -628,6 +684,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(imageSeoAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -654,6 +711,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(eeatAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -680,6 +738,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(trustSignalsAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -704,6 +763,7 @@ export default function ReportPage() {
                       badgeTone={geoStatusTone(category.status)}
                       badgeLabel={isSkipped ? "Skipped" : category.status === "Passed" ? "Passed" : "Issues Found"}
                       statusLabel={category.status}
+                      issueParameters={issueParametersForCategory(geoAeoAudit.checks, category.categoryName)}
                     />
                   );
                 })}
@@ -746,6 +806,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(indexabilityAudit.checks, category.categoryName)}
                   />
                 );
               })}
@@ -773,6 +834,7 @@ export default function ReportPage() {
                     badgeTone={statusTone}
                     badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
                     statusLabel={isSkipped ? "Skipped" : category.status}
+                    issueParameters={issueParametersForCategory(geoAeoAudit.checks, category.categoryName)}
                   />
                 );
                 })}

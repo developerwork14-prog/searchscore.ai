@@ -108,7 +108,8 @@ function publicGeoAeoAudit(report: AiVisibilityReport): PublicGeoAeoAudit {
       domain_score: 0,
       blocker_cap_applied: false,
       opportunity_counts: { high: 0, medium: 0, low: 0 },
-      categories: []
+      categories: [],
+      checks: []
     };
   }
 
@@ -120,7 +121,8 @@ function publicGeoAeoAudit(report: AiVisibilityReport): PublicGeoAeoAudit {
     domain_score: audit.domainScore,
     blocker_cap_applied: audit.blockerFailed && audit.score < audit.rawScore,
     opportunity_counts: audit.opportunityCounts,
-    categories: audit.categories
+    categories: audit.categories,
+    checks: audit.checks
   };
 }
 
