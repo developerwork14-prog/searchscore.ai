@@ -197,7 +197,55 @@ const CHECKS: CheckDefinition[] = [
   [139, "HTTP & Server Health", "AI crawler accessibility", 6, "BLOCKER"],
   [140, "Indexability & Crawlability", "Headless browser content match", 4, "MAJOR"],
   [141, "Indexability & Crawlability", "IndexNow implemented", 3, "MINOR"],
-  [142, "Canonicalization", "301 for permanent redirects", 4, "MAJOR"]
+  [142, "Canonicalization", "301 for permanent redirects", 4, "MAJOR"],
+  [143, "LCP (Largest Contentful Paint)", "LCP <2500ms Mobile p75", 3.5, "BLOCKER"],
+  [144, "LCP (Largest Contentful Paint)", "LCP <1800ms Competitive", 2.5, "MAJOR"],
+  [145, "LCP (Largest Contentful Paint)", "LCP <2500ms Desktop", 2, "MINOR"],
+  [146, "LCP (Largest Contentful Paint)", "LCP Element Identified", 2, "MINOR"],
+  [147, "LCP (Largest Contentful Paint)", "LCP Preload Hint", 3, "BLOCKER"],
+  [148, "LCP (Largest Contentful Paint)", "LCP Not Lazy-Loaded", 3, "BLOCKER"],
+  [149, "LCP (Largest Contentful Paint)", "LCP WebP/AVIF Format", 2, "MAJOR"],
+  [150, "LCP (Largest Contentful Paint)", "LCP Size <200KB", 2.5, "MAJOR"],
+  [151, "LCP (Largest Contentful Paint)", "LCP Phase Breakdown", 1.5, "MINOR"],
+  [152, "INP & Interactivity", "INP <200ms p75", 3, "BLOCKER"],
+  [153, "INP & Interactivity", "INP <150ms Competitive", 2, "MAJOR"],
+  [154, "INP & Interactivity", "Long Tasks Count", 2.5, "MAJOR"],
+  [155, "INP & Interactivity", "Task Yielding Patterns", 1.5, "MINOR"],
+  [156, "INP & Interactivity", "Third-Party Scripts Deferred", 2.5, "MAJOR"],
+  [157, "CLS (Cumulative Layout Shift)", "CLS <0.1 p75", 3, "BLOCKER"],
+  [158, "CLS (Cumulative Layout Shift)", "CLS Zero in Content Area", 2, "MINOR"],
+  [159, "CLS (Cumulative Layout Shift)", "All Images width+height", 2.5, "MAJOR"],
+  [160, "CLS (Cumulative Layout Shift)", "Ad Slots Reserved Space", 1.5, "MINOR"],
+  [161, "CLS (Cumulative Layout Shift)", "No Dynamic Injection Above", 2, "MAJOR"],
+  [162, "CLS (Cumulative Layout Shift)", "font-display:swap CLS", 1.5, "MINOR"],
+  [163, "FCP (First Contentful Paint)", "FCP <1.8s Mobile", 2.5, "MAJOR"],
+  [164, "FCP (First Contentful Paint)", "No Render-Blocking in <head>", 2.5, "MAJOR"],
+  [165, "FCP (First Contentful Paint)", "Critical CSS Inlined", 2, "MINOR"],
+  [166, "TTFB & Server Response", "TTFB <800ms", 2.5, "MAJOR"],
+  [167, "TTFB & Server Response", "TTFB Consistency Low Variance", 1.5, "MINOR"],
+  [168, "TTFB & Server Response", "CDN Edge Caching", 2, "MINOR"],
+  [169, "PageSpeed Scores", "Mobile PSI >=60", 2.5, "MAJOR"],
+  [170, "PageSpeed Scores", "Desktop PSI >=80", 2, "MINOR"],
+  [171, "PageSpeed Scores", "Tap Targets >=48px", 1.5, "MINOR"],
+  [172, "CLS (Cumulative Layout Shift)", "No Intrusive Interstitials", 2, "BLOCKER"],
+  [173, "Asset Optimisation", "Unused JS <20%", 2, "MINOR"],
+  [174, "Asset Optimisation", "Unused CSS <40%", 1.5, "MINOR"],
+  [175, "Asset Optimisation", "WebP/AVIF >=70%", 2, "MINOR"],
+  [176, "Asset Optimisation", "JS Bundle <500KB", 2, "MAJOR"],
+  [177, "Asset Optimisation", "Image Compression Quantified", 1.5, "MINOR"],
+  [178, "Asset Optimisation", "Text Compression GZIP/Brotli", 2, "MINOR"],
+  [179, "INP & Interactivity", "Third-Party Impact <500ms", 2, "MAJOR"],
+  [180, "FCP (First Contentful Paint)", "FCP <0.4s Optimal", 2, "MINOR"],
+  [181, "Asset Optimisation", "font-display:swap All Fonts", 2, "MINOR"],
+  [182, "Asset Optimisation", "Self-Hosted Fonts", 1.5, "MINOR"],
+  [183, "Asset Optimisation", "Preconnect Hints", 1.5, "MINOR"],
+  [184, "TTFB & Server Response", "TTFB <200ms AI Optimal", 2, "MINOR"],
+  [185, "Asset Optimisation", "Below-Fold Lazy Loading", 1.5, "MINOR"],
+  [186, "Asset Optimisation", "Preload Critical Resources", 1.5, "MINOR"],
+  [187, "Asset Optimisation", "Total Page Weight <3MB", 2, "MAJOR"],
+  [188, "INP & Interactivity", "TTI <3800ms", 2, "MAJOR"],
+  [189, "PageSpeed Scores", "Speed Index <3400ms", 1.5, "MINOR"],
+  [190, "INP & Interactivity", "TBT <200ms", 2.5, "MAJOR"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
@@ -217,12 +265,23 @@ interface AssetSample extends AssetReference {
 }
 
 interface LabVitals {
+  fcp?: number;
   lcp?: number;
   inp?: number;
   cls?: number;
   ttfb?: number;
+  speedIndex?: number;
+  tbt?: number;
+  tti?: number;
   performanceScore?: number;
   tapTargetsPass?: boolean;
+  lcpElementFound?: boolean;
+  lcpLazyLoadedPass?: boolean;
+  modernImagePass?: boolean;
+  optimizedImagePass?: boolean;
+  unusedJsSavingsBytes?: number;
+  unusedCssSavingsBytes?: number;
+  thirdPartyBlockingTime?: number;
 }
 
 function wordCount(text: string) {
@@ -260,12 +319,12 @@ function apiKey(...names: string[]) {
   return names.map((name) => process.env[name]).find(Boolean);
 }
 
-async function fetchPageSpeedInsights(url: string): Promise<LabVitals | null> {
+async function fetchPageSpeedInsights(url: string, strategy: "mobile" | "desktop" = "mobile"): Promise<LabVitals | null> {
   const key = apiKey("PAGESPEED_API_KEY", "GOOGLE_API_KEY");
   if (!key) return null;
   const endpoint = new URL("https://www.googleapis.com/pagespeedonline/v5/runPagespeed");
   endpoint.searchParams.set("url", url);
-  endpoint.searchParams.set("strategy", "mobile");
+  endpoint.searchParams.set("strategy", strategy);
   endpoint.searchParams.set("category", "performance");
   endpoint.searchParams.set("key", key);
 
@@ -275,18 +334,29 @@ async function fetchPageSpeedInsights(url: string): Promise<LabVitals | null> {
     const data = await response.json() as {
       lighthouseResult?: {
         categories?: { performance?: { score?: number } };
-        audits?: Record<string, { numericValue?: number; score?: number }>;
+        audits?: Record<string, { numericValue?: number; score?: number; displayValue?: string; details?: { overallSavingsBytes?: number } }>;
       };
     };
     const audits = data.lighthouseResult?.audits ?? {};
     return {
+      fcp: audits["first-contentful-paint"]?.numericValue,
       lcp: audits["largest-contentful-paint"]?.numericValue,
       cls: audits["cumulative-layout-shift"]?.numericValue,
       ttfb: audits["server-response-time"]?.numericValue,
+      speedIndex: audits["speed-index"]?.numericValue,
+      tbt: audits["total-blocking-time"]?.numericValue,
+      tti: audits.interactive?.numericValue,
       performanceScore: data.lighthouseResult?.categories?.performance?.score !== undefined
         ? Math.round(data.lighthouseResult.categories.performance.score * 100)
         : undefined,
-      tapTargetsPass: audits["tap-targets"]?.score === undefined ? undefined : audits["tap-targets"]?.score === 1
+      tapTargetsPass: audits["tap-targets"]?.score === undefined ? undefined : audits["tap-targets"]?.score === 1,
+      lcpElementFound: audits["largest-contentful-paint-element"] === undefined ? undefined : audits["largest-contentful-paint-element"]?.score !== 0,
+      lcpLazyLoadedPass: audits["lcp-lazy-loaded"]?.score === undefined ? undefined : audits["lcp-lazy-loaded"]?.score === 1,
+      modernImagePass: audits["uses-webp-images"]?.score === undefined ? undefined : audits["uses-webp-images"]?.score === 1,
+      optimizedImagePass: audits["uses-optimized-images"]?.score === undefined ? undefined : audits["uses-optimized-images"]?.score === 1,
+      unusedJsSavingsBytes: audits["unused-javascript"]?.details?.overallSavingsBytes,
+      unusedCssSavingsBytes: audits["unused-css-rules"]?.details?.overallSavingsBytes,
+      thirdPartyBlockingTime: audits["third-party-summary"]?.numericValue
     };
   } catch {
     return null;
@@ -513,6 +583,11 @@ function contentTypeMatches(asset: AssetSample) {
   if (asset.kind === "image") return /image\//i.test(contentType);
   if (asset.kind === "font") return /font|woff|ttf|otf|octet-stream/i.test(contentType);
   return true;
+}
+
+function contentLengthBytes(headers: Headers) {
+  const value = Number(headers.get("content-length") ?? 0);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function cdnSignal(headers: Headers) {
@@ -910,11 +985,12 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const origin = `${url.protocol}//${url.host}`;
   const robots = await fetchText(`${origin}/robots.txt`, {}, 2500).catch(() => null);
   const sitemapUrl = robots?.text.match(/^sitemap:\s*(.+)$/im)?.[1]?.trim() ?? `${origin}/sitemap.xml`;
-  const [sitemap, aiSitemap, llms, psi, crux, crawled] = await Promise.all([
+  const [sitemap, aiSitemap, llms, psi, desktopPsi, crux, crawled] = await Promise.all([
     fetchText(sitemapUrl, {}, 2500).catch(() => null),
     fetchText(`${origin}/ai-sitemap.xml`, {}, 1800).catch(() => null),
     fetchText(`${origin}/llms.txt`, {}, 1800).catch(() => null),
-    fetchPageSpeedInsights(page.finalUrl),
+    fetchPageSpeedInsights(page.finalUrl, "mobile"),
+    fetchPageSpeedInsights(page.finalUrl, "desktop"),
     fetchCrux(page.finalUrl),
     crawlSite(url.toString(), { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
   ]);
@@ -1093,6 +1169,66 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const slashVariantUrl = url.toString().endsWith("/") ? url.toString().slice(0, -1) : `${url.toString()}/`;
   const slashVariant = await fetchText(slashVariantUrl, {}, 1800).catch(() => null);
   const slashDuplicateFailed = Boolean(slashVariant?.response.status === 200 && page.status === 200 && slashVariant.text !== page.html);
+  const fcp = psi?.fcp;
+  const lcp = crux?.lcp ?? psi?.lcp;
+  const desktopLcp = desktopPsi?.lcp;
+  const inp = crux?.inp ?? psi?.inp;
+  const cls = crux?.cls ?? psi?.cls;
+  const ttfb = crux?.ttfb ?? psi?.ttfb ?? page.responseTimeMs;
+  const desktopScore = desktopPsi?.performanceScore;
+  const mobileScore = psi?.performanceScore;
+  const tapTargetsPass = psi?.tapTargetsPass;
+  const firstImgSrc = firstImg.attr("src") ?? firstImg.attr("data-src") ?? "";
+  const firstImgUrl = firstImgSrc ? absolute(new URL(page.finalUrl), firstImgSrc) : "";
+  const lcpAssetSample = firstImgUrl ? headerAssetSamples.find((asset) => asset.url === firstImgUrl) : undefined;
+  const lcpAssetBytes = lcpAssetSample ? contentLengthBytes(lcpAssetSample.headers) : 0;
+  const lcpModernFormat = firstImgSrc
+    ? /\.(webp|avif)(?:[?#].*)?$/i.test(firstImgSrc) || psi?.modernImagePass === true
+    : psi?.modernImagePass ?? imageAggregate.modernRate >= 0.7;
+  const lcpPreloaded = somePage((p) => {
+    const root = new URL(p.finalUrl);
+    const preloadUrls = p.$("link[rel='preload'][as='image']").toArray().map((el) => absolute(root, p.$(el).attr("href") ?? ""));
+    return firstImgUrl ? preloadUrls.includes(firstImgUrl) : preloadUrls.length > 0;
+  });
+  const lcpElementFound = psi?.lcpElementFound ?? Boolean(firstImg.length || page.$("main h1,h1,main video,video[poster]").length);
+  const lcpPhaseBreakdownAvailable = [psi?.ttfb, psi?.fcp, psi?.lcp].filter((value) => value !== undefined).length >= 2 || page.responseTimeMs > 0;
+  const scriptRefs = pages.flatMap((p) => p.$("script[src]").toArray().map((el) => {
+    const script = p.$(el);
+    const src = absolute(new URL(p.finalUrl), script.attr("src") ?? "");
+    return {
+      src,
+      thirdParty: src ? !sameOrigin(new URL(p.finalUrl), src) : false,
+      deferred: script.attr("async") !== undefined || script.attr("defer") !== undefined || (script.attr("type") ?? "").toLowerCase() === "module"
+    };
+  })).filter((script) => script.src);
+  const thirdPartyScripts = scriptRefs.filter((script) => script.thirdParty);
+  const deferredThirdPartyCount = thirdPartyScripts.filter((script) => script.deferred).length;
+  const deferredThirdPartyPercent = thirdPartyScripts.length ? Math.round((deferredThirdPartyCount / thirdPartyScripts.length) * 100) : 100;
+  const longTaskSignal = psi?.tbt !== undefined ? psi.tbt : headBlockingScripts * 120 + thirdPartyScripts.length * 40;
+  const taskYieldingSignals = /(requestIdleCallback|scheduler\.postTask|requestAnimationFrame|setTimeout\s*\([^,]+,\s*0|await\s+new\s+Promise)/i.test(scriptAuditText);
+  const allImagesDimensionsRate = imageAggregate.dimensionsRate;
+  const contentAreaClsStable = cls !== undefined ? cls === 0 : imageAggregate.dimensionsRate >= 0.95 && accordionWords < 100;
+  const adLikeElements = pages.flatMap((p) => p.$("[id*='ad'],[class*='ad-'],[class*='ads'],ins.adsbygoogle").toArray().map((el) => ({
+    page: p,
+    style: (p.$(el).attr("style") ?? "").toLowerCase()
+  })));
+  const reservedAdSlots = adLikeElements.every((item) => /height|aspect-ratio|min-height/.test(item.style));
+  const dynamicInjectionAbove = /(insertBefore|prepend|afterbegin|before\s*\()/i.test(scriptAuditText);
+  const intrusiveInterstitials = /(?:interstitial|full[-\s]?screen\s+(?:modal|popup)|age[-\s]?gate|subscribe[-\s]?overlay)/i.test(page.html);
+  const jsAssetSamples = headerAssetSamples.filter((asset) => asset.kind === "js");
+  const cssAssetSamples = headerAssetSamples.filter((asset) => asset.kind === "css");
+  const fontAssetSamples = headerAssetSamples.filter((asset) => asset.kind === "font");
+  const totalJsBytes = jsAssetSamples.reduce((sum, asset) => sum + contentLengthBytes(asset.headers), 0);
+  const totalCssBytes = cssAssetSamples.reduce((sum, asset) => sum + contentLengthBytes(asset.headers), 0);
+  const totalPageWeightBytes = headerAssetSamples.reduce((sum, asset) => sum + contentLengthBytes(asset.headers), Buffer.byteLength(page.html));
+  const unusedJsPercent = totalJsBytes && psi?.unusedJsSavingsBytes !== undefined ? Math.round((psi.unusedJsSavingsBytes / totalJsBytes) * 100) : 0;
+  const unusedCssPercent = totalCssBytes && psi?.unusedCssSavingsBytes !== undefined ? Math.round((psi.unusedCssSavingsBytes / totalCssBytes) * 100) : 0;
+  const optimizedImages = psi?.optimizedImagePass ?? imageAggregate.modernRate >= 0.7;
+  const selfHostedFontPercent = fontAssetSamples.length
+    ? Math.round((fontAssetSamples.filter((asset) => sameOrigin(new URL(page.finalUrl), asset.url)).length / fontAssetSamples.length) * 100)
+    : 100;
+  const preconnectCount = pages.reduce((sum, p) => sum + p.$("link[rel='preconnect']").length, 0);
+  const preloadCriticalCount = pages.reduce((sum, p) => sum + p.$("link[rel='preload']").length, 0);
   const checksById = new Map(CHECKS.map((check) => [check.id, check]));
 
   const results: TechnicalCheckResult[] = [];
@@ -1199,13 +1335,6 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(43, everyPage((p) => p.finalUrl.length <= 75), pageCountEvidence);
   add(44, everyPage((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()), pageCountEvidence);
   add(45, pages.every((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/")), `${pages.length} pages sampled`);
-  const lcp = crux?.lcp ?? psi?.lcp;
-  const inp = crux?.inp ?? psi?.inp;
-  const cls = crux?.cls ?? psi?.cls;
-  const ttfb = crux?.ttfb ?? psi?.ttfb ?? page.responseTimeMs;
-  const mobileScore = psi?.performanceScore;
-  const tapTargetsPass = psi?.tapTargetsPass;
-
   add(46, lcp !== undefined ? lcp < 2500 : page.responseTimeMs < 2500, lcp !== undefined ? `${Math.round(lcp)}ms via API` : `Local fallback ${page.responseTimeMs}ms`);
   add(47, inp !== undefined ? inp < 200 : headBlockingScripts === 0, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking scripts");
   add(48, cls !== undefined ? cls < 0.1 : page.$("img").length === 0 || images.missingDimensions === 0, cls !== undefined ? `${cls} via API` : "Local fallback from layout-stability image dimensions");
@@ -1308,6 +1437,54 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(140, minHeadlessRatio >= 0.8, `${Math.round(minHeadlessRatio * 100)}% minimum bot/default content match`);
   add(141, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found");
   add(142, slashRedirectStatus === 0 || slashRedirectStatus === 301 || slashRedirectStatus === 308 || caseVariantStatus === 0 || caseVariantStatus === 301 || caseVariantStatus === 308 || caseVariantStatus === 404, `Slash variant status ${slashRedirectStatus || "missing"}, case variant status ${caseVariantStatus || "missing"}`);
+  add(143, lcp !== undefined ? lcp < 2500 : page.responseTimeMs < 2500, lcp !== undefined ? `${Math.round(lcp)}ms mobile p75 via API` : `Local fallback ${page.responseTimeMs}ms`);
+  add(144, lcp !== undefined ? lcp < 1800 : page.responseTimeMs < 1800, lcp !== undefined ? `${Math.round(lcp)}ms mobile p75 via API` : `Local fallback ${page.responseTimeMs}ms`);
+  add(145, desktopLcp !== undefined ? desktopLcp < 2500 : page.responseTimeMs < 2500, desktopLcp !== undefined ? `${Math.round(desktopLcp)}ms desktop via API` : `Local fallback ${page.responseTimeMs}ms`);
+  add(146, lcpElementFound, psi?.lcpElementFound !== undefined ? "PageSpeed LCP element audit available" : firstImgUrl || h1 || "No clear LCP candidate found");
+  add(147, lcpPreloaded, lcpPreloaded ? "LCP/image preload hint detected" : "No matching image preload hint detected");
+  add(148, psi?.lcpLazyLoadedPass ?? !firstImgLazy, psi?.lcpLazyLoadedPass !== undefined ? `PageSpeed lcp-lazy-loaded ${psi.lcpLazyLoadedPass ? "passed" : "failed"}` : "First image loading attribute checked");
+  add(149, lcpModernFormat, firstImgSrc ? `LCP candidate ${firstImgSrc}` : `${Math.round(imageAggregate.modernRate * 100)}% images use WebP/AVIF`);
+  add(150, !firstImgUrl || lcpAssetBytes === 0 ? optimizedImages : lcpAssetBytes < 200000, lcpAssetBytes ? `${Math.round(lcpAssetBytes / 1024)}KB LCP candidate` : "LCP asset size unavailable; image optimization fallback used");
+  add(151, lcpPhaseBreakdownAvailable, psi?.lcp !== undefined ? "PageSpeed LCP phase metrics available" : "Local response timing fallback available");
+  add(152, inp !== undefined ? inp < 200 : headBlockingScripts === 0, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking scripts");
+  add(153, inp !== undefined ? inp < 150 : headBlockingScripts === 0 && thirdPartyScripts.length <= 2, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking and third-party scripts");
+  add(154, longTaskSignal < 200, psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms total blocking time` : `${Math.round(longTaskSignal)}ms local long-task risk estimate`);
+  add(155, taskYieldingSignals || (psi?.tbt !== undefined && psi.tbt < 200), taskYieldingSignals ? "Task yielding pattern detected" : psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms total blocking time` : "No task yielding pattern detected");
+  add(156, thirdPartyScripts.length === 0 || deferredThirdPartyPercent >= 80, `${deferredThirdPartyCount}/${thirdPartyScripts.length} third-party scripts deferred (${deferredThirdPartyPercent}%)`);
+  add(157, cls !== undefined ? cls < 0.1 : imageAggregate.dimensionsRate >= 0.9, cls !== undefined ? `${cls} via API` : `${Math.round(imageAggregate.dimensionsRate * 100)}% images have dimensions`);
+  add(158, contentAreaClsStable, cls !== undefined ? `${cls} via API` : "Local fallback from dimensions and hidden content");
+  add(159, allImagesDimensionsRate >= 0.9, `${imageAggregate.dimensionsPresent}/${imageAggregate.count} images have width and height (${Math.round(allImagesDimensionsRate * 100)}%)`);
+  add(160, reservedAdSlots, adLikeElements.length ? `${adLikeElements.length} ad-like slots checked` : "No ad-like slots detected");
+  add(161, !dynamicInjectionAbove, dynamicInjectionAbove ? "Dynamic insertion pattern detected" : "No above-content injection pattern detected");
+  add(162, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
+  add(163, fcp !== undefined ? fcp < 1800 : page.responseTimeMs < 1800, fcp !== undefined ? `${Math.round(fcp)}ms via PageSpeed` : `Local fallback ${page.responseTimeMs}ms`);
+  add(164, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
+  add(165, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
+  add(166, ttfb < 800, `${Math.round(ttfb)}ms${psi?.ttfb || crux?.ttfb ? " via API" : ""}`);
+  add(167, Math.max(...ttfbSamples) - Math.min(...ttfbSamples) < 300, `${Math.round(Math.max(...ttfbSamples) - Math.min(...ttfbSamples))}ms TTFB variance`);
+  add(168, Boolean(cdnEvidence), cdnEvidence || "No CDN/cache header signal detected");
+  add(169, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
+  add(170, desktopScore !== undefined ? desktopScore >= 80 : page.responseTimeMs < 1800, desktopScore !== undefined ? `${desktopScore} via PageSpeed Insights` : "Local desktop PSI fallback");
+  add(171, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
+  add(172, !intrusiveInterstitials, intrusiveInterstitials ? "Interstitial/overlay pattern detected" : "No intrusive interstitial pattern detected");
+  add(173, psi?.unusedJsSavingsBytes !== undefined && totalJsBytes > 0 ? unusedJsPercent < 20 : totalJsBytes < 500000, psi?.unusedJsSavingsBytes !== undefined && totalJsBytes > 0 ? `${unusedJsPercent}% JS savings estimated` : `${Math.round(totalJsBytes / 1024)}KB sampled JS`);
+  add(174, psi?.unusedCssSavingsBytes !== undefined && totalCssBytes > 0 ? unusedCssPercent < 40 : true, psi?.unusedCssSavingsBytes !== undefined && totalCssBytes > 0 ? `${unusedCssPercent}% CSS savings estimated` : "Unused CSS API data unavailable");
+  add(175, imageAggregate.modernRate >= 0.7, `${imageAggregate.modern}/${imageAggregate.count} images use WebP or AVIF (${Math.round(imageAggregate.modernRate * 100)}%)`);
+  add(176, totalJsBytes === 0 || totalJsBytes < 500000, `${Math.round(totalJsBytes / 1024)}KB sampled JS`);
+  add(177, optimizedImages, psi?.optimizedImagePass !== undefined ? `PageSpeed image optimization ${psi.optimizedImagePass ? "passed" : "failed"}` : `${Math.round(imageAggregate.modernRate * 100)}% modern image fallback`);
+  add(178, compressedTextAssets.length === 0 || compressionPercent >= 80, compressedTextAssets.length === 0 ? "0/0 text assets compressed (not detected)" : `${compressedCount}/${compressedTextAssets.length} text assets compressed (${compressionPercent}%)`);
+  add(179, psi?.thirdPartyBlockingTime !== undefined ? psi.thirdPartyBlockingTime < 500 : thirdPartyScripts.length <= 5, psi?.thirdPartyBlockingTime !== undefined ? `${Math.round(psi.thirdPartyBlockingTime)}ms third-party blocking time` : `${thirdPartyScripts.length} third-party scripts detected`);
+  add(180, fcp !== undefined ? fcp < 400 : page.responseTimeMs < 400, fcp !== undefined ? `${Math.round(fcp)}ms via PageSpeed` : `Local fallback ${page.responseTimeMs}ms`);
+  add(181, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
+  add(182, selfHostedFontPercent >= 80, `${selfHostedFontPercent}% sampled fonts self-hosted`);
+  add(183, preconnectCount > 0 || thirdPartyScripts.length === 0, preconnectCount ? `${preconnectCount} preconnect hints found` : `${thirdPartyScripts.length} third-party scripts detected`);
+  add(184, medianTtfb < 200, `${Math.round(medianTtfb)}ms median TTFB`);
+  add(185, imageAggregate.belowFoldLazyRate >= 0.8, imageAggregate.belowFoldCount ? `${imageAggregate.belowFoldLazy}/${imageAggregate.belowFoldCount} below-fold images lazy-loaded (${Math.round(imageAggregate.belowFoldLazyRate * 100)}%)` : "No below-fold images detected");
+  add(186, preloadCriticalCount > 0, `${preloadCriticalCount} preload hints found`);
+  add(187, totalPageWeightBytes < 3000000, `${Math.round(totalPageWeightBytes / 1024)}KB sampled page weight`);
+  add(188, psi?.tti !== undefined ? psi.tti < 3800 : page.responseTimeMs < 3800 && headBlockingScripts === 0, psi?.tti !== undefined ? `${Math.round(psi.tti)}ms via PageSpeed` : "Local TTI fallback");
+  add(189, psi?.speedIndex !== undefined ? psi.speedIndex < 3400 : page.responseTimeMs < 3400, psi?.speedIndex !== undefined ? `${Math.round(psi.speedIndex)}ms via PageSpeed` : `Local fallback ${page.responseTimeMs}ms`);
+  add(190, psi?.tbt !== undefined ? psi.tbt < 200 : headBlockingScripts === 0, psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms via PageSpeed` : "Local TBT fallback");
 
   return scoreChecks(results);
 }

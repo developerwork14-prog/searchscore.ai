@@ -101,6 +101,20 @@ export interface TechnicalCategorySummary {
   status: TechnicalCategoryStatus;
 }
 
+export type PublicTechnicalSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
+export type PublicTechnicalScope = "page" | "domain";
+
+export interface PublicTechnicalCheck {
+  id: number;
+  category: string;
+  name: string;
+  weight: number;
+  severity: PublicTechnicalSeverity;
+  passed: boolean;
+  evidence: string;
+  scope: PublicTechnicalScope;
+}
+
 export interface GeoAeoCategorySummary {
   categoryName: string;
   totalChecks: number;
@@ -370,6 +384,7 @@ export interface PublicTechnicalAudit {
   score: number;
   grade: GeoAeoGrade;
   issues_found: number;
+  checks: PublicTechnicalCheck[];
   category_debug?: {
     category: string;
     totalChecks: number;
@@ -402,6 +417,7 @@ export interface AiVisibilityReport {
   leadMetrics: LeadGenerationMetric[];
   visibilityIssueSummary: VisibilityIssueSummary;
   technicalCategorySummaries: TechnicalCategorySummary[];
+  technicalChecks: PublicTechnicalCheck[];
   technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
   geoAeoAudit: GeoAeoAuditResult;
   indexabilityAudit?: IndexabilityAuditResult;

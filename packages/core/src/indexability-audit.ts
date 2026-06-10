@@ -76,6 +76,9 @@ const CATEGORY_ORDER = [
   "Rendering & Content Access"
 ];
 
+const SITEMAP_INDEXABILITY_SAMPLE_LIMIT = 20;
+const SITEMAP_INDEXABILITY_CONCURRENCY = 5;
+
 function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(value)));
 }
@@ -104,6 +107,20 @@ async function fetchText(url: string, timeoutMs = 8000, init?: RequestInit) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
+  const results: R[] = [];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function wordCount(text: string) {
@@ -259,14 +276,13 @@ function infiniteScrollEvidence(html: string, $: cheerio.CheerioAPI, pagination:
 
 async function searchIndexEvidence(engine: "google" | "bing", hostname: string) {
   const envKey = engine === "google" ? "GSC_ACCESS_TOKEN" : "BING_WEBMASTER_API_KEY";
-  if (process.env[envKey]) return { skipped: true, reason: `${envKey} configured but API integration is not implemented in this audit runtime` };
-  const searchUrl = engine === "google"
-    ? `https://www.google.com/search?q=site:${encodeURIComponent(hostname)}`
-    : `https://www.bing.com/search?q=site:${encodeURIComponent(hostname)}`;
-  const result = await fetchText(searchUrl, 6000).catch(() => null);
-  if (!result || result.response.status >= 400) return { skipped: true, reason: `${engine} site: validation unavailable`, status: result?.response.status ?? 0 };
-  const body = result.text.toLowerCase();
-  return { pass: body.includes(hostname.toLowerCase()) && !/did not match any documents|no results/i.test(result.text), method: "site_operator", status: result.response.status };
+  return {
+    skipped: true,
+    reason: process.env[envKey]
+      ? `${envKey} configured but API integration is not implemented in this audit runtime`
+      : `${engine} index verification requires a connected API`,
+    hostname
+  };
 }
 
 function gscCoverageEvidence() {
@@ -317,25 +333,27 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
   const $ = cheerio.load(pageHtml);
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const canonicalUrl = canonicalHref(pageHtml, normalizedUrl, serverPage.response);
-  const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 5000).catch(() => null) : null;
+  const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 3000).catch(() => null) : null;
   const secondCanonicalUrl = canonicalTarget ? canonicalHref(canonicalTarget.text, canonicalUrl, canonicalTarget.response) : "";
-  const sitemapUrls = await fetchSitemapUrls(url.origin, 10000, 100).then((result) => result.urls.slice(0, 100)).catch(() => []);
-  const sitemapSamples = await Promise.all(sitemapUrls.slice(0, 100).map(async (sampleUrl) => {
-    const page = await fetchText(sampleUrl, 3000).catch(() => null);
+  const sitemapUrls = await fetchSitemapUrls(url.origin, 5000, SITEMAP_INDEXABILITY_SAMPLE_LIMIT).then((result) => result.urls.slice(0, SITEMAP_INDEXABILITY_SAMPLE_LIMIT)).catch(() => []);
+  const sitemapSamples = await mapWithConcurrency(sitemapUrls, SITEMAP_INDEXABILITY_CONCURRENCY, async (sampleUrl) => {
+    const page = await fetchText(sampleUrl, 1800).catch(() => null);
     const sampleCanonical = page ? canonicalHref(page.text, sampleUrl, page.response) : "";
-    const canonicalPage = sampleCanonical ? await fetchText(sampleCanonical, 2500).catch(() => null) : null;
+    const canonicalPage = sampleCanonical ? await fetchText(sampleCanonical, 1500).catch(() => null) : null;
     return {
       url: sampleUrl,
       noindex: Boolean(page && noindexFoundIn(page.text, page.response)),
       canonicalNoindex: Boolean(canonicalPage && noindexFoundIn(canonicalPage.text, canonicalPage.response))
     };
-  }));
+  });
   const pagination = paginationEvidence($, canonicalUrl);
-  const googleIndex = await searchIndexEvidence("google", url.hostname);
-  const bingIndex = await searchIndexEvidence("bing", url.hostname);
-  const soft404 = await soft404Evidence(url);
-  const httpHttps = await httpToHttpsEvidence(url);
-  const wwwVariant = await wwwVariantEvidence(url);
+  const [googleIndex, bingIndex, soft404, httpHttps, wwwVariant] = await Promise.all([
+    searchIndexEvidence("google", url.hostname),
+    searchIndexEvidence("bing", url.hostname),
+    soft404Evidence(url),
+    httpToHttpsEvidence(url),
+    wwwVariantEvidence(url)
+  ]);
   const checks = [
     resultFor(1, { pass: !noindexFoundIn(pageHtml, serverPage.response), directives: robotsDirectives(pageHtml, serverPage.response) }),
     resultFor(2, googleIndex),

@@ -43,3 +43,11 @@ a {
     linear-gradient(90deg, rgba(16, 24, 32, 0.045) 1px, transparent 1px);
   background-size: 42px 42px;
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

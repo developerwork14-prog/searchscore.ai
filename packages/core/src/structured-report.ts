@@ -91,6 +91,7 @@ function publicTechnicalAudit(report: AiVisibilityReport): PublicTechnicalAudit 
     score,
     grade: auditGrade(score),
     issues_found: issuesFound,
+    checks: report.technicalChecks ?? [],
     category_debug: report.technicalCategoryDebug
   };
 }

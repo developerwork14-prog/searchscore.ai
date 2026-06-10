@@ -459,10 +459,17 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     "Indexability & Crawlability",
     "URL Structure",
     "Core Web Vitals",
+    "LCP (Largest Contentful Paint)",
+    "INP & Interactivity",
+    "CLS (Cumulative Layout Shift)",
+    "FCP (First Contentful Paint)",
+    "TTFB & Server Response",
+    "PageSpeed Scores",
     "Mobile Optimization",
     "Image SEO",
     "Security & Trust Pages",
     "Performance",
+    "Asset Optimisation",
     "Schema Markup",
     "Social Metadata",
     "External Link Trust",
@@ -483,7 +490,12 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     categories.set(check.category, current);
   }
 
-  return categoryOrder
+  const orderedCategories = [
+    ...categoryOrder.filter((categoryName) => categories.has(categoryName)),
+    ...[...categories.keys()].filter((categoryName) => !categoryOrder.includes(categoryName))
+  ];
+
+  return orderedCategories
     .filter((categoryName) => categories.has(categoryName))
     .map((categoryName) => {
       const checks = categories.get(categoryName) ?? [];
@@ -706,6 +718,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     leadMetrics: leadMetrics(technicalAudit, breakdown),
     visibilityIssueSummary: publicIssueSummary(recommendations, visibilityScore),
     technicalCategorySummaries: technicalCategorySummaries(technicalAudit),
+    technicalChecks: technicalAudit.checks,
     technicalCategoryDebug: technicalAudit.categoryDebug,
     geoAeoAudit,
     indexabilityAudit,

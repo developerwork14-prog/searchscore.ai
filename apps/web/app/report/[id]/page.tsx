@@ -33,6 +33,13 @@ type AuditCategoryCardData = {
   status: string;
 };
 
+type AuditSubcheckData = {
+  id: number;
+  name: string;
+  passed: boolean;
+  severity: string;
+};
+
 type TabStatus = "passed" | "issues" | "attention";
 
 function categoryAccent(category: AuditCategoryCardData, isSkipped = false) {
@@ -85,28 +92,30 @@ function StatusIcon({ status }: { status: string }) {
   );
 }
 
-function ScoreDonut({ score, dark = false }: { score: number; dark?: boolean }) {
-  const radius = 44;
+function ScoreDonut({ score, dark = false, size = 96 }: { score: number; dark?: boolean; size?: number }) {
+  const strokeWidth = size >= 112 ? 12 : 9;
+  const radius = size / 2 - strokeWidth;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (Math.max(0, Math.min(100, score)) / 100) * circumference;
+  const center = size / 2;
 
   return (
-    <div className="relative grid size-32 place-items-center">
-      <svg className="-rotate-90" width="128" height="128" viewBox="0 0 128 128" aria-hidden="true">
-        <circle cx="64" cy="64" r={radius} fill="none" stroke={dark ? "#263238" : "#e5e7eb"} strokeWidth="12" />
+    <div className="relative grid shrink-0 place-items-center" style={{ width: size, height: size }}>
+      <svg className="-rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle cx={center} cy={center} r={radius} fill="none" stroke={dark ? "#263238" : "#e5e7eb"} strokeWidth={strokeWidth} />
         <circle
-          cx="64"
-          cy="64"
+          cx={center}
+          cy={center}
           r={radius}
           fill="none"
           stroke="#f4b942"
           strokeLinecap="round"
-          strokeWidth="12"
+          strokeWidth={strokeWidth}
           strokeDasharray={circumference}
           strokeDashoffset={offset}
         />
       </svg>
-      <span className={`absolute text-3xl font-black ${dark ? "text-white" : "text-ink"}`}>{score}%</span>
+      <span className={`absolute text-2xl font-black ${dark ? "text-white" : "text-ink"}`}>{score}%</span>
     </div>
   );
 }
@@ -125,16 +134,16 @@ function SummaryScoreCard({
   dark?: boolean;
 }) {
   return (
-    <Card className={`flex min-h-[260px] flex-col justify-between overflow-hidden p-6 ${dark ? "border-[#263238] bg-ink text-white" : "bg-white text-ink"}`}>
-      <div className="flex flex-1 flex-col items-center justify-center text-center">
-        <p className={`text-sm font-black ${dark ? "text-white/70" : "text-ink/60"}`}>{title}</p>
-        <div className="mt-4">
-          <ScoreDonut score={score} dark={dark} />
+    <Card className={`flex min-h-[176px] flex-col justify-between overflow-hidden p-5 ${dark ? "border-[#263238] bg-ink text-white" : "bg-white text-ink"}`}>
+      <div className="flex flex-1 items-center gap-5">
+        <ScoreDonut score={score} dark={dark} />
+        <div className="min-w-0 flex-1">
+          <p className={`text-sm font-black ${dark ? "text-white/70" : "text-ink/60"}`}>{title}</p>
+          <div className="mt-4 flex flex-wrap gap-2">{badges}</div>
+          {description ? <p className={`mt-4 line-clamp-3 text-sm leading-6 ${dark ? "text-white/66" : "text-ink/60"}`}>{description}</p> : null}
         </div>
-        <div className="mt-5 flex flex-wrap justify-center gap-2">{badges}</div>
-        {description ? <p className={`mt-4 text-sm leading-6 ${dark ? "text-white/66" : "text-ink/60"}`}>{description}</p> : null}
       </div>
-      <div className={`mt-6 h-1 overflow-hidden rounded-full ${dark ? "bg-[#263238]" : "bg-black/10"}`}>
+      <div className={`mt-5 h-1 overflow-hidden rounded-full ${dark ? "bg-[#263238]" : "bg-black/10"}`}>
         <div className="h-full rounded-full bg-[#f4b942]" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
       </div>
     </Card>
@@ -146,7 +155,7 @@ function AuditTabButton({ active, status, onClick, children }: { active: boolean
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-black transition ${
+      className={`inline-flex min-h-9 shrink-0 snap-start items-center gap-2 rounded-full border px-3.5 text-sm font-black transition ${
         active
           ? "border-ink bg-ink text-white"
           : "border-black/10 bg-white text-ink/60 hover:bg-mist"
@@ -163,43 +172,77 @@ function AuditCategoryCard({
   badgeTone,
   badgeLabel,
   isSkipped = false,
-  statusLabel
+  statusLabel,
+  subchecks = []
 }: {
   category: AuditCategoryCardData;
   badgeTone: "neutral" | "good" | "warn" | "bad";
   badgeLabel: string;
   isSkipped?: boolean;
   statusLabel: string;
+  subchecks?: AuditSubcheckData[];
 }) {
   const hasIssues = category.failedChecks >= 1;
+  const visibleSubchecks = subchecks.slice(0, 4);
+  const hiddenSubchecks = subchecks.slice(4);
 
   return (
-    <Card className={`border-l-4 ${categoryAccent(category, isSkipped)} p-5 transition hover:border-black/20 hover:shadow-soft`}>
-      <div className="flex min-h-14 items-start justify-between gap-3">
-        <h3 className="text-base font-black leading-6 text-ink">{category.categoryName}</h3>
+    <Card className={`border-l-4 ${categoryAccent(category, isSkipped)} p-4 shadow-soft transition hover:border-black/20`}>
+      <div className="flex min-h-10 items-start justify-between gap-3">
+        <h3 className="text-[15px] font-black leading-5 text-ink">{category.categoryName}</h3>
         <Badge tone={badgeTone}>{badgeLabel}</Badge>
       </div>
-      <div className="mt-5 grid grid-cols-3 gap-3">
-        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="rounded-md border border-black/10 bg-white p-3">
           <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Checks</p>
-          <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+          <p className="mt-1 text-xl font-black text-ink">{category.totalChecks}</p>
         </div>
-        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+        <div className="rounded-md border border-black/10 bg-white p-3">
           <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Issues</p>
-          <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-[#e85d4f]" : "text-[#0f766e]"}`}>{category.failedChecks}</p>
+          <p className={`mt-1 text-xl font-black ${hasIssues ? "text-[#e85d4f]" : "text-[#0f766e]"}`}>{category.failedChecks}</p>
         </div>
-        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+        <div className="rounded-md border border-black/10 bg-white p-3">
           <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Score</p>
-          <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/60" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+          <p className={`mt-1 text-xl font-black ${isSkipped ? "text-ink/60" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
         </div>
       </div>
-      <div className="mt-5 flex items-center justify-between rounded-lg bg-mist px-3 py-2">
+      <div className="mt-4 flex items-center justify-between rounded-md bg-white px-3 py-2">
         <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Status</p>
         <p className={`inline-flex items-center gap-1.5 text-sm font-black ${statusTextColor(statusLabel)}`}>
           <StatusIcon status={statusLabel} />
           {statusLabel}
         </p>
       </div>
+      {subchecks.length ? (
+        <div className="mt-4 border-t border-black/10 pt-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Parameters</p>
+          <div className="mt-2 grid gap-1.5">
+            {visibleSubchecks.map((check) => (
+              <div key={check.id} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                <span className={`size-2 shrink-0 rounded-full ${check.passed ? "bg-[#0f766e]" : "bg-[#e85d4f]"}`} />
+                <span className="min-w-0 flex-1 truncate">{check.name}</span>
+                <span className="text-[10px] font-black uppercase text-ink/40">{check.severity}</span>
+              </div>
+            ))}
+            {hiddenSubchecks.length ? (
+              <details className="group">
+                <summary className="cursor-pointer list-none text-xs font-black text-ink/55 transition hover:text-ink">
+                  Show {hiddenSubchecks.length} more parameters
+                </summary>
+                <div className="mt-1.5 grid gap-1.5">
+                  {hiddenSubchecks.map((check) => (
+                    <div key={check.id} className="flex items-center gap-2 text-xs font-semibold text-ink/70">
+                      <span className={`size-2 shrink-0 rounded-full ${check.passed ? "bg-[#0f766e]" : "bg-[#e85d4f]"}`} />
+                      <span className="min-w-0 flex-1 truncate">{check.name}</span>
+                      <span className="text-[10px] font-black uppercase text-ink/40">{check.severity}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -264,7 +307,8 @@ export default function ReportPage() {
   const technicalAudit = report.technical_audit ?? {
     score: 0,
     grade: "F",
-    issues_found: technicalCategories.reduce((sum, category) => sum + category.failedChecks, 0)
+    issues_found: technicalCategories.reduce((sum, category) => sum + category.failedChecks, 0),
+    checks: []
   };
   const geoAeoAudit = report.geo_aeo_audit ?? {
     score: 0,
@@ -321,12 +365,24 @@ export default function ReportPage() {
   const imageSeoCategories = imageSeoAudit.categories;
   const eeatCategories = eeatAudit.categories;
   const trustSignalsCategories = trustSignalsAudit.categories;
-  const citationLikeCategories = activeAuditTab === "indexability" ? indexabilityAudit.categories : activeAuditTab === "gemini" ? geminiCategories : citationCategories;
+  const indexabilityCategories = indexabilityAudit.categories;
+  const technicalChecks = technicalAudit.checks ?? [];
+  const technicalSubchecks = (categoryName: string): AuditSubcheckData[] =>
+    technicalChecks
+      .filter((check) => check.category === categoryName)
+      .map((check) => ({
+        id: check.id,
+        name: check.name,
+        passed: check.passed,
+        severity: check.severity
+      }));
   const structuredDataUnavailable = categoriesUnavailable(structuredDataCategories);
   const imageSeoUnavailable = categoriesUnavailable(imageSeoCategories);
   const eeatUnavailable = categoriesUnavailable(eeatCategories);
   const trustSignalsUnavailable = categoriesUnavailable(trustSignalsCategories);
   const geoUnavailable = categoriesUnavailable(geoCategories);
+  const indexabilityUnavailable = categoriesUnavailable(indexabilityCategories);
+  const citationLikeCategories = activeAuditTab === "gemini" ? geminiCategories : citationCategories;
   const citationLikeUnavailable = categoriesUnavailable(citationLikeCategories);
   const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
@@ -342,21 +398,21 @@ export default function ReportPage() {
     { id: "geo" as const, label: "GEO / AEO Audit", status: tabStatus(geoCategories, geoUnavailable) },
     { id: "citation" as const, label: "ChatGPT Citation", status: tabStatus(citationCategories, categoriesUnavailable(citationCategories)) },
     { id: "gemini" as const, label: "Gemini Citation", status: tabStatus(geminiCategories, categoriesUnavailable(geminiCategories)) },
-    { id: "indexability" as const, label: "Indexability", status: tabStatus(indexabilityAudit.categories, categoriesUnavailable(indexabilityAudit.categories)) }
+    { id: "indexability" as const, label: "Indexability", status: tabStatus(indexabilityCategories, indexabilityUnavailable) }
   ];
 
   return (
-    <main className="min-h-screen bg-mist px-5 py-6 text-ink">
+    <main className="min-h-screen bg-mist px-4 py-4 text-ink md:px-5">
       <div className="mx-auto max-w-7xl">
-      <header className="relative mb-6 overflow-hidden rounded-xl border border-black/10 border-l-4 border-l-[#f4b942] bg-white p-5 shadow-soft md:p-6">
+      <header className="relative mb-5 overflow-hidden rounded-lg border border-black/10 border-l-4 border-l-[#f4b942] bg-white p-4 shadow-soft md:p-5">
         <div className="absolute left-0 top-0 h-1 w-full bg-[#f4b942]" />
-        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-full bg-mist px-3 py-2 text-sm font-black text-ink">
+          <p className="inline-flex items-center gap-2 rounded-full bg-mist px-3 py-1.5 text-xs font-black text-ink">
             <Sparkles className="size-4" />
             AI Visibility Report
           </p>
-          <h1 className="mt-4 text-[28px] font-black leading-tight text-ink">{report.brand}</h1>
+          <h1 className="mt-3 text-2xl font-black leading-tight text-ink md:text-[28px]">{report.brand}</h1>
           <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-ink/60" href={report.url} target="_blank">
             {report.url}
             <ExternalLink className="size-3" />
@@ -364,12 +420,12 @@ export default function ReportPage() {
           <p className="mt-2 text-xs font-semibold text-ink/60">Last audited: just now</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button className="rounded-full bg-ink px-5 text-white hover:bg-[#263238]" onClick={() => navigator.clipboard.writeText(window.location.href)}><Link2 className="size-4" />Share URL</Button>
+          <Button className="min-h-10 rounded-full bg-ink px-5 text-white hover:bg-[#263238]" onClick={() => navigator.clipboard.writeText(window.location.href)}><Link2 className="size-4" />Share URL</Button>
         </div>
         </div>
       </header>
 
-      <section className="mb-6 grid gap-4 md:grid-cols-3">
+      <section className="mb-5 grid gap-4 lg:grid-cols-3">
         <SummaryScoreCard
           dark
           title="AI Visibility Score"
@@ -399,10 +455,10 @@ export default function ReportPage() {
         />
       </section>
 
-      <section className="mb-6">
-        <div className="mb-4 flex flex-col gap-3">
+      <section className="mb-5">
+        <div className="mb-4 flex flex-col gap-3 rounded-lg border border-black/10 bg-white/70 p-3 shadow-soft backdrop-blur">
           <h2 className="text-[13px] font-black uppercase tracking-wider text-ink/60">Audit Categories</h2>
-          <div className="flex w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
+          <div className="no-scrollbar flex w-full snap-x gap-2 overflow-x-auto whitespace-nowrap">
             {auditTabs.map((tab) => (
               <AuditTabButton
                 key={tab.id}
@@ -417,7 +473,7 @@ export default function ReportPage() {
         </div>
 
         {activeAuditTab === "technical" ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {technicalCategories.map((category) => {
               const hasIssues = category.failedChecks >= 1;
 
@@ -428,12 +484,13 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
+                  subchecks={technicalSubchecks(category.categoryName)}
                 />
               );
             })}
           </div>
         ) : activeAuditTab === "crawlability" ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {crawlabilityCategories.map((category) => {
               const hasIssues = category.failedChecks >= 1;
 
@@ -444,13 +501,14 @@ export default function ReportPage() {
                   badgeTone={hasIssues ? "bad" : "good"}
                   badgeLabel={hasIssues ? "Issues Found" : "Passed"}
                   statusLabel={category.status}
+                  subchecks={technicalSubchecks(category.categoryName)}
                 />
               );
             })}
           </div>
         ) : activeAuditTab === "structuredData" ? (
           structuredDataCategories.length && !structuredDataUnavailable ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {structuredDataCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
@@ -476,7 +534,7 @@ export default function ReportPage() {
           )
         ) : activeAuditTab === "imageSeo" ? (
           imageSeoCategories.length && !imageSeoUnavailable ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {imageSeoCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
@@ -502,7 +560,7 @@ export default function ReportPage() {
           )
         ) : activeAuditTab === "eeat" ? (
           eeatCategories.length && !eeatUnavailable ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {eeatCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
@@ -528,7 +586,7 @@ export default function ReportPage() {
           )
         ) : activeAuditTab === "trustSignals" ? (
           trustSignalsCategories.length && !trustSignalsUnavailable ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {trustSignalsCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
@@ -553,7 +611,7 @@ export default function ReportPage() {
             />
           )
         ) : activeAuditTab === "geo" ? (
-          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+          <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
             <Card className="min-h-[260px] overflow-hidden border-[#263238] bg-ink p-6 text-white">
               <div className="flex h-full flex-col items-center justify-center text-center">
                 <p className="text-sm font-bold text-white/70">GEO / AEO Score</p>
@@ -572,7 +630,7 @@ export default function ReportPage() {
             </Card>
 
             {geoCategories.length && !geoUnavailable ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {geoCategories.map((category) => {
                   const isSkipped = category.status === "Skipped";
                   return (
@@ -609,6 +667,32 @@ export default function ReportPage() {
               </a>
             </Card>
           </div>
+        ) : activeAuditTab === "indexability" ? (
+          indexabilityCategories.length && !indexabilityUnavailable ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {indexabilityCategories.map((category) => {
+                const hasIssues = category.failedChecks >= 1;
+                const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
+                const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
+
+                return (
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyAuditState
+              title="No Indexability categories available"
+              message={indexabilityUnavailable ? "Indexability audit timed out. Regenerate the report after restarting the audit server." : "This report does not include Indexability category data. Regenerate the report after restarting the audit server so the latest audit code is used."}
+            />
+          )
         ) : (
           <div className="grid gap-4">
             {activeAuditTab === "gemini" && geminiFailedDetails.length ? (
@@ -624,7 +708,7 @@ export default function ReportPage() {
             ) : null}
 
             {citationLikeCategories.length && !citationLikeUnavailable ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {citationLikeCategories.map((category) => {
                 const hasIssues = category.failedChecks >= 1;
                 const isSkipped = category.status === "Skipped" || ("skippedChecks" in category && category.skippedChecks === category.totalChecks);
