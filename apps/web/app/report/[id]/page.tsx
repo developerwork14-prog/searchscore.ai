@@ -8,24 +8,205 @@ import { API_BASE, getReport, submitStrategyCall } from "@/lib/api";
 import { Button, Card } from "@/components/ui";
 
 function scoreColor(score: number) {
-  if (score < 40) return "text-coral";
-  if (score < 70) return "text-gold";
-  return "text-teal";
+  if (score < 50) return "text-[#e85d4f]";
+  if (score < 80) return "text-[#f4b942]";
+  return "text-[#0f766e]";
 }
 
 function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" }) {
   const classes = {
     neutral: "bg-ink/10 text-ink",
-    good: "bg-teal/10 text-teal ring-1 ring-teal/15",
-    warn: "bg-gold/25 text-ink ring-1 ring-gold/30",
-    bad: "bg-coral/10 text-coral ring-1 ring-coral/15"
+    good: "bg-[#0f766e]/10 text-[#0f766e] ring-1 ring-[#0f766e]/20",
+    warn: "bg-[#f4b942]/15 text-ink ring-1 ring-[#f4b942]/25",
+    bad: "bg-[#e85d4f]/10 text-[#e85d4f] ring-1 ring-[#e85d4f]/20"
   };
-  return <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-bold ${classes[tone]}`}>{children}</span>;
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${classes[tone]}`}>{children}</span>;
+}
+
+type AuditCategoryCardData = {
+  categoryName: string;
+  totalChecks: number;
+  failedChecks: number;
+  warningChecks?: number;
+  skippedChecks?: number;
+  score: number;
+  status: string;
+};
+
+type TabStatus = "passed" | "issues" | "attention";
+
+function categoryAccent(category: AuditCategoryCardData, isSkipped = false) {
+  if (isSkipped) return "border-l-[#f4b942]";
+  if (category.status === "Needs Attention") return "border-l-[#f4b942]";
+  if ((category.warningChecks ?? 0) > 0 || category.status === "Minor Attention") return "border-l-[#f4b942]";
+  if (category.failedChecks > 0) return "border-l-[#e85d4f]";
+  return "border-l-[#0f766e]";
+}
+
+function statusTextColor(status: string) {
+  if (status === "Passed") return "text-[#0f766e]";
+  if (status === "Needs Attention") return "text-[#f4b942]";
+  if (status === "Minor Attention") return "text-[#f4b942]";
+  if (status === "Skipped") return "text-ink/60";
+  return "text-[#e85d4f]";
+}
+
+function tabStatus(categories: AuditCategoryCardData[], unavailable = false): TabStatus {
+  if (unavailable || !categories.length || categories.some((category) => category.status === "Skipped")) return "attention";
+  if (categories.some((category) => category.failedChecks > 0 || category.status === "Needs Attention")) return "issues";
+  if (categories.some((category) => (category.warningChecks ?? 0) > 0 || category.status === "Minor Attention")) return "attention";
+  return "passed";
+}
+
+function statusDot(status: TabStatus) {
+  return status === "passed" ? "bg-[#0f766e]" : status === "issues" ? "bg-[#e85d4f]" : "bg-[#f4b942]";
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === "Passed") {
+    return (
+      <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M3.5 8.2 6.6 11 12.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (status === "Needs Attention" || status === "Minor Attention") {
+    return (
+      <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 2 14 13H2L8 2Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+        <path d="M8 6v3M8 11.5h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="m4.5 4.5 7 7M11.5 4.5l-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ScoreDonut({ score, dark = false }: { score: number; dark?: boolean }) {
+  const radius = 44;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (Math.max(0, Math.min(100, score)) / 100) * circumference;
+
+  return (
+    <div className="relative grid size-32 place-items-center">
+      <svg className="-rotate-90" width="128" height="128" viewBox="0 0 128 128" aria-hidden="true">
+        <circle cx="64" cy="64" r={radius} fill="none" stroke={dark ? "#263238" : "#e5e7eb"} strokeWidth="12" />
+        <circle
+          cx="64"
+          cy="64"
+          r={radius}
+          fill="none"
+          stroke="#f4b942"
+          strokeLinecap="round"
+          strokeWidth="12"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <span className={`absolute text-3xl font-black ${dark ? "text-white" : "text-ink"}`}>{score}%</span>
+    </div>
+  );
+}
+
+function SummaryScoreCard({
+  title,
+  score,
+  badges,
+  description,
+  dark = false
+}: {
+  title: string;
+  score: number;
+  badges: React.ReactNode;
+  description?: string;
+  dark?: boolean;
+}) {
+  return (
+    <Card className={`flex min-h-[260px] flex-col justify-between overflow-hidden p-6 ${dark ? "border-[#263238] bg-ink text-white" : "bg-white text-ink"}`}>
+      <div className="flex flex-1 flex-col items-center justify-center text-center">
+        <p className={`text-sm font-black ${dark ? "text-white/70" : "text-ink/60"}`}>{title}</p>
+        <div className="mt-4">
+          <ScoreDonut score={score} dark={dark} />
+        </div>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">{badges}</div>
+        {description ? <p className={`mt-4 text-sm leading-6 ${dark ? "text-white/66" : "text-ink/60"}`}>{description}</p> : null}
+      </div>
+      <div className={`mt-6 h-1 overflow-hidden rounded-full ${dark ? "bg-[#263238]" : "bg-black/10"}`}>
+        <div className="h-full rounded-full bg-[#f4b942]" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
+      </div>
+    </Card>
+  );
+}
+
+function AuditTabButton({ active, status, onClick, children }: { active: boolean; status: TabStatus; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-black transition ${
+        active
+          ? "border-ink bg-ink text-white"
+          : "border-black/10 bg-white text-ink/60 hover:bg-mist"
+      }`}
+    >
+      <span>{children}</span>
+      <span className={`size-2 rounded-full ${active ? "bg-white" : statusDot(status)}`} />
+    </button>
+  );
+}
+
+function AuditCategoryCard({
+  category,
+  badgeTone,
+  badgeLabel,
+  isSkipped = false,
+  statusLabel
+}: {
+  category: AuditCategoryCardData;
+  badgeTone: "neutral" | "good" | "warn" | "bad";
+  badgeLabel: string;
+  isSkipped?: boolean;
+  statusLabel: string;
+}) {
+  const hasIssues = category.failedChecks >= 1;
+
+  return (
+    <Card className={`border-l-4 ${categoryAccent(category, isSkipped)} p-5 transition hover:border-black/20 hover:shadow-soft`}>
+      <div className="flex min-h-14 items-start justify-between gap-3">
+        <h3 className="text-base font-black leading-6 text-ink">{category.categoryName}</h3>
+        <Badge tone={badgeTone}>{badgeLabel}</Badge>
+      </div>
+      <div className="mt-5 grid grid-cols-3 gap-3">
+        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Checks</p>
+          <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
+        </div>
+        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Issues</p>
+          <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-[#e85d4f]" : "text-[#0f766e]"}`}>{category.failedChecks}</p>
+        </div>
+        <div className="rounded-lg border border-black/10 bg-cloud p-3">
+          <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Score</p>
+          <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/60" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
+        </div>
+      </div>
+      <div className="mt-5 flex items-center justify-between rounded-lg bg-mist px-3 py-2">
+        <p className="text-[11px] font-black uppercase tracking-wide text-ink/60">Status</p>
+        <p className={`inline-flex items-center gap-1.5 text-sm font-black ${statusTextColor(statusLabel)}`}>
+          <StatusIcon status={statusLabel} />
+          {statusLabel}
+        </p>
+      </div>
+    </Card>
+  );
 }
 
 function EmptyAuditState({ title, message }: { title: string; message: string }) {
   return (
-    <Card className="p-6">
+    <Card className="border-black/10 bg-white p-6">
       <p className="text-sm font-black text-ink">{title}</p>
       <p className="mt-2 text-sm font-semibold leading-6 text-ink/60">{message}</p>
     </Card>
@@ -72,11 +253,11 @@ export default function ReportPage() {
   }
 
   if (error) {
-    return <main className="app-shell mx-auto min-h-screen max-w-3xl px-5 py-10"><Card className="p-6 font-semibold text-coral">{error}</Card></main>;
+    return <main className="mx-auto min-h-screen max-w-3xl bg-mist px-5 py-10"><Card className="p-6 font-semibold text-[#e85d4f]">{error}</Card></main>;
   }
 
   if (!report) {
-    return <main className="app-shell mx-auto min-h-screen max-w-3xl px-5 py-10"><Card className="p-6 font-semibold text-ink/70">Loading report...</Card></main>;
+    return <main className="mx-auto min-h-screen max-w-3xl bg-mist px-5 py-10"><Card className="p-6 font-semibold text-ink/60">Loading report...</Card></main>;
   }
 
   const technicalCategories = report.technical_categories ?? [];
@@ -149,124 +330,89 @@ export default function ReportPage() {
   const citationLikeUnavailable = categoriesUnavailable(citationLikeCategories);
   const geminiFailedDetails = geminiCategories.flatMap((category) => (category.failedCheckDetails ?? []).map((detail) => ({ ...detail, categoryName: category.categoryName })));
   const geoOpportunitiesFound = geoAeoAudit.opportunity_counts.high + geoAeoAudit.opportunity_counts.medium + geoAeoAudit.opportunity_counts.low;
-  const geoStatusTone = (status: string) => status === "Skipped" ? "neutral" : status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
+  const geoStatusTone = (status: string): "neutral" | "good" | "warn" | "bad" => status === "Skipped" ? "neutral" : status === "Passed" ? "good" : status === "Minor Attention" ? "warn" : "bad";
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
+  const auditTabs = [
+    { id: "technical" as const, label: "Technical Audit", status: tabStatus(technicalCategories) },
+    { id: "crawlability" as const, label: "Crawlability", status: tabStatus(crawlabilityCategories) },
+    { id: "structuredData" as const, label: "Structured data", status: tabStatus(structuredDataCategories, structuredDataUnavailable) },
+    { id: "imageSeo" as const, label: "Image SEO", status: tabStatus(imageSeoCategories, imageSeoUnavailable) },
+    { id: "eeat" as const, label: "EEAT Audit", status: tabStatus(eeatCategories, eeatUnavailable) },
+    { id: "trustSignals" as const, label: "Trust Signal", status: tabStatus(trustSignalsCategories, trustSignalsUnavailable) },
+    { id: "geo" as const, label: "GEO / AEO Audit", status: tabStatus(geoCategories, geoUnavailable) },
+    { id: "citation" as const, label: "ChatGPT Citation", status: tabStatus(citationCategories, categoriesUnavailable(citationCategories)) },
+    { id: "gemini" as const, label: "Gemini Citation", status: tabStatus(geminiCategories, categoriesUnavailable(geminiCategories)) },
+    { id: "indexability" as const, label: "Indexability", status: tabStatus(indexabilityAudit.categories, categoriesUnavailable(indexabilityAudit.categories)) }
+  ];
 
   return (
-    <main className="app-shell min-h-screen px-5 py-6">
+    <main className="min-h-screen bg-mist px-5 py-6 text-ink">
       <div className="mx-auto max-w-7xl">
-      <header className="mb-6 rounded-lg border border-black/10 bg-white/82 p-5 shadow-soft backdrop-blur md:p-6">
+      <header className="relative mb-6 overflow-hidden rounded-xl border border-black/10 border-l-4 border-l-[#f4b942] bg-white p-5 shadow-soft md:p-6">
+        <div className="absolute left-0 top-0 h-1 w-full bg-[#f4b942]" />
         <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="inline-flex items-center gap-2 rounded-md bg-mist px-3 py-2 text-sm font-black text-teal">
+          <p className="inline-flex items-center gap-2 rounded-full bg-mist px-3 py-2 text-sm font-black text-ink">
             <Sparkles className="size-4" />
             AI Visibility Report
           </p>
-          <h1 className="mt-4 text-3xl font-black md:text-5xl">{report.brand}</h1>
-          <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-ink/55" href={report.url} target="_blank">
+          <h1 className="mt-4 text-[28px] font-black leading-tight text-ink">{report.brand}</h1>
+          <a className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-ink/60" href={report.url} target="_blank">
             {report.url}
             <ExternalLink className="size-3" />
           </a>
+          <p className="mt-2 text-xs font-semibold text-ink/60">Last audited: just now</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => navigator.clipboard.writeText(window.location.href)}><Link2 className="size-4" />Share URL</Button>
+          <Button className="rounded-full bg-ink px-5 text-white hover:bg-[#263238]" onClick={() => navigator.clipboard.writeText(window.location.href)}><Link2 className="size-4" />Share URL</Button>
         </div>
         </div>
       </header>
 
       <section className="mb-6 grid gap-4 md:grid-cols-3">
-        <Card className="flex h-full flex-col overflow-hidden">
-          <div className="flex-1 bg-ink p-6 text-white">
-            <p className="text-sm font-bold text-mint">AI Visibility Score</p>
-            <p className={`mt-3 text-7xl font-black ${scoreColor(report.overall_score)}`}>{report.overall_score}%</p>
-            <div className="mt-4"><Badge tone={report.overall_score < 40 ? "bad" : report.overall_score < 70 ? "warn" : "good"}>{report.rating_label}</Badge></div>
-          </div>
-          <div className="min-h-24 p-5">
-            <p className="text-sm leading-6 text-ink/65">{report.rating_description}</p>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <p className="text-sm font-black text-ink/58">Technical Audit</p>
-          <p className={`mt-4 text-6xl font-black ${scoreColor(technicalAudit.score)}`}>{technicalAudit.score}%</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Badge tone={technicalAudit.score < 40 ? "bad" : technicalAudit.score < 70 ? "warn" : "good"}>Grade {technicalAudit.grade}</Badge>
-            <Badge tone={technicalAudit.issues_found > 0 ? "bad" : "good"}>{technicalAudit.issues_found} Issues Found</Badge>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <p className="text-sm font-black text-ink/58">GEO / AEO Audit</p>
-          <p className={`mt-4 text-6xl font-black ${scoreColor(geoAeoAudit.score)}`}>{geoAeoAudit.score}%</p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Badge tone={geoAeoAudit.score < 40 ? "bad" : geoAeoAudit.score < 70 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
-            <Badge tone={geoOpportunitiesFound > 0 ? "warn" : "good"}>{geoOpportunitiesFound} Opportunities Found</Badge>
-          </div>
-        </Card>
+        <SummaryScoreCard
+          dark
+          title="AI Visibility Score"
+          score={report.overall_score}
+          badges={<Badge tone={report.overall_score < 50 ? "bad" : report.overall_score < 80 ? "warn" : "good"}>{report.rating_label}</Badge>}
+          description={report.rating_description}
+        />
+        <SummaryScoreCard
+          title="Technical Audit"
+          score={technicalAudit.score}
+          badges={(
+            <>
+              <Badge tone={technicalAudit.score < 50 ? "bad" : technicalAudit.score < 80 ? "warn" : "good"}>Grade {technicalAudit.grade}</Badge>
+              <Badge tone={technicalAudit.issues_found > 0 ? "bad" : "good"}>{technicalAudit.issues_found} Issues Found</Badge>
+            </>
+          )}
+        />
+        <SummaryScoreCard
+          title="GEO / AEO Audit"
+          score={geoAeoAudit.score}
+          badges={(
+            <>
+              <Badge tone={geoAeoAudit.score < 50 ? "bad" : geoAeoAudit.score < 80 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
+              <Badge tone={geoOpportunitiesFound > 0 ? "warn" : "good"}>{geoOpportunitiesFound} Opportunities Found</Badge>
+            </>
+          )}
+        />
       </section>
 
       <section className="mb-6">
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <h2 className="text-xl font-black">Audit Categories</h2>
-          <div className="inline-flex w-full rounded-md border border-black/10 bg-white p-1 shadow-soft md:w-auto">
-            <button
-              onClick={() => setActiveAuditTab("technical")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "technical" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Technical Audit
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("crawlability")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "crawlability" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Crawlability
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("structuredData")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "structuredData" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Structured data
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("imageSeo")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "imageSeo" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Image SEO
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("eeat")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "eeat" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              EEAT Audit
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("trustSignals")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "trustSignals" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Trust Signal
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("geo")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "geo" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              GEO / AEO Audit
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("citation")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "citation" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              ChatGPT Citation
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("gemini")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "gemini" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Gemini Citation
-            </button>
-            <button
-              onClick={() => setActiveAuditTab("indexability")}
-              className={`min-h-10 flex-1 rounded px-4 text-sm font-black transition md:flex-none ${activeAuditTab === "indexability" ? "bg-ink text-white" : "text-ink/60 hover:bg-mist hover:text-ink"}`}
-            >
-              Indexability
-            </button>
+        <div className="mb-4 flex flex-col gap-3">
+          <h2 className="text-[13px] font-black uppercase tracking-wider text-ink/60">Audit Categories</h2>
+          <div className="flex w-full gap-2 overflow-x-auto whitespace-nowrap pb-1">
+            {auditTabs.map((tab) => (
+              <AuditTabButton
+                key={tab.id}
+                active={activeAuditTab === tab.id}
+                status={tab.status}
+                onClick={() => setActiveAuditTab(tab.id)}
+              >
+                {tab.label}
+              </AuditTabButton>
+            ))}
           </div>
         </div>
 
@@ -276,30 +422,13 @@ export default function ReportPage() {
               const hasIssues = category.failedChecks >= 1;
 
               return (
-                <Card key={category.categoryName} className="p-5">
-                  <div className="flex min-h-16 items-start justify-between gap-3">
-                    <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                    <Badge tone={hasIssues ? "bad" : "good"}>{hasIssues ? "Issues Found" : "Passed"}</Badge>
-                  </div>
-                  <div className="mt-5 grid grid-cols-3 gap-3">
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                      <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                      <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                      <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                    <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                    <p className={`text-sm font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.status}</p>
-                  </div>
-                </Card>
+                <AuditCategoryCard
+                  key={category.categoryName}
+                  category={category}
+                  badgeTone={hasIssues ? "bad" : "good"}
+                  badgeLabel={hasIssues ? "Issues Found" : "Passed"}
+                  statusLabel={category.status}
+                />
               );
             })}
           </div>
@@ -309,30 +438,13 @@ export default function ReportPage() {
               const hasIssues = category.failedChecks >= 1;
 
               return (
-                <Card key={category.categoryName} className="p-5">
-                  <div className="flex min-h-16 items-start justify-between gap-3">
-                    <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                    <Badge tone={hasIssues ? "bad" : "good"}>{hasIssues ? "Issues Found" : "Passed"}</Badge>
-                  </div>
-                  <div className="mt-5 grid grid-cols-3 gap-3">
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                      <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                      <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                      <p className={`mt-1 text-2xl font-black ${scoreColor(category.score)}`}>{category.score}%</p>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                    <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                    <p className={`text-sm font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.status}</p>
-                  </div>
-                </Card>
+                <AuditCategoryCard
+                  key={category.categoryName}
+                  category={category}
+                  badgeTone={hasIssues ? "bad" : "good"}
+                  badgeLabel={hasIssues ? "Issues Found" : "Passed"}
+                  statusLabel={category.status}
+                />
               );
             })}
           </div>
@@ -345,30 +457,14 @@ export default function ReportPage() {
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
-                    </div>
-                  </Card>
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
                 );
               })}
             </div>
@@ -387,30 +483,14 @@ export default function ReportPage() {
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
-                    </div>
-                  </Card>
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
                 );
               })}
             </div>
@@ -429,30 +509,14 @@ export default function ReportPage() {
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
-                    </div>
-                  </Card>
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
                 );
               })}
             </div>
@@ -471,30 +535,14 @@ export default function ReportPage() {
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
-                    </div>
-                  </Card>
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
                 );
               })}
             </div>
@@ -506,15 +554,20 @@ export default function ReportPage() {
           )
         ) : activeAuditTab === "geo" ? (
           <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-            <Card className="overflow-hidden">
-              <div className="bg-ink p-6 text-white">
-                <p className="text-sm font-bold text-mint">GEO / AEO Score</p>
-                <p className={`mt-3 text-7xl font-black ${scoreColor(geoAeoAudit.score)}`}>{geoAeoAudit.score}%</p>
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <Badge tone={geoAeoAudit.score < 40 ? "bad" : geoAeoAudit.score < 70 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
+            <Card className="min-h-[260px] overflow-hidden border-[#263238] bg-ink p-6 text-white">
+              <div className="flex h-full flex-col items-center justify-center text-center">
+                <p className="text-sm font-bold text-white/70">GEO / AEO Score</p>
+                <div className="mt-4">
+                  <ScoreDonut score={geoAeoAudit.score} dark />
+                </div>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  <Badge tone={geoAeoAudit.score < 50 ? "bad" : geoAeoAudit.score < 80 ? "warn" : "good"}>Grade {geoAeoAudit.grade}</Badge>
                   {geoAeoAudit.blocker_cap_applied ? <Badge tone="bad">Blocker Cap Applied</Badge> : null}
                 </div>
                 <p className="mt-4 text-sm font-semibold text-white/70">{geoAeoAudit.grade_description}</p>
+                <div className="mt-6 h-1 w-full overflow-hidden rounded-full bg-[#263238]">
+                  <div className="h-full rounded-full bg-[#f4b942]" style={{ width: `${Math.max(0, Math.min(100, geoAeoAudit.score))}%` }} />
+                </div>
               </div>
             </Card>
 
@@ -523,30 +576,14 @@ export default function ReportPage() {
                 {geoCategories.map((category) => {
                   const isSkipped = category.status === "Skipped";
                   return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={geoStatusTone(category.status)}>{isSkipped ? "Skipped" : category.status === "Passed" ? "Passed" : "Issues Found"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${category.failedChecks > 0 ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : category.status === "Passed" ? "text-teal" : category.status === "Minor Attention" ? "text-ink" : "text-coral"}`}>{category.status}</p>
-                    </div>
-                  </Card>
+                    <AuditCategoryCard
+                      key={category.categoryName}
+                      category={category}
+                      isSkipped={isSkipped}
+                      badgeTone={geoStatusTone(category.status)}
+                      badgeLabel={isSkipped ? "Skipped" : category.status === "Passed" ? "Passed" : "Issues Found"}
+                      statusLabel={category.status}
+                    />
                   );
                 })}
               </div>
@@ -558,14 +595,14 @@ export default function ReportPage() {
             )}
 
             <Card className="bg-ink p-6 text-white lg:col-span-2">
-              <p className="text-sm font-black uppercase text-mint">Unlock Full GEO / AEO Report</p>
+              <p className="text-sm font-black uppercase text-[#f4b942]">Unlock Full GEO / AEO Report</p>
               <ul className="mt-5 grid gap-2 text-sm font-semibold text-white/75 md:grid-cols-2">
                 {["Complete GEO issue breakdown", "AI visibility roadmap", "Entity optimization strategy", "FAQ & answer optimization plan", "Implementation recommendations"].map((item) => (
                   <li key={item}>✓ {item}</li>
                 ))}
               </ul>
               <a href={pdfExportUrl} download>
-                <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral md:w-auto">
+                <Button className="mt-6 w-full justify-center rounded-full bg-[#f4b942] text-ink hover:bg-[#f4b942] md:w-auto">
                   <Download className="size-4" />
                   Get My Full Report
                 </Button>
@@ -579,7 +616,7 @@ export default function ReportPage() {
                 <button
                   type="button"
                   onClick={() => setShowGeminiFailures((current) => !current)}
-                  className="min-h-10 rounded-md bg-ink px-4 text-sm font-black text-white transition hover:bg-teal"
+                  className="min-h-10 rounded-full bg-ink px-4 text-sm font-black text-white transition hover:bg-[#263238]"
                 >
                   {showGeminiFailures ? "Hide Failed Results" : "Show Failed Results"}
                 </button>
@@ -594,30 +631,14 @@ export default function ReportPage() {
                 const statusTone = isSkipped ? "neutral" : hasIssues ? "bad" : "good";
 
                 return (
-                  <Card key={category.categoryName} className="p-5">
-                    <div className="flex min-h-16 items-start justify-between gap-3">
-                      <h3 className="text-base font-black leading-6">{category.categoryName}</h3>
-                      <Badge tone={statusTone}>{isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}</Badge>
-                    </div>
-                    <div className="mt-5 grid grid-cols-3 gap-3">
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Checks</p>
-                        <p className="mt-1 text-2xl font-black text-ink">{category.totalChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Issues</p>
-                        <p className={`mt-1 text-2xl font-black ${hasIssues ? "text-coral" : "text-teal"}`}>{category.failedChecks}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-black uppercase text-ink/45">Score</p>
-                        <p className={`mt-1 text-2xl font-black ${isSkipped ? "text-ink/45" : scoreColor(category.score)}`}>{isSkipped ? "N/A" : `${category.score}%`}</p>
-                      </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-md bg-mist px-3 py-2">
-                      <p className="text-xs font-black uppercase text-ink/45">Status</p>
-                      <p className={`text-sm font-black ${isSkipped ? "text-ink/45" : hasIssues ? "text-coral" : "text-teal"}`}>{isSkipped ? "Skipped" : category.status}</p>
-                    </div>
-                  </Card>
+                  <AuditCategoryCard
+                    key={category.categoryName}
+                    category={category}
+                    isSkipped={isSkipped}
+                    badgeTone={statusTone}
+                    badgeLabel={isSkipped ? "Skipped" : hasIssues ? "Issues Found" : "Passed"}
+                    statusLabel={isSkipped ? "Skipped" : category.status}
+                  />
                 );
                 })}
               </div>
@@ -631,16 +652,16 @@ export default function ReportPage() {
             {activeAuditTab === "gemini" && showGeminiFailures && geminiFailedDetails.length ? (
               <div className="grid gap-3">
                 {geminiFailedDetails.map((detail) => (
-                  <div key={`${detail.categoryName}-${detail.id}`} className="rounded-md border border-black/10 bg-cloud p-4">
+                  <div key={`${detail.categoryName}-${detail.id}`} className="rounded-lg border border-black/10 bg-white p-4">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <p className="text-xs font-black uppercase text-ink/45">{detail.categoryName}</p>
+                        <p className="text-xs font-black uppercase text-ink/60">{detail.categoryName}</p>
                         <p className="mt-1 text-sm font-black text-ink">{detail.name}</p>
                         <p className="mt-1 text-sm font-semibold text-ink/60">{detail.evidence}</p>
                       </div>
                       <Badge tone={detail.severity === "BLOCKER" ? "bad" : detail.severity === "MAJOR" ? "warn" : "neutral"}>{detail.severity}</Badge>
                     </div>
-                    <p className="mt-3 text-sm font-semibold text-ink/75">{detail.recommendation}</p>
+                    <p className="mt-3 text-sm font-semibold text-ink">{detail.recommendation}</p>
                   </div>
                 ))}
               </div>
@@ -651,25 +672,25 @@ export default function ReportPage() {
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[1fr_360px]">
         <Card className="p-6">
-          <h2 className="text-xl font-black">Visibility Opportunities</h2>
+          <h2 className="text-xl font-black text-ink">Visibility Opportunities</h2>
           <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <div className="rounded-md border border-coral/15 bg-coral/10 p-4">
-              <p className="text-xs font-black uppercase text-ink/45">High Impact Opportunities</p>
-              <p className="mt-2 text-4xl font-black text-coral">{report.opportunity_counts.high}</p>
+            <div className="rounded-lg border border-[#e85d4f]/20 bg-[#e85d4f]/10 p-4">
+              <p className="text-xs font-black uppercase text-ink/60">High Impact Opportunities</p>
+              <p className="mt-2 text-4xl font-black text-[#e85d4f]">{report.opportunity_counts.high}</p>
             </div>
-            <div className="rounded-md border border-gold/30 bg-gold/20 p-4">
-              <p className="text-xs font-black uppercase text-ink/45">Medium Impact Opportunities</p>
+            <div className="rounded-lg border border-[#f4b942]/30 bg-[#f4b942]/15 p-4">
+              <p className="text-xs font-black uppercase text-ink/60">Medium Impact Opportunities</p>
               <p className="mt-2 text-4xl font-black text-ink">{report.opportunity_counts.medium}</p>
             </div>
-            <div className="rounded-md border border-black/10 bg-cloud p-4">
-              <p className="text-xs font-black uppercase text-ink/45">Low Impact Opportunities</p>
-              <p className="mt-2 text-4xl font-black text-teal">{report.opportunity_counts.low}</p>
+            <div className="rounded-lg border border-[#0f766e]/20 bg-[#0f766e]/10 p-4">
+              <p className="text-xs font-black uppercase text-ink/60">Low Impact Opportunities</p>
+              <p className="mt-2 text-4xl font-black text-[#0f766e]">{report.opportunity_counts.low}</p>
             </div>
           </div>
         </Card>
 
         <Card className="bg-ink p-6 text-white">
-          <p className="text-sm font-black uppercase text-mint">Unlock Your Complete AI Visibility Report</p>
+          <p className="text-sm font-black uppercase text-[#f4b942]">Unlock Your Complete AI Visibility Report</p>
           <h2 className="mt-3 text-2xl font-black leading-8">Our analysis identified {report.opportunity_counts.high} high-impact opportunities that may be limiting your visibility in AI-generated recommendations.</h2>
           <ul className="mt-5 space-y-2 text-sm font-semibold text-white/75">
             {["Complete issue breakdown", "Priority roadmap", "AI visibility strategy", "Page-level findings", "Implementation recommendations"].map((item) => (
@@ -677,7 +698,7 @@ export default function ReportPage() {
             ))}
           </ul>
           <a href={pdfExportUrl} download>
-            <Button className="mt-6 w-full justify-center bg-teal text-white hover:bg-coral">
+            <Button className="mt-6 w-full justify-center rounded-full bg-[#f4b942] text-ink hover:bg-[#f4b942]">
               <Download className="size-4" />
               Get My Full Report
             </Button>
@@ -685,7 +706,7 @@ export default function ReportPage() {
           <button
             type="button"
             onClick={() => setShowStrategyForm(true)}
-            className="mt-3 block w-full text-center text-sm font-black text-mint transition hover:text-white"
+            className="mt-3 block w-full text-center text-sm font-black text-[#f4b942] transition hover:text-white"
           >
             Schedule Strategy Call
           </button>
@@ -695,10 +716,10 @@ export default function ReportPage() {
       <section className="mb-6">
         <Card className="flex flex-col gap-4 bg-white p-6 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm font-black uppercase text-teal">Run another audit</p>
-            <h2 className="mt-2 text-2xl font-black">Generate a new visibility report</h2>
+            <p className="text-sm font-black uppercase text-[#f4b942]">Run another audit</p>
+            <h2 className="mt-2 text-2xl font-black text-ink">Generate a new visibility report</h2>
           </div>
-          <Button onClick={() => router.push("/")} className="w-full bg-ink text-white hover:bg-teal md:w-auto">
+          <Button onClick={() => router.push("/")} className="w-full rounded-full bg-ink text-white hover:bg-[#263238] md:w-auto">
             <Sparkles className="size-4" />
             Generate New Report
           </Button>
@@ -710,13 +731,13 @@ export default function ReportPage() {
           <Card className="w-full max-w-lg p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-sm font-black uppercase text-teal">Strategy Call</p>
-                <h2 className="mt-2 text-2xl font-black">Schedule Strategy Call</h2>
+                <p className="text-sm font-black uppercase text-[#f4b942]">Strategy Call</p>
+                <h2 className="mt-2 text-2xl font-black text-ink">Schedule Strategy Call</h2>
               </div>
               <button
                 type="button"
                 onClick={() => setShowStrategyForm(false)}
-                className="rounded-md bg-mist px-3 py-2 text-sm font-black text-ink/60 transition hover:bg-ink hover:text-white"
+                className="rounded-full bg-mist px-3 py-2 text-sm font-black text-ink/60 transition hover:bg-ink hover:text-white"
               >
                 Close
               </button>
@@ -727,7 +748,7 @@ export default function ReportPage() {
                 value={strategyForm.name}
                 onChange={(event) => setStrategyForm((current) => ({ ...current, name: event.target.value }))}
                 placeholder="Name"
-                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+                className="min-h-11 rounded-lg border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-[#f4b942] focus:ring-4 focus:ring-[#f4b942]/10"
               />
               <input
                 required
@@ -735,20 +756,20 @@ export default function ReportPage() {
                 value={strategyForm.email}
                 onChange={(event) => setStrategyForm((current) => ({ ...current, email: event.target.value }))}
                 placeholder="Email"
-                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+                className="min-h-11 rounded-lg border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-[#f4b942] focus:ring-4 focus:ring-[#f4b942]/10"
               />
               <input
                 required
                 value={strategyForm.phone}
                 onChange={(event) => setStrategyForm((current) => ({ ...current, phone: event.target.value }))}
                 placeholder="Phone"
-                className="min-h-11 rounded-md border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-teal focus:ring-4 focus:ring-teal/10"
+                className="min-h-11 rounded-lg border border-black/10 bg-white px-3 text-sm font-medium outline-none focus:border-[#f4b942] focus:ring-4 focus:ring-[#f4b942]/10"
               />
-              <Button disabled={isSubmittingStrategy} className="w-full bg-teal text-white hover:bg-coral">
+              <Button disabled={isSubmittingStrategy} className="w-full rounded-full bg-ink text-white hover:bg-[#263238]">
                 <CalendarCheck className="size-4" />
                 {isSubmittingStrategy ? "Submitting..." : "Submit Request"}
               </Button>
-              {strategyStatus ? <p className="text-sm font-semibold text-ink/65">{strategyStatus}</p> : null}
+              {strategyStatus ? <p className="text-sm font-semibold text-ink/60">{strategyStatus}</p> : null}
             </form>
           </Card>
         </div>

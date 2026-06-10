@@ -33,7 +33,7 @@ a {
 
 .progress-ring {
   background:
-    conic-gradient(from 180deg, #0f766e var(--progress), #d8e7e3 0),
+    conic-gradient(from 180deg, #f4b942 var(--progress), #d8e7e3 0),
     #d8e7e3;
 }
 
