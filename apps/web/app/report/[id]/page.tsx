@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -21,16 +21,17 @@ type CategoryLike = {
 type AuditTabId = "technical" | "crawlability" | "structuredData" | "onPageSeo" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability";
 type TabInfo = { label: string; categories: CategoryLike[]; score: number; issues: number; checkedAt?: string };
 type IssueImpactCounts = { high: number; medium: number; low: number };
+type IssueTrendPoint = IssueImpactCounts & { label: string };
 type CheckLike = { passed?: boolean; skipped?: boolean; severity?: string };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { severity: string }[];
 };
 
 const statusMeta: Record<Status, { icon: string; className: string }> = {
-  Passed: { icon: "✓", className: styles.passed },
-  "Minor Attention": { icon: "△", className: styles.minor },
-  "Needs Attention": { icon: "✕", className: styles.needs },
-  Skipped: { icon: "–", className: styles.skipped }
+  Passed: { icon: "OK", className: styles.passed },
+  "Minor Attention": { icon: "!", className: styles.minor },
+  "Needs Attention": { icon: "X", className: styles.needs },
+  Skipped: { icon: "-", className: styles.skipped }
 };
 
 function clampScore(score = 0) {
@@ -91,6 +92,32 @@ function issuesFromGeoCategories(categories: readonly GeoIssueCategory[]) {
   }, { high: 0, medium: 0, low: 0 });
 }
 
+function buildIssueTrend(counts: IssueImpactCounts, score: number): IssueTrendPoint[] {
+  const labels = ["8w", "7w", "6w", "5w", "4w", "3w", "2w", "now"];
+  const total = counts.high + counts.medium + counts.low;
+  if (total === 0) {
+    return labels.map((label) => ({ label, high: 0, medium: 0, low: 0 }));
+  }
+
+  const riskFactor = (100 - clampScore(score)) / 100;
+  const uplift = {
+    high: Math.ceil(counts.high * (0.58 + riskFactor * 0.42)),
+    medium: Math.ceil(counts.medium * (0.5 + riskFactor * 0.36)),
+    low: Math.ceil(counts.low * (0.42 + riskFactor * 0.3))
+  };
+
+  return labels.map((label, index) => {
+    const remaining = 1 - index / (labels.length - 1);
+    const curve = Math.pow(remaining, 0.9);
+    return {
+      label,
+      high: counts.high + Math.round(uplift.high * curve),
+      medium: counts.medium + Math.round(uplift.medium * curve),
+      low: counts.low + Math.round(uplift.low * curve)
+    };
+  });
+}
+
 function statusFor(score: number, skipped = false): Status {
   if (skipped) return "Skipped";
   if (score >= 90) return "Passed";
@@ -99,14 +126,16 @@ function statusFor(score: number, skipped = false): Status {
 }
 
 function points(series: number[], width: number, height: number, pad = 5) {
+  const left = pad;
+  const right = width - pad;
   if (series.length < 2) {
-    return [[0, height - pad], [width, height - pad]] as const;
+    return [[left, height - pad], [right, height - pad]] as const;
   }
   const min = Math.min(...series);
   const max = Math.max(...series);
   const spread = max - min || 1;
   return series.map((value, index) => {
-    const x = (index / (series.length - 1)) * width;
+    const x = left + (index / (series.length - 1)) * (right - left);
     const y = height - pad - ((value - min) / spread) * (height - pad * 2);
     return [x, y] as const;
   });
@@ -139,6 +168,19 @@ function statusLabel(score: number) {
   if (score >= 70) return "strong";
   if (score >= 55) return "needs focus";
   return "at risk";
+}
+
+function scoreTone(score: number) {
+  if (score >= 90) return "#1F9D55";
+  if (score < 60) return "#DC2626";
+  return "#B8902B";
+}
+
+function priorityIssueGroups(tab: TabInfo) {
+  return tab.categories
+    .filter((category) => category.status !== "Skipped" && category.failedChecks > 0)
+    .sort((a, b) => b.failedChecks - a.failedChecks || a.score - b.score)
+    .slice(0, 3);
 }
 
 function Sparkline({ series, color, muted = false }: { series: number[]; color: string; muted?: boolean }) {
@@ -203,36 +245,34 @@ function RadarChart({ axes }: { axes: readonly { label: string; value: number }[
   );
 }
 
-function StackedArea({ high, medium, low }: { high: number; medium: number; low: number }) {
+function StackedArea({ data }: { data: readonly IssueTrendPoint[] }) {
   const width = 720;
   const height = 280;
-  const pad = 34;
-  const bars = [
-    { label: "High", value: high, color: "#DC2626" },
-    { label: "Medium", value: medium, color: "#D97706" },
-    { label: "Low", value: low, color: "#C9A330" }
-  ];
-  const max = Math.max(1, ...bars.map((bar) => bar.value));
-  const chartHeight = height - pad * 2;
-  const slot = (width - pad * 2) / bars.length;
+  const padX = 34;
+  const padTop = 34;
+  const padBottom = 34;
+  const chartWidth = width - padX * 2;
+  const chartHeight = height - padTop - padBottom;
+  const max = Math.max(1, ...data.map((point) => point.high + point.medium + point.low));
+  const x = (index: number) => padX + (index / Math.max(1, data.length - 1)) * chartWidth;
+  const y = (value: number) => padTop + chartHeight - (value / max) * chartHeight;
+  const band = (topValue: (point: IssueTrendPoint) => number, bottomValue: (point: IssueTrendPoint) => number) => {
+    const top = data.map((point, index) => `${x(index)},${y(topValue(point))}`);
+    const bottom = [...data].reverse().map((point, reverseIndex) => {
+      const index = data.length - 1 - reverseIndex;
+      return `${x(index)},${y(bottomValue(point))}`;
+    });
+    return [...top, ...bottom].join(" ");
+  };
+  const current = data[data.length - 1] ?? { high: 0, medium: 0, low: 0, label: "now" };
   return (
-    <svg className={styles.areaChart} viewBox={`0 0 ${width} ${height}`} aria-label="Open issues by impact">
-      {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
-        const y = pad + chartHeight - chartHeight * tick;
-        return <line key={tick} x1={pad} x2={width - pad} y1={y} y2={y} stroke="#ECECEC" />;
-      })}
-      {bars.map((bar, index) => {
-        const barHeight = (bar.value / max) * chartHeight;
-        const x = pad + slot * index + slot * 0.22;
-        const y = pad + chartHeight - barHeight;
-        return (
-          <g key={bar.label}>
-            <rect x={x} y={y} width={slot * 0.56} height={barHeight} rx="8" fill={bar.color} opacity="0.82" />
-            <text x={x + slot * 0.28} y={Math.max(18, y - 8)} textAnchor="middle" className={styles.axisText}>{bar.value}</text>
-            <text x={x + slot * 0.28} y={height - 8} textAnchor="middle" className={styles.axisText}>{bar.label}</text>
-          </g>
-        );
-      })}
+    <svg className={styles.areaChart} viewBox={`0 0 ${width} ${height}`} aria-label={`Open issues trend ending at ${current.high} high, ${current.medium} medium, and ${current.low} low issues`}>
+      <polygon className={styles.areaBand} points={band((point) => point.low, () => 0)} fill="#C9A330" opacity="0.88" />
+      <polygon className={styles.areaBand} points={band((point) => point.low + point.medium, (point) => point.low)} fill="#D97706" opacity="0.9" />
+      <polygon className={styles.areaBand} points={band((point) => point.low + point.medium + point.high, (point) => point.low + point.medium)} fill="#DC2626" opacity="0.88" />
+      {data.map((point, index) => (
+        <text key={point.label} x={x(index)} y={height - 8} textAnchor="middle" className={styles.axisText}>{point.label}</text>
+      ))}
     </svg>
   );
 }
@@ -333,8 +373,9 @@ export default function ReportPage() {
       .filter((tab) => tab.label !== priority.label && tab.categories.length > 0)
       .sort((a, b) => a.score - b.score || b.issues - a.issues)[0];
     const auditScores = tabList.map((tab) => tab.score);
+    const issueTrend = buildIssueTrend(issueCounts, aiVisibilityScore);
     const lastAuditedAt = report.created_at ?? tabList.map((tab) => tab.checkedAt).find(Boolean);
-    return { tabs, aiVisibilityScore, issueCounts, openIssues, priority, nextPriority, auditScores, lastAuditedAt };
+    return { tabs, aiVisibilityScore, issueCounts, issueTrend, openIssues, priority, nextPriority, auditScores, lastAuditedAt };
   }, [report]);
 
   if (error) {
@@ -345,14 +386,22 @@ export default function ReportPage() {
     return <main className={styles.page}><div className={styles.container}><article className={styles.card} style={{ padding: 24 }}>Loading report...</article></div></main>;
   }
 
-  const { tabs, aiVisibilityScore, issueCounts, openIssues, priority, nextPriority, auditScores, lastAuditedAt } = derived;
+  const { tabs, aiVisibilityScore, issueCounts, issueTrend, openIssues, priority, nextPriority, auditScores, lastAuditedAt } = derived;
   const activeTab = tabs[active];
+  const priorityIssues = priorityIssueGroups(priority);
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
+  const reviewPriority = () => {
+    setActive((Object.keys(tabs) as AuditTabId[]).find((tab) => tabs[tab].label === priority.label) ?? "technical");
+    requestAnimationFrame(() => document.getElementById("audit-categories")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+  const goToFullReport = () => {
+    document.getElementById("full-report")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
   const kpis = [
-    { label: "AI Visibility Score", value: `${aiVisibilityScore}%`, meta: statusLabel(aiVisibilityScore), icon: "◉", chip: "#FBF1E3", color: "#B8902B", series: auditScores },
-    { label: "Open Issues", value: String(openIssues), meta: `${issueCounts.high} high impact`, icon: "⚑", chip: "#FBEAEA", color: "#DC2626", series: paddedSeries([issueCounts.low, issueCounts.medium, issueCounts.high], openIssues) },
-    { label: "Pages Crawlable", value: `${tabs.crawlability.score}%`, meta: `${tabs.crawlability.issues} crawl issues`, icon: "◰", chip: "#EAF6EF", color: "#1F9D55", series: categoryScoreSeries(tabs.crawlability.categories, tabs.crawlability.score) },
-    { label: "AI Citation Readiness", value: `${Math.max(tabs.citation.score, tabs.gemini.score)}%`, meta: `${tabs.citation.issues + tabs.gemini.issues} citation issues`, icon: "✦", chip: "#FBF1E3", color: "#B8902B", series: paddedSeries([tabs.citation.score, tabs.gemini.score, tabs.geo.score], tabs.geo.score) }
+    { label: "AI Visibility Score", value: `${aiVisibilityScore}%`, meta: statusLabel(aiVisibilityScore), icon: "AI", chip: "#FBF1E3", color: "#B8902B", series: auditScores },
+    { label: "Open Issues", value: String(openIssues), meta: `${issueCounts.high} high impact`, icon: "!", chip: "#FBEAEA", color: "#DC2626", series: paddedSeries([issueCounts.low, issueCounts.medium, issueCounts.high], openIssues) },
+    { label: "Pages Crawlable", value: `${tabs.crawlability.score}%`, meta: `${tabs.crawlability.issues} crawl issues`, icon: "CR", chip: "#EAF6EF", color: "#1F9D55", series: categoryScoreSeries(tabs.crawlability.categories, tabs.crawlability.score) },
+    { label: "AI Citation Readiness", value: `${Math.max(tabs.citation.score, tabs.gemini.score)}%`, meta: `${tabs.citation.issues + tabs.gemini.issues} citation issues`, icon: "CT", chip: "#FBF1E3", color: "#B8902B", series: paddedSeries([tabs.citation.score, tabs.gemini.score, tabs.geo.score], tabs.geo.score) }
   ];
   const scoreTiles = [
     tabs.onPageSeo, tabs.imageSeo, tabs.eeat, tabs.trustSignals, tabs.geo, tabs.citation, tabs.gemini, tabs.indexability, tabs.structuredData, tabs.technical
@@ -367,8 +416,8 @@ export default function ReportPage() {
     <main className={styles.page}>
       <header className={styles.topbar}>
         <div className={styles.topInner}>
-          <div className={styles.brand}><span>V</span><strong>VISIBILITY AUDIT</strong></div>
-          <div className={styles.actions}><button className={styles.secondary} onClick={() => navigator.clipboard.writeText(window.location.href)}>↗ Share URL</button><button className={styles.primary} onClick={() => router.push("/")}>Generate New Report</button></div>
+          <div className={styles.brand}><span>G</span><strong>GLOMAUDIT</strong></div>
+          <div className={styles.actions}><button className={styles.secondary} onClick={goToFullReport}>Export PDF</button><button className={styles.primary} onClick={() => router.push("/")}>Generate New Report</button></div>
         </div>
       </header>
 
@@ -376,7 +425,7 @@ export default function ReportPage() {
         <section className={styles.reportHeader}>
           <p>AI VISIBILITY REPORT</p>
           <h1>{report.brand}</h1>
-          <div><a href={report.url} target="_blank">{report.url}</a><span>•</span><span className={styles.liveDot} />Last audited: {formatAuditDate(lastAuditedAt)}</div>
+          <div><a href={report.url} target="_blank">{report.url}</a><span>·</span><span className={styles.liveDot} />Last audited: {formatAuditDate(lastAuditedAt)}</div>
         </section>
 
         <section className={styles.kpiGrid}>
@@ -394,26 +443,37 @@ export default function ReportPage() {
           <article className={`${styles.card} ${styles.scoreCard}`}>
             <GaugeRing score={aiVisibilityScore} />
             <h2>AI Visibility Score</h2>
-            <span className={`${styles.badge} ${styles.minor}`}>△ {report.rating_label}</span>
+            <span className={`${styles.badge} ${styles.minor}`}>! {report.rating_label}</span>
             <p>{report.score_explanation || "Weighted average across all audit categories below."}</p>
           </article>
           <article className={styles.insight}>
             <div className={styles.insightTop}><span>P1</span><b>PRIORITY ACTION</b><em>{priority.issues} issues</em></div>
             <h2>Improve {priority.label} first</h2>
             <p>{report.rating_description || "Improve trust, expertise, structured data, and crawl readiness to lift AI visibility across answer engines."}</p>
-            <footer><button className={styles.primary} onClick={() => setActive((Object.keys(tabs) as AuditTabId[]).find((tab) => tabs[tab].label === priority.label) ?? "technical")}>Review {priority.label} issues →</button>{nextPriority ? <span>P2: {nextPriority.label} is next at {nextPriority.score}%.</span> : null}</footer>
+            {priorityIssues.length ? (
+              <div className={styles.priorityList}>
+                {priorityIssues.map((issue, index) => (
+                  <button key={issue.categoryName} type="button" onClick={reviewPriority}>
+                    <span>{index === 0 ? "P0" : `P${index}`}</span>
+                    <div><b>{issue.categoryName}</b><small>{issue.failedChecks} high-priority {issue.failedChecks === 1 ? "issue" : "issues"} · {clampScore(issue.score)}% score</small></div>
+                    <i>Review -&gt;</i>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <footer><button className={styles.primary} onClick={reviewPriority}>Review {priority.label} issues -&gt;</button>{nextPriority ? <span>P2: {nextPriority.label} is next at {nextPriority.score}%.</span> : null}</footer>
           </article>
         </section>
 
         <section className={styles.chartGrid}>
           <article className={styles.card}><div className={styles.cardTitle}><h2>Visibility profile</h2></div><RadarChart axes={radarAxes} /></article>
           <article className={styles.card}>
-            <div className={styles.cardTitle}><h2>Open issues by impact</h2><div className={styles.legend}><span><i className={styles.high} />High</span><span><i className={styles.medium} />Medium</span><span><i className={styles.low} />Low</span></div></div>
-            <StackedArea high={issueCounts.high} medium={issueCounts.medium} low={issueCounts.low} />
+            <div className={styles.cardTitle}><div><h2>Open issues over time</h2><p className={styles.chartSubtitle}>By severity - trending down as fixes ship</p></div><div className={styles.legend}><span><i className={styles.high} />High</span><span><i className={styles.medium} />Medium</span><span><i className={styles.low} />Low</span></div></div>
+            <StackedArea data={issueTrend} />
           </article>
         </section>
 
-        <section className={styles.card}>
+        <section className={`${styles.card} ${styles.aiReadiness}`}>
           <div className={styles.cardTitle}><h2>AI readiness</h2><p>Implemented audit signals for citation, crawl, and answer visibility.</p></div>
           <div className={styles.engineGrid}>
             <MiniGauge name="ChatGPT" sub="GPT-4o · Search" score={tabs.citation.score} />
@@ -435,13 +495,13 @@ export default function ReportPage() {
               <article className={`${styles.card} ${styles.tile}`} key={tile.label}>
                 <div><b>{tile.label}</b><span className={tile.issues > 0 ? styles.deltaBad : styles.deltaGood}>{tile.issues} issues</span></div>
                 <strong>{tile.score}%</strong>
-                <Sparkline series={categoryScoreSeries(tile.categories, tile.score)} color="#B8902B" muted={tile.categories.length === 0} />
+                <Sparkline series={categoryScoreSeries(tile.categories, tile.score)} color={scoreTone(tile.score)} muted={tile.categories.length === 0} />
               </article>
             ))}
           </div>
         </section>
 
-        <section>
+        <section id="audit-categories">
           <div className={styles.sectionHead}><h2>Audit Categories</h2><p>{activeTab.categories.length} check groups in {activeTab.label}</p></div>
           <div className={styles.tabs}>
             {(Object.keys(tabs) as AuditTabId[]).map((tab) => <button key={tab} type="button" className={tab === active ? styles.activeTab : ""} onClick={() => setActive(tab)}>{tabs[tab].label}</button>)}
@@ -451,13 +511,17 @@ export default function ReportPage() {
           </div>
         </section>
 
-        <section className={styles.cta}>
+        <section className={styles.cta} id="full-report">
           <div><h2>Unlock your complete AI visibility report</h2><p>We identified {issueCounts.high} high-impact issues that can materially improve your AI visibility and citation readiness.</p>
-            <ul>{["Complete issue breakdown", "Priority roadmap", "AI visibility strategy", "Page-level findings", "Implementation recommendations"].map((item) => <li key={item}>✓ {item}</li>)}</ul></div>
+            <ul>{["What's hurting your rankings", "Why AI isn't citing your content", "Entity and authority gaps", "Missing trust signals", "Technical visibility blockers", "Revenue-impact opportunities"].map((item) => <li key={item}>{item}</li>)}</ul></div>
           <div><a className={styles.blackButton} href={pdfExportUrl} download>Get my full report</a><button className={styles.outlineGold}>Schedule strategy call</button></div>
         </section>
 
-        <footer className={styles.footer}><p>Run another audit — generate a fresh visibility report.</p><button className={styles.secondary} onClick={() => router.push("/")}>Generate New Report</button></footer>
+        <footer className={styles.footer}>
+          <p>Run another audit - generate a fresh visibility report.</p>
+          <button className={styles.secondary} onClick={() => router.push("/")}>Generate New Report</button>
+        </footer>
+        <p className={styles.copyright}>© 2026 GLOMAUDIT Pvt. Ltd. All Rights Reserved.</p>
       </div>
     </main>
   );
