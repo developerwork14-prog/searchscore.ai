@@ -1,7 +1,13 @@
 import {
   AiVisibilityReport,
+  PublicEeatAudit,
+  PublicImageSeoAudit,
+  PublicIndexabilityAudit,
   PublicGeoAeoAudit,
+  PublicOnPageSeoAudit,
+  PublicStructuredDataAudit,
   PublicTechnicalAudit,
+  PublicTrustSignalsAudit,
   StructuredAiVisibilityReport,
   StructuredImpact,
   StructuredMetricCategory,
@@ -84,8 +90,11 @@ function publicTechnicalAudit(report: AiVisibilityReport): PublicTechnicalAudit 
 
   return {
     score,
+    checked_at: report.createdAt,
     grade: auditGrade(score),
-    issues_found: issuesFound
+    issues_found: issuesFound,
+    checks: report.technicalChecks ?? [],
+    category_debug: report.technicalCategoryDebug
   };
 }
 
@@ -106,6 +115,7 @@ function publicGeoAeoAudit(report: AiVisibilityReport): PublicGeoAeoAudit {
 
   return {
     score: audit.score,
+    checked_at: audit.checkedAt,
     grade: audit.grade,
     grade_description: audit.gradeDescription,
     page_score: audit.pageScore,
@@ -116,15 +126,95 @@ function publicGeoAeoAudit(report: AiVisibilityReport): PublicGeoAeoAudit {
   };
 }
 
+function publicIndexabilityAudit(report: AiVisibilityReport): PublicIndexabilityAudit {
+  const audit = report.indexabilityAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicStructuredDataAudit(report: AiVisibilityReport): PublicStructuredDataAudit {
+  const audit = report.structuredDataAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicOnPageSeoAudit(report: AiVisibilityReport): PublicOnPageSeoAudit {
+  const audit = report.onPageSeoAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicImageSeoAudit(report: AiVisibilityReport): PublicImageSeoAudit {
+  const audit = report.imageSeoAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicEeatAudit(report: AiVisibilityReport): PublicEeatAudit {
+  const audit = report.eeatAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
+function publicTrustSignalsAudit(report: AiVisibilityReport): PublicTrustSignalsAudit {
+  const audit = report.trustSignalsAudit;
+  if (!audit) return { score: 0, issues_found: 0, categories: [], checks: [] };
+  return {
+    score: audit.score,
+    checked_at: audit.checkedAt,
+    issues_found: audit.categories.reduce((sum, category) => sum + category.failedChecks, 0),
+    categories: audit.categories,
+    checks: audit.checks
+  };
+}
+
 export function toStructuredAiVisibilityReport(report: AiVisibilityReport): StructuredAiVisibilityReport {
   const technicalAudit = publicTechnicalAudit(report);
   const geoAeoAudit = publicGeoAeoAudit(report);
+  const indexabilityAudit = publicIndexabilityAudit(report);
+  const structuredDataAudit = publicStructuredDataAudit(report);
+  const onPageSeoAudit = publicOnPageSeoAudit(report);
+  const imageSeoAudit = publicImageSeoAudit(report);
+  const eeatAudit = publicEeatAudit(report);
+  const trustSignalsAudit = publicTrustSignalsAudit(report);
   const overallScore = clamp(technicalAudit.score * 0.4 + geoAeoAudit.score * 0.6);
   const label = ratingLabel(overallScore);
   const opportunities = previewOpportunities(report);
   const category = playgroundCategory(report);
 
   return {
+    id: report.id,
+    created_at: report.createdAt,
     brand: report.brandName,
     url: report.websiteUrl,
     overall_score: overallScore,
@@ -141,6 +231,12 @@ export function toStructuredAiVisibilityReport(report: AiVisibilityReport): Stru
     technical_categories: report.technicalCategorySummaries ?? [],
     technical_audit: technicalAudit,
     geo_aeo_audit: geoAeoAudit,
+    indexability_audit: indexabilityAudit,
+    structured_data_audit: structuredDataAudit,
+    on_page_seo_audit: onPageSeoAudit,
+    image_seo_audit: imageSeoAudit,
+    eeat_audit: eeatAudit,
+    trust_signals_audit: trustSignalsAudit,
     playground_questions: [
       `What does ${report.brandName} offer in ${category}?`,
       `Is ${report.brandName} a trusted option for ${category}?`,

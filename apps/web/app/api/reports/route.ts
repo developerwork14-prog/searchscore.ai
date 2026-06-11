@@ -5,7 +5,7 @@ import { reportStore } from "@/lib/server/report-store";
 import { createdPublicReportView } from "@/lib/server/report-views";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 const reportInputSchema = z.object({
   brandName: z.string().min(2).max(120),
@@ -24,6 +24,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Invalid request", issues: error.flatten() }, { status: 400 });
     }
     console.error(error);
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
+    return NextResponse.json({
+      message: error instanceof Error ? error.message : "Internal server error"
+    }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import type { CreatedPublicReport, PlaygroundResult, ReportInput, StructuredAiVisibilityReport } from "@aiva/core";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+const REPORT_REQUEST_TIMEOUT_MS = 180000;
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -10,12 +11,24 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function createReport(input: ReportInput) {
-  const response = await fetch(`${API_BASE}/api/reports`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input)
-  });
-  return parseResponse<CreatedPublicReport>(response);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), REPORT_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE}/api/reports`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal: controller.signal
+    });
+    return parseResponse<CreatedPublicReport>(response);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("The scan took too long. Please try again with a smaller site or check the audit server logs.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export async function getReport(id: string) {

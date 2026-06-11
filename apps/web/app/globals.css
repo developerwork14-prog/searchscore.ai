@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -33,7 +35,7 @@ a {
 
 .progress-ring {
   background:
-    conic-gradient(from 180deg, #0f766e var(--progress), #d8e7e3 0),
+    conic-gradient(from 180deg, #f4b942 var(--progress), #d8e7e3 0),
     #d8e7e3;
 }
 
@@ -42,4 +44,12 @@ a {
     linear-gradient(rgba(16, 24, 32, 0.045) 1px, transparent 1px),
     linear-gradient(90deg, rgba(16, 24, 32, 0.045) 1px, transparent 1px);
   background-size: 42px 42px;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

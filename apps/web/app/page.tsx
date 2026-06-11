@@ -27,9 +27,9 @@ const statuses = [
 ];
 
 const channels = [
-  { label: "AI Answers", value: "42%", icon: Bot, tone: "bg-teal/10 text-teal" },
-  { label: "Search", value: "68%", icon: Search, tone: "bg-violet/10 text-violet" },
-  { label: "Local", value: "51%", icon: MapPin, tone: "bg-gold/25 text-ink" },
+  { label: "AI Answers", value: "42%", icon: Bot, tone: "bg-gold/25 text-ink" },
+  { label: "Search", value: "68%", icon: Search, tone: "bg-ink text-white" },
+  { label: "Local", value: "51%", icon: MapPin, tone: "bg-teal/10 text-teal" },
   { label: "Video", value: "34%", icon: Video, tone: "bg-coral/10 text-coral" }
 ];
 
@@ -74,8 +74,8 @@ export default function HomePage() {
         <Card className="overflow-hidden border-black/10">
           <div className="grid gap-0 lg:grid-cols-[340px_1fr]">
             <div className="bg-ink p-6 text-white md:p-10">
-              <div className="mb-8 inline-flex items-center gap-2 rounded-md bg-white/10 px-3 py-2 text-sm font-bold">
-                <Loader2 className="size-4 animate-spin text-mint" />
+              <div className="mb-8 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-sm font-bold">
+                <Loader2 className="size-4 animate-spin text-gold" />
                 Live scan running
               </div>
               <h1 className="text-3xl font-bold md:text-4xl">Building your visibility report</h1>
@@ -89,7 +89,7 @@ export default function HomePage() {
                 style={{ "--progress": `${progress}%` } as React.CSSProperties}
               >
                 <div className="flex size-40 flex-col items-center justify-center rounded-full bg-white">
-                  <Gauge className="mb-2 size-8 text-teal" />
+                  <Gauge className="mb-2 size-8 text-gold" />
                   <span className="text-4xl font-bold">{progress}%</span>
                 </div>
               </div>
@@ -99,14 +99,14 @@ export default function HomePage() {
                 <h2 className="text-2xl font-bold md:text-3xl">Analyzing visibility signals</h2>
                 <p className="mt-2 text-sm text-ink/60">Your report will open automatically when the scan completes.</p>
               </div>
-              <div className="mb-6 flex min-h-12 items-center gap-3 rounded-md border border-teal/15 bg-mist px-4 text-sm font-bold text-teal">
+              <div className="mb-6 flex min-h-12 items-center gap-3 rounded-lg border border-gold/30 bg-gold/15 px-4 text-sm font-bold text-ink">
                 <Loader2 className="size-4 animate-spin" />
                 {statuses[Math.floor(progress / 20) % statuses.length]}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {tasks.map((task, index) => (
                   <div key={task} className="flex items-center gap-3 text-sm">
-                    <span className={`flex size-6 items-center justify-center rounded-full ${index < completedTasks ? "bg-teal text-white" : "bg-ink/10 text-ink/40"}`}>
+                    <span className={`flex size-6 items-center justify-center rounded-full ${index < completedTasks ? "bg-gold text-ink" : "bg-ink/10 text-ink/40"}`}>
                       <Check className="size-4" />
                     </span>
                     {task}
@@ -126,12 +126,12 @@ export default function HomePage() {
       <div className="mx-auto grid min-h-[calc(100vh-48px)] max-w-7xl gap-6 lg:grid-cols-[1fr_460px] lg:items-center">
         <section>
           <div className="mb-6 flex flex-wrap items-center gap-3">
-            <div className="inline-flex items-center gap-2 rounded-md border border-teal/20 bg-white/80 px-3 py-2 text-sm font-bold text-teal shadow-soft">
+            <div className="inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/80 px-3 py-2 text-sm font-bold text-ink shadow-soft">
               <Gauge className="size-4" />
               AI Visibility Analyzer
             </div>
-            <div className="inline-flex items-center gap-2 rounded-md border border-black/10 bg-ink px-3 py-2 text-sm font-bold text-white">
-              <Sparkles className="size-4 text-mint" />
+            <div className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-ink px-3 py-2 text-sm font-bold text-white">
+              <Sparkles className="size-4 text-gold" />
               Multi-channel scoring
             </div>
           </div>
@@ -146,8 +146,8 @@ export default function HomePage() {
             {channels.map((channel) => {
               const Icon = channel.icon;
               return (
-                <div key={channel.label} className="rounded-lg border border-black/10 bg-white/82 p-4 shadow-soft backdrop-blur">
-                  <div className={`mb-4 flex size-10 items-center justify-center rounded-md ${channel.tone}`}>
+                <div key={channel.label} className="rounded-lg border border-black/10 bg-white/92 p-4 shadow-soft backdrop-blur transition hover:border-black/20">
+                  <div className={`mb-4 flex size-10 items-center justify-center rounded-lg ${channel.tone}`}>
                     <Icon className="size-5" />
                   </div>
                   <p className="text-3xl font-black">{channel.value}</p>
@@ -159,8 +159,8 @@ export default function HomePage() {
 
           <div className="mt-6 grid max-w-4xl gap-3 md:grid-cols-3">
             {["Prompt gaps", "Category signals", "Revenue risk"].map((item, index) => (
-              <div key={item} className="flex items-center gap-3 rounded-lg border border-black/10 bg-white/70 p-3 text-sm font-bold text-ink/72">
-                <span className="flex size-8 items-center justify-center rounded-md bg-mist text-teal">{index + 1}</span>
+              <div key={item} className="flex items-center gap-3 rounded-lg border border-black/10 bg-white/82 p-3 text-sm font-bold text-ink/72 shadow-soft backdrop-blur">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-gold/25 text-ink">{index + 1}</span>
                 {item}
               </div>
             ))}
@@ -169,7 +169,7 @@ export default function HomePage() {
 
         <Card className="overflow-hidden">
           <div className="border-b border-black/10 bg-ink p-6 text-white">
-            <p className="text-sm font-bold text-mint">Start a visibility audit</p>
+            <p className="text-sm font-bold text-gold">Start a visibility audit</p>
             <h2 className="mt-2 text-2xl font-black">Generate your report</h2>
             <p className="mt-2 text-sm leading-6 text-white/64">Enter a brand and website to model how discovery surfaces currently understand you.</p>
           </div>
@@ -187,14 +187,14 @@ export default function HomePage() {
             <Input type="email" value={businessEmail} onChange={(event) => setBusinessEmail(event.target.value)} placeholder="you@company.com" required />
           </div>
           {error ? <p className="rounded-md bg-coral/10 px-3 py-2 text-sm font-medium text-coral">{error}</p> : null}
-          <Button className="w-full" type="submit">
+          <Button className="w-full rounded-full bg-gold text-ink hover:bg-gold" type="submit">
             Generate Report
             <ArrowRight className="size-4" />
           </Button>
           <div className="grid grid-cols-3 gap-2 pt-1 text-center">
             {["AI", "SEO", "GEO"].map((label) => (
-              <div key={label} className="rounded-md bg-mist px-2 py-3">
-                <p className="text-xs font-black text-teal">{label}</p>
+              <div key={label} className="rounded-lg border border-gold/20 bg-gold/10 px-2 py-3">
+                <p className="text-xs font-black text-ink">{label}</p>
                 <p className="mt-1 text-[11px] font-semibold text-ink/48">included</p>
               </div>
             ))}
