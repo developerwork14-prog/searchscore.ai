@@ -369,6 +369,7 @@ export interface TrustSignalsAuditResult {
 
 export interface PublicIndexabilityAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: IndexabilityCategorySummary[];
   checks: IndexabilityCheckResult[];
@@ -376,6 +377,7 @@ export interface PublicIndexabilityAudit {
 
 export interface PublicImageSeoAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: ImageSeoCategorySummary[];
   checks: ImageSeoCheckResult[];
@@ -383,6 +385,7 @@ export interface PublicImageSeoAudit {
 
 export interface PublicEeatAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: EeatCategorySummary[];
   checks: EeatCheckResult[];
@@ -390,6 +393,7 @@ export interface PublicEeatAudit {
 
 export interface PublicTrustSignalsAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: TrustSignalsCategorySummary[];
   checks: TrustSignalsCheckResult[];
@@ -397,6 +401,7 @@ export interface PublicTrustSignalsAudit {
 
 export interface PublicStructuredDataAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: StructuredDataCategorySummary[];
   checks: StructuredDataCheckResult[];
@@ -404,6 +409,7 @@ export interface PublicStructuredDataAudit {
 
 export interface PublicOnPageSeoAudit {
   score: number;
+  checked_at?: string;
   issues_found: number;
   categories: OnPageSeoCategorySummary[];
   checks: OnPageSeoCheckResult[];
@@ -411,6 +417,7 @@ export interface PublicOnPageSeoAudit {
 
 export interface PublicGeoAeoAudit {
   score: number;
+  checked_at?: string;
   grade: GeoAeoGrade;
   grade_description: string;
   page_score: number;
@@ -422,6 +429,7 @@ export interface PublicGeoAeoAudit {
 
 export interface PublicTechnicalAudit {
   score: number;
+  checked_at?: string;
   grade: GeoAeoGrade;
   issues_found: number;
   checks: PublicTechnicalCheck[];
@@ -507,6 +515,8 @@ export interface StructuredOpportunity {
 }
 
 export interface StructuredAiVisibilityReport {
+  id?: string;
+  created_at?: string;
   brand: string;
   url: string;
   overall_score: number;

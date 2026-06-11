@@ -109,6 +109,39 @@
   padding: 32px 0 40px;
 }
 
+.reportHeader,
+.kpi,
+.heroGrid,
+.chartGrid,
+.engineGrid,
+.opportunities,
+.sectionHead,
+.tile,
+.tabs,
+.auditCard,
+.cta,
+.footer {
+  animation: fadeUp 420ms ease both;
+}
+
+.kpi:nth-child(2),
+.tile:nth-child(2),
+.auditCard:nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.kpi:nth-child(3),
+.tile:nth-child(3),
+.auditCard:nth-child(3) {
+  animation-delay: 90ms;
+}
+
+.kpi:nth-child(4),
+.tile:nth-child(4),
+.auditCard:nth-child(4) {
+  animation-delay: 135ms;
+}
+
 .reportHeader {
   margin: 8px 0 24px;
 }
@@ -145,13 +178,14 @@
   height: 8px;
   border-radius: 999px;
   background: #1F9D55;
+  animation: livePulse 1800ms ease-in-out infinite;
 }
 
 .card {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--card);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .card:hover,
@@ -161,6 +195,18 @@
 .outlineGold:hover {
   border-color: var(--border-hover);
   box-shadow: 0 1px 3px rgba(17, 17, 17, 0.05);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+}
+
+.primary:active,
+.secondary:active,
+.blackButton:active,
+.outlineGold:active,
+.tabs button:active {
+  transform: translateY(1px);
 }
 
 .kpiGrid {
@@ -219,6 +265,16 @@
   margin-right: -18px;
 }
 
+.sparkline polygon {
+  animation: chartFade 520ms ease 120ms both;
+}
+
+.sparkline polyline {
+  stroke-dasharray: 320;
+  stroke-dashoffset: 320;
+  animation: drawLine 760ms ease 120ms both;
+}
+
 .heroGrid,
 .chartGrid {
   display: grid;
@@ -237,6 +293,11 @@
 .bigGauge {
   width: 200px;
   height: 200px;
+}
+
+.bigGauge circle:nth-of-type(2),
+.miniGauge path:nth-of-type(2) {
+  animation: drawGauge 900ms ease 180ms both;
 }
 
 .gaugeText {
@@ -401,6 +462,22 @@
   height: auto;
 }
 
+.radar polygon:last-of-type {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: radarIn 620ms ease 160ms both;
+}
+
+.radar circle {
+  animation: dotPop 420ms ease 520ms both;
+}
+
+.areaChart rect {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: barGrow 640ms ease 160ms both;
+}
+
 .radarLabel,
 .axisText {
   fill: #666;
@@ -547,6 +624,7 @@
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
 .tabs .activeTab {
@@ -596,6 +674,8 @@
   height: 100%;
   border-radius: inherit;
   background: var(--chart-gold);
+  transform-origin: left;
+  animation: progressFill 620ms ease 120ms both;
 }
 
 .cta {
@@ -648,6 +728,132 @@
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 13px;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(31, 157, 85, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(31, 157, 85, 0);
+  }
+}
+
+@keyframes chartFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drawLine {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes drawGauge {
+  from {
+    stroke-dashoffset: 560;
+  }
+}
+
+@keyframes radarIn {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dotPop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes barGrow {
+  from {
+    transform: scaleY(0.08);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes progressFill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reportHeader,
+  .kpi,
+  .heroGrid,
+  .chartGrid,
+  .engineGrid,
+  .opportunities,
+  .sectionHead,
+  .tile,
+  .tabs,
+  .auditCard,
+  .cta,
+  .footer,
+  .liveDot,
+  .sparkline polygon,
+  .sparkline polyline,
+  .bigGauge circle:nth-of-type(2),
+  .miniGauge path:nth-of-type(2),
+  .radar polygon:last-of-type,
+  .radar circle,
+  .areaChart rect,
+  .progress i {
+    animation: none;
+  }
+
+  .card,
+  .primary,
+  .secondary,
+  .blackButton,
+  .outlineGold,
+  .tabs button {
+    transition: none;
+  }
+
+  .card:hover,
+  .primary:active,
+  .secondary:active,
+  .blackButton:active,
+  .outlineGold:active,
+  .tabs button:active {
+    transform: none;
+  }
 }
 
 @media (max-width: 1023px) {

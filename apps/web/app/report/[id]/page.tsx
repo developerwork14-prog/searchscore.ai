@@ -11,12 +11,20 @@ type Status = "Passed" | "Minor Attention" | "Needs Attention" | "Skipped";
 type CategoryLike = {
   categoryName: string;
   totalChecks: number;
+  passedChecks?: number;
   failedChecks: number;
+  warningChecks?: number;
   score: number;
   status: string;
   skippedChecks?: number;
 };
 type AuditTabId = "technical" | "crawlability" | "structuredData" | "onPageSeo" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability";
+type TabInfo = { label: string; categories: CategoryLike[]; score: number; issues: number; checkedAt?: string };
+type IssueImpactCounts = { high: number; medium: number; low: number };
+type CheckLike = { passed?: boolean; skipped?: boolean; severity?: string };
+type GeoIssueCategory = CategoryLike & {
+  failedCheckDetails?: { severity: string }[];
+};
 
 const statusMeta: Record<Status, { icon: string; className: string }> = {
   Passed: { icon: "✓", className: styles.passed },
@@ -40,6 +48,49 @@ function issueCount(categories: CategoryLike[]) {
   return categories.reduce((sum, category) => sum + category.failedChecks, 0);
 }
 
+function mergeIssueCounts(...counts: IssueImpactCounts[]) {
+  return counts.reduce<IssueImpactCounts>(
+    (total, count) => ({
+      high: total.high + count.high,
+      medium: total.medium + count.medium,
+      low: total.low + count.low
+    }),
+    { high: 0, medium: 0, low: 0 }
+  );
+}
+
+function impactForSeverity(severity = ""): keyof IssueImpactCounts {
+  if (/blocker|critical|high|major/i.test(severity)) return "high";
+  if (/medium|minor/i.test(severity)) return "medium";
+  return "low";
+}
+
+function issuesFromChecks(checks: readonly CheckLike[] | undefined, categories: readonly CategoryLike[] = []) {
+  if (checks?.length) {
+    return checks.reduce<IssueImpactCounts>((counts, check) => {
+      if (check.passed || check.skipped) return counts;
+      counts[impactForSeverity(check.severity)] += 1;
+      return counts;
+    }, { high: 0, medium: 0, low: 0 });
+  }
+
+  return { high: 0, medium: issueCount([...categories]), low: 0 };
+}
+
+function issuesFromGeoCategories(categories: readonly GeoIssueCategory[]) {
+  return categories.reduce<IssueImpactCounts>((counts, category) => {
+    if (category.failedCheckDetails?.length) {
+      for (const detail of category.failedCheckDetails) {
+        counts[impactForSeverity(detail.severity)] += 1;
+      }
+      return counts;
+    }
+
+    counts.medium += category.failedChecks;
+    return counts;
+  }, { high: 0, medium: 0, low: 0 });
+}
+
 function statusFor(score: number, skipped = false): Status {
   if (skipped) return "Skipped";
   if (score >= 90) return "Passed";
@@ -48,6 +99,9 @@ function statusFor(score: number, skipped = false): Status {
 }
 
 function points(series: number[], width: number, height: number, pad = 5) {
+  if (series.length < 2) {
+    return [[0, height - pad], [width, height - pad]] as const;
+  }
   const min = Math.min(...series);
   const max = Math.max(...series);
   const spread = max - min || 1;
@@ -58,8 +112,33 @@ function points(series: number[], width: number, height: number, pad = 5) {
   });
 }
 
-function trendTo(value: number, lift = 14) {
-  return [value - lift, value - lift + 2, value - lift + 1, value - 9, value - 7, value - 5, value - 4, value - 2, value - 3, value - 1, value, value].map(clampScore);
+function paddedSeries(series: number[], fallback = 0) {
+  const values = series.filter(Number.isFinite).map(clampScore);
+  if (values.length >= 2) return values;
+  const value = values[0] ?? clampScore(fallback);
+  return [value, value];
+}
+
+function categoryScoreSeries(categories: CategoryLike[], fallback: number) {
+  return paddedSeries(categories.map((category) => category.score), fallback);
+}
+
+function formatAuditDate(value?: string) {
+  if (!value) return "Audit date unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Audit date unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function tabMeta(label: string, categories: CategoryLike[], score?: number, checkedAt?: string): TabInfo {
+  return { label, categories, score: clampScore(score), issues: issueCount(categories), checkedAt };
+}
+
+function statusLabel(score: number) {
+  if (score >= 90) return "excellent";
+  if (score >= 70) return "strong";
+  if (score >= 55) return "needs focus";
+  return "at risk";
 }
 
 function Sparkline({ series, color, muted = false }: { series: number[]; color: string; muted?: boolean }) {
@@ -125,26 +204,35 @@ function RadarChart({ axes }: { axes: readonly { label: string; value: number }[
 }
 
 function StackedArea({ high, medium, low }: { high: number; medium: number; low: number }) {
-  const highSeries = trendTo(high, 26);
-  const mediumSeries = trendTo(medium, 26);
-  const lowSeries = trendTo(low, 22);
   const width = 720;
   const height = 280;
-  const pad = 28;
-  const max = Math.max(1, ...highSeries.map((v, i) => v + mediumSeries[i] + lowSeries[i])) * 1.05;
-  const y = (v: number) => height - pad - (v / max) * (height - pad * 2);
-  const x = (i: number) => pad + (i / (highSeries.length - 1)) * (width - pad * 2);
-  const band = (top: number[], bottom: number[]) => `${top.map((v, i) => `${x(i)},${y(v)}`).join(" ")} ${bottom.map((v, i) => `${x(i)},${y(v)}`).reverse().join(" ")}`;
-  const hTop = highSeries;
-  const mTop = highSeries.map((v, i) => v + mediumSeries[i]);
-  const lTop = mTop.map((v, i) => v + lowSeries[i]);
-  const zero = highSeries.map(() => 0);
+  const pad = 34;
+  const bars = [
+    { label: "High", value: high, color: "#DC2626" },
+    { label: "Medium", value: medium, color: "#D97706" },
+    { label: "Low", value: low, color: "#C9A330" }
+  ];
+  const max = Math.max(1, ...bars.map((bar) => bar.value));
+  const chartHeight = height - pad * 2;
+  const slot = (width - pad * 2) / bars.length;
   return (
-    <svg className={styles.areaChart} viewBox={`0 0 ${width} ${height}`} aria-label="Open issues over time">
-      <polygon points={band(lTop, mTop)} fill="#C9A330" opacity="0.68" />
-      <polygon points={band(mTop, hTop)} fill="#D97706" opacity="0.72" />
-      <polygon points={band(hTop, zero)} fill="#DC2626" opacity="0.78" />
-      {["8w", "7w", "6w", "5w", "4w", "3w", "2w", "now"].map((label, i) => <text key={label} x={x(i)} y={height - 6} textAnchor="middle" className={styles.axisText}>{label}</text>)}
+    <svg className={styles.areaChart} viewBox={`0 0 ${width} ${height}`} aria-label="Open issues by impact">
+      {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+        const y = pad + chartHeight - chartHeight * tick;
+        return <line key={tick} x1={pad} x2={width - pad} y1={y} y2={y} stroke="#ECECEC" />;
+      })}
+      {bars.map((bar, index) => {
+        const barHeight = (bar.value / max) * chartHeight;
+        const x = pad + slot * index + slot * 0.22;
+        const y = pad + chartHeight - barHeight;
+        return (
+          <g key={bar.label}>
+            <rect x={x} y={y} width={slot * 0.56} height={barHeight} rx="8" fill={bar.color} opacity="0.82" />
+            <text x={x + slot * 0.28} y={Math.max(18, y - 8)} textAnchor="middle" className={styles.axisText}>{bar.value}</text>
+            <text x={x + slot * 0.28} y={height - 8} textAnchor="middle" className={styles.axisText}>{bar.label}</text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -208,27 +296,45 @@ export default function ReportPage() {
     const citation = geoAll.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
     const gemini = geoAll.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
     const crawlability = technical.filter((category) => ["Robots.txt & Sitemap", "Indexability & Crawlability", "Internal Linking", "AI Crawl Readiness"].includes(category.categoryName));
-    const tabs: Record<AuditTabId, { label: string; categories: CategoryLike[]; score: number }> = {
-      technical: { label: "Technical Audit", categories: technical, score: clampScore(report.technical_audit?.score) },
-      crawlability: { label: "Crawlability", categories: crawlability, score: scoreFromCategories(crawlability) },
-      structuredData: { label: "Structured data", categories: report.structured_data_audit?.categories ?? [], score: clampScore(report.structured_data_audit?.score) },
-      onPageSeo: { label: "On-Page SEO", categories: report.on_page_seo_audit?.categories ?? [], score: clampScore(report.on_page_seo_audit?.score) },
-      imageSeo: { label: "Image SEO", categories: report.image_seo_audit?.categories ?? [], score: clampScore(report.image_seo_audit?.score) },
-      eeat: { label: "EEAT Audit", categories: report.eeat_audit?.categories ?? [], score: clampScore(report.eeat_audit?.score) },
-      trustSignals: { label: "Trust Signal", categories: report.trust_signals_audit?.categories ?? [], score: clampScore(report.trust_signals_audit?.score) },
-      geo: { label: "GEO / AEO Audit", categories: geo, score: scoreFromCategories(geo, report.geo_aeo_audit?.score) },
-      citation: { label: "ChatGPT Citation", categories: citation, score: scoreFromCategories(citation) },
-      gemini: { label: "Gemini Citation", categories: gemini, score: scoreFromCategories(gemini) },
-      indexability: { label: "Indexability", categories: report.indexability_audit?.categories ?? [], score: clampScore(report.indexability_audit?.score) }
+    const tabs: Record<AuditTabId, TabInfo> = {
+      technical: tabMeta("Technical Audit", technical, report.technical_audit?.score, report.technical_audit?.checked_at ?? report.created_at),
+      crawlability: tabMeta("Crawlability", crawlability, scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
+      structuredData: tabMeta("Structured data", report.structured_data_audit?.categories ?? [], report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
+      onPageSeo: tabMeta("On-Page SEO", report.on_page_seo_audit?.categories ?? [], report.on_page_seo_audit?.score, report.on_page_seo_audit?.checked_at),
+      imageSeo: tabMeta("Image SEO", report.image_seo_audit?.categories ?? [], report.image_seo_audit?.score, report.image_seo_audit?.checked_at),
+      eeat: tabMeta("EEAT Audit", report.eeat_audit?.categories ?? [], report.eeat_audit?.score, report.eeat_audit?.checked_at),
+      trustSignals: tabMeta("Trust Signal", report.trust_signals_audit?.categories ?? [], report.trust_signals_audit?.score, report.trust_signals_audit?.checked_at),
+      geo: tabMeta("GEO / AEO Audit", geo, scoreFromCategories(geo, report.geo_aeo_audit?.score), report.geo_aeo_audit?.checked_at),
+      citation: tabMeta("ChatGPT Citation", citation, scoreFromCategories(citation), report.geo_aeo_audit?.checked_at),
+      gemini: tabMeta("Gemini Citation", gemini, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
+      indexability: tabMeta("Indexability", report.indexability_audit?.categories ?? [], report.indexability_audit?.score, report.indexability_audit?.checked_at)
     };
     const scores = [
       tabs.onPageSeo.score, tabs.imageSeo.score, tabs.eeat.score, tabs.trustSignals.score, tabs.geo.score,
       tabs.citation.score, tabs.gemini.score, tabs.indexability.score, tabs.structuredData.score, tabs.technical.score
     ];
     const aiVisibilityScore = clampScore(report.overall_score || scores.reduce((sum, score) => sum + score, 0) / scores.length);
-    const issueCounts = report.opportunity_counts ?? report.geo_aeo_audit?.opportunity_counts ?? { high: 0, medium: 0, low: 0 };
-    const openIssues = issueCounts.high + issueCounts.medium + issueCounts.low || Object.values(tabs).reduce((sum, tab) => sum + issueCount(tab.categories), 0);
-    return { tabs, aiVisibilityScore, issueCounts, openIssues };
+    const issueCounts = mergeIssueCounts(
+      issuesFromChecks(report.technical_audit?.checks, technical),
+      issuesFromGeoCategories(geoAll as GeoIssueCategory[]),
+      issuesFromChecks(report.indexability_audit?.checks, report.indexability_audit?.categories),
+      issuesFromChecks(report.structured_data_audit?.checks, report.structured_data_audit?.categories),
+      issuesFromChecks(report.on_page_seo_audit?.checks, report.on_page_seo_audit?.categories),
+      issuesFromChecks(report.image_seo_audit?.checks, report.image_seo_audit?.categories),
+      issuesFromChecks(report.eeat_audit?.checks, report.eeat_audit?.categories),
+      issuesFromChecks(report.trust_signals_audit?.checks, report.trust_signals_audit?.categories)
+    );
+    const tabList = Object.values(tabs);
+    const openIssues = issueCounts.high + issueCounts.medium + issueCounts.low;
+    const priority = tabList
+      .filter((tab) => tab.categories.length > 0)
+      .sort((a, b) => a.score - b.score || b.issues - a.issues)[0] ?? tabs.technical;
+    const nextPriority = tabList
+      .filter((tab) => tab.label !== priority.label && tab.categories.length > 0)
+      .sort((a, b) => a.score - b.score || b.issues - a.issues)[0];
+    const auditScores = tabList.map((tab) => tab.score);
+    const lastAuditedAt = report.created_at ?? tabList.map((tab) => tab.checkedAt).find(Boolean);
+    return { tabs, aiVisibilityScore, issueCounts, openIssues, priority, nextPriority, auditScores, lastAuditedAt };
   }, [report]);
 
   if (error) {
@@ -239,20 +345,18 @@ export default function ReportPage() {
     return <main className={styles.page}><div className={styles.container}><article className={styles.card} style={{ padding: 24 }}>Loading report...</article></div></main>;
   }
 
-  const { tabs, aiVisibilityScore, issueCounts, openIssues } = derived;
+  const { tabs, aiVisibilityScore, issueCounts, openIssues, priority, nextPriority, auditScores, lastAuditedAt } = derived;
   const activeTab = tabs[active];
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
   const kpis = [
-    { label: "AI Visibility Score", value: `${aiVisibilityScore}%`, delta: "▲ live", icon: "◉", chip: "#FBF1E3", color: "#B8902B", series: trendTo(aiVisibilityScore) },
-    { label: "Open Issues", value: String(openIssues), delta: "▼ prioritized", icon: "⚑", chip: "#FBEAEA", color: "#DC2626", series: trendTo(openIssues, 24) },
-    { label: "Pages Crawlable", value: `${tabs.crawlability.score}%`, delta: "▲ audit", icon: "◰", chip: "#EAF6EF", color: "#1F9D55", series: trendTo(tabs.crawlability.score) },
-    { label: "AI Citations Won", value: `${tabs.citation.score}%`, delta: "▲ readiness", icon: "✦", chip: "#FBF1E3", color: "#B8902B", series: trendTo(tabs.citation.score) }
+    { label: "AI Visibility Score", value: `${aiVisibilityScore}%`, meta: statusLabel(aiVisibilityScore), icon: "◉", chip: "#FBF1E3", color: "#B8902B", series: auditScores },
+    { label: "Open Issues", value: String(openIssues), meta: `${issueCounts.high} high impact`, icon: "⚑", chip: "#FBEAEA", color: "#DC2626", series: paddedSeries([issueCounts.low, issueCounts.medium, issueCounts.high], openIssues) },
+    { label: "Pages Crawlable", value: `${tabs.crawlability.score}%`, meta: `${tabs.crawlability.issues} crawl issues`, icon: "◰", chip: "#EAF6EF", color: "#1F9D55", series: categoryScoreSeries(tabs.crawlability.categories, tabs.crawlability.score) },
+    { label: "AI Citation Readiness", value: `${Math.max(tabs.citation.score, tabs.gemini.score)}%`, meta: `${tabs.citation.issues + tabs.gemini.issues} citation issues`, icon: "✦", chip: "#FBF1E3", color: "#B8902B", series: paddedSeries([tabs.citation.score, tabs.gemini.score, tabs.geo.score], tabs.geo.score) }
   ];
   const scoreTiles = [
-    ["On-Page SEO", tabs.onPageSeo.score, 3], ["Image SEO", tabs.imageSeo.score, 0], ["EEAT Audit", tabs.eeat.score, 0],
-    ["Trust Signal", tabs.trustSignals.score, 2], ["GEO / AEO", tabs.geo.score, 5], ["ChatGPT Citation", tabs.citation.score, 4],
-    ["Gemini Citation", tabs.gemini.score, -2], ["Indexability", tabs.indexability.score, 1], ["Structured Data", tabs.structuredData.score, 6], ["Technical Audit", tabs.technical.score, 3]
-  ] as const;
+    tabs.onPageSeo, tabs.imageSeo, tabs.eeat, tabs.trustSignals, tabs.geo, tabs.citation, tabs.gemini, tabs.indexability, tabs.structuredData, tabs.technical
+  ];
   const radarAxes = [
     { label: "On-Page", value: tabs.onPageSeo.score }, { label: "Image", value: tabs.imageSeo.score }, { label: "E-E-A-T", value: tabs.eeat.score },
     { label: "Trust", value: tabs.trustSignals.score }, { label: "GEO", value: tabs.geo.score }, { label: "ChatGPT", value: tabs.citation.score },
@@ -272,7 +376,7 @@ export default function ReportPage() {
         <section className={styles.reportHeader}>
           <p>AI VISIBILITY REPORT</p>
           <h1>{report.brand}</h1>
-          <div><a href={report.url} target="_blank">{report.url}</a><span>•</span><span className={styles.liveDot} />Last audited: just now</div>
+          <div><a href={report.url} target="_blank">{report.url}</a><span>•</span><span className={styles.liveDot} />Last audited: {formatAuditDate(lastAuditedAt)}</div>
         </section>
 
         <section className={styles.kpiGrid}>
@@ -280,7 +384,7 @@ export default function ReportPage() {
             <article className={`${styles.card} ${styles.kpi}`} key={kpi.label}>
               <span className={styles.kpiIcon} style={{ background: kpi.chip }}>{kpi.icon}</span>
               <p>{kpi.label}</p><strong>{kpi.value}</strong>
-              <div><span>{kpi.delta}</span> vs last audit</div>
+              <div><span>{kpi.meta}</span> current audit</div>
               <Sparkline series={kpi.series} color={kpi.color} />
             </article>
           ))}
@@ -294,27 +398,27 @@ export default function ReportPage() {
             <p>{report.score_explanation || "Weighted average across all audit categories below."}</p>
           </article>
           <article className={styles.insight}>
-            <div className={styles.insightTop}><span>P1</span><b>PRIORITY ACTION</b><em>Est. +14 pts</em></div>
-            <h2>Fix your E-E-A-T and Trust foundations first</h2>
+            <div className={styles.insightTop}><span>P1</span><b>PRIORITY ACTION</b><em>{priority.issues} issues</em></div>
+            <h2>Improve {priority.label} first</h2>
             <p>{report.rating_description || "Improve trust, expertise, structured data, and crawl readiness to lift AI visibility across answer engines."}</p>
-            <footer><button className={styles.primary} onClick={() => setActive("eeat")}>Review E-E-A-T issues →</button><span>P2: Structured Data is next at {tabs.structuredData.score}%.</span></footer>
+            <footer><button className={styles.primary} onClick={() => setActive((Object.keys(tabs) as AuditTabId[]).find((tab) => tabs[tab].label === priority.label) ?? "technical")}>Review {priority.label} issues →</button>{nextPriority ? <span>P2: {nextPriority.label} is next at {nextPriority.score}%.</span> : null}</footer>
           </article>
         </section>
 
         <section className={styles.chartGrid}>
           <article className={styles.card}><div className={styles.cardTitle}><h2>Visibility profile</h2></div><RadarChart axes={radarAxes} /></article>
           <article className={styles.card}>
-            <div className={styles.cardTitle}><h2>Open issues over time</h2><div className={styles.legend}><span><i className={styles.high} />High</span><span><i className={styles.medium} />Medium</span><span><i className={styles.low} />Low</span></div></div>
+            <div className={styles.cardTitle}><h2>Open issues by impact</h2><div className={styles.legend}><span><i className={styles.high} />High</span><span><i className={styles.medium} />Medium</span><span><i className={styles.low} />Low</span></div></div>
             <StackedArea high={issueCounts.high} medium={issueCounts.medium} low={issueCounts.low} />
           </article>
         </section>
 
         <section className={styles.card}>
-          <div className={styles.cardTitle}><h2>AI engine readiness</h2><p>Per-engine ability to crawl, understand, and cite the site.</p></div>
+          <div className={styles.cardTitle}><h2>AI readiness</h2><p>Implemented audit signals for citation, crawl, and answer visibility.</p></div>
           <div className={styles.engineGrid}>
             <MiniGauge name="ChatGPT" sub="GPT-4o · Search" score={tabs.citation.score} />
             <MiniGauge name="Gemini" sub="Google AI Overviews" score={tabs.gemini.score} />
-            <MiniGauge name="Perplexity" sub="GEO / AEO" score={tabs.geo.score} />
+            <MiniGauge name="GEO / AEO" sub="Answer readiness" score={tabs.geo.score} />
             <MiniGauge name="Overall AI" sub="Weighted readiness" score={aiVisibilityScore} />
           </div>
         </section>
@@ -325,13 +429,13 @@ export default function ReportPage() {
         </section>
 
         <section>
-          <div className={styles.sectionHead}><h2>Scores by category</h2><p>90-day trend per category · ▲ improving</p></div>
+          <div className={styles.sectionHead}><h2>Scores by category</h2><p>Current score distribution from the latest audit</p></div>
           <div className={styles.tileGrid}>
-            {scoreTiles.map(([name, score, delta]) => (
-              <article className={`${styles.card} ${styles.tile}`} key={name}>
-                <div><b>{name}</b><span className={delta > 0 ? styles.deltaGood : delta < 0 ? styles.deltaBad : styles.deltaFlat}>{delta > 0 ? `▲ ${delta}` : delta < 0 ? `▼ ${Math.abs(delta)}` : "—"}</span></div>
-                <strong>{score}%</strong>
-                <Sparkline series={trendTo(score, 18)} color="#B8902B" muted={score === 0} />
+            {scoreTiles.map((tile) => (
+              <article className={`${styles.card} ${styles.tile}`} key={tile.label}>
+                <div><b>{tile.label}</b><span className={tile.issues > 0 ? styles.deltaBad : styles.deltaGood}>{tile.issues} issues</span></div>
+                <strong>{tile.score}%</strong>
+                <Sparkline series={categoryScoreSeries(tile.categories, tile.score)} color="#B8902B" muted={tile.categories.length === 0} />
               </article>
             ))}
           </div>
