@@ -101,31 +101,51 @@ function wrapText(value: string, maxLength = 88) {
 
 export function reportToPdf(report: AiVisibilityReport) {
   const publicReport = toStructuredAiVisibilityReport(report);
-  const geoOpportunities =
-    publicReport.geo_aeo_audit.opportunity_counts.high +
-    publicReport.geo_aeo_audit.opportunity_counts.medium +
-    publicReport.geo_aeo_audit.opportunity_counts.low;
-  const technicalIssues = [...publicReport.technical_categories]
+  const auditGroups = [
+    { label: "Technical Audit", categories: publicReport.technical_categories },
+    { label: "Indexability", categories: publicReport.indexability_audit.categories },
+    { label: "Schema & Structured Data", categories: publicReport.structured_data_audit.categories },
+    { label: "On-Page SEO", categories: publicReport.on_page_seo_audit.categories },
+    { label: "Image SEO", categories: publicReport.image_seo_audit.categories },
+    { label: "E-E-A-T Audit", categories: publicReport.eeat_audit.categories },
+    { label: "Trust Signals", categories: publicReport.trust_signals_audit.categories },
+    { label: "GEO / AEO Signals", categories: publicReport.geo_aeo_audit.categories }
+  ].filter((group) => group.categories.length > 0);
+  const allCategories = auditGroups.flatMap((group) => group.categories.map((category) => ({ ...category, group: group.label })));
+  const totalIssues = allCategories.reduce((sum, category) => sum + category.failedChecks, 0);
+  const priorityIssues = allCategories
     .filter((category) => category.failedChecks > 0)
     .sort((a, b) => b.failedChecks - a.failedChecks || a.score - b.score);
-  const geoIssues = [...publicReport.geo_aeo_audit.categories]
-    .filter((category) => category.failedChecks > 0)
-    .sort((a, b) => b.failedChecks - a.failedChecks || a.score - b.score);
+  const scoreTiles = [
+    { label: "AI Visibility", score: publicReport.overall_score, issues: totalIssues },
+    { label: "Technical Audit", score: publicReport.technical_audit.score, issues: publicReport.technical_audit.issues_found },
+    { label: "GEO / AEO Audit", score: publicReport.geo_aeo_audit.score, issues: publicReport.geo_aeo_audit.opportunity_counts.high + publicReport.geo_aeo_audit.opportunity_counts.medium + publicReport.geo_aeo_audit.opportunity_counts.low },
+    { label: "Indexability", score: publicReport.indexability_audit.score, issues: publicReport.indexability_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) },
+    { label: "Structured Data", score: publicReport.structured_data_audit.score, issues: publicReport.structured_data_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) },
+    { label: "On-Page SEO", score: publicReport.on_page_seo_audit.score, issues: publicReport.on_page_seo_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) },
+    { label: "Image SEO", score: publicReport.image_seo_audit.score, issues: publicReport.image_seo_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) },
+    { label: "E-E-A-T", score: publicReport.eeat_audit.score, issues: publicReport.eeat_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) },
+    { label: "Trust Signals", score: publicReport.trust_signals_audit.score, issues: publicReport.trust_signals_audit.categories.reduce((sum, category) => sum + category.failedChecks, 0) }
+  ];
   const pages: string[][] = [];
   let commands: string[] = [];
   let y = 742;
+  const exportedAt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date());
 
   const color = {
-    ink: "0.06 0.09 0.12",
-    muted: "0.38 0.43 0.48",
-    teal: "0.09 0.49 0.45",
-    mint: "0.77 0.96 0.86",
-    coral: "0.91 0.37 0.36",
-    coralSoft: "1 0.91 0.90",
-    gold: "0.95 0.70 0.22",
-    goldSoft: "1 0.96 0.82",
-    cloud: "0.96 0.98 0.99",
-    border: "0.86 0.88 0.90",
+    bg: "0.98 0.98 0.98",
+    ink: "0.07 0.07 0.07",
+    secondary: "0.40 0.40 0.40",
+    muted: "0.60 0.60 0.60",
+    border: "0.93 0.93 0.93",
+    gold: "0.83 0.69 0.22",
+    goldDark: "0.54 0.43 0.12",
+    goldSoft: "0.96 0.90 0.78",
+    teal: "0.12 0.62 0.33",
+    tealSoft: "0.92 0.96 0.94",
+    coral: "0.86 0.15 0.15",
+    coralSoft: "0.98 0.92 0.92",
+    cloud: "0.97 0.97 0.97",
     white: "1 1 1"
   };
 
@@ -146,125 +166,130 @@ export function reportToPdf(report: AiVisibilityReport) {
     lines.forEach((line, index) => text(line, x, top - index * lineGap, size, fill, font));
     return top - Math.max(1, lines.length) * lineGap;
   };
-  const newPage = () => {
-    pages.push(commands);
+  const drawPageChrome = (title = "AI Visibility Report") => {
+    rect(0, 792, 612, 792, color.bg);
+    text("GLOMAUDIT", 42, 758, 12, color.ink, "F2");
+    text(title, 430, 758, 9, color.muted, "F1");
+    setStroke(color.border);
+    push("42 730 m 570 730 l S");
+    y = 700;
+  };
+  const newPage = (title?: string) => {
+    if (commands.length) pages.push(commands);
     commands = [];
-    y = 742;
+    drawPageChrome(title);
+  };
+  const ensure = (height: number, title?: string) => {
+    if (y - height < 56) newPage(title);
   };
   const toneForScore = (score: number) => score < 55 ? color.coral : score < 75 ? color.gold : color.teal;
-  const severityFill = (score: number) => score < 40 ? color.coralSoft : score < 70 ? color.goldSoft : color.cloud;
+  const severityFill = (score: number) => score < 70 ? color.goldSoft : color.white;
   const issueLabel = (count: number) => count === 1 ? "1 issue" : `${count} issues`;
-  const scoreCard = (x: number, title: string, score: number, label: string, note: string) => {
-    rect(x, y, 162, 112, color.white, color.border);
-    text(title, x + 14, y - 22, 10, color.muted, "F2");
-    text(`${score}%`, x + 14, y - 62, 32, toneForScore(score), "F2");
-    text(label, x + 92, y - 42, 10, color.ink, "F2");
-    wrapped(note, x + 14, y - 82, 26, 8, color.muted, "F1", 10);
+  const pill = (value: string, x: number, top: number, width: number, fill = color.goldSoft, textColor = color.ink) => {
+    rect(x, top, width, 22, fill, color.border);
+    text(value, x + 10, top - 14, 8, textColor, "F2");
   };
-  const categoryRow = (category: { categoryName: string; score: number; failedChecks: number; status: string }, index: number, x: number, width: number) => {
-    const rowTop = y;
-    rect(x, rowTop, width, 28, index % 2 === 0 ? color.white : color.cloud, color.border);
-    rect(x + 8, rowTop - 8, 10, 10, toneForScore(category.score));
-    text(category.categoryName, x + 24, rowTop - 18, 9, color.ink, "F2");
-    text(`${category.score}%`, x + width - 188, rowTop - 18, 9, toneForScore(category.score), "F2");
-    text(issueLabel(category.failedChecks), x + width - 132, rowTop - 18, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
-    text(category.status, x + width - 58, rowTop - 18, 8, color.muted, "F1");
-    y -= 28;
+  const statCard = (x: number, top: number, width: number, title: string, value: string, note: string, fill = color.white) => {
+    rect(x, top, width, 96, fill, color.border);
+    text(title, x + 14, top - 20, 9, color.secondary, "F2");
+    text(value, x + 14, top - 52, 24, color.ink, "F2");
+    wrapped(note, x + 14, top - 72, 30, 8, color.secondary, "F1", 10);
   };
-  const issueList = (title: string, items: typeof technicalIssues, x: number, width: number) => {
-    text(title, x, y, 14, color.ink, "F2");
+  const sectionTitle = (title: string, subtitle?: string) => {
+    ensure(subtitle ? 62 : 36, title);
+    text(title, 42, y, 18, color.ink, "F2");
     y -= 18;
+    if (subtitle) y = wrapped(subtitle, 42, y, 92, 10, color.secondary, "F1", 13) - 8;
+  };
+  const categoryRow = (category: { categoryName: string; score: number; failedChecks: number; status: string; group?: string }, index: number, x: number, width: number) => {
+    const rowTop = y;
+    rect(x, rowTop, width, 32, index % 2 === 0 ? color.white : color.cloud, color.border);
+    text(category.categoryName.slice(0, 44), x + 12, rowTop - 13, 9, color.ink, "F2");
+    if (category.group) text(category.group.slice(0, 36), x + 12, rowTop - 25, 7, color.muted, "F1");
+    text(`${category.score}%`, x + width - 188, rowTop - 19, 9, toneForScore(category.score), "F2");
+    text(issueLabel(category.failedChecks), x + width - 132, rowTop - 19, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
+    text(category.status, x + width - 58, rowTop - 18, 8, color.muted, "F1");
+    y -= 32;
+  };
+  const issueList = (title: string, items: typeof priorityIssues, x: number, width: number) => {
+    ensure(90, title);
+    text(title, x, y, 14, color.ink, "F2");
+    y -= 20;
     if (!items.length) {
-      rect(x, y, width, 34, color.cloud, color.border);
+      rect(x, y, width, 38, color.cloud, color.border);
       text("No urgent issues detected in this section.", x + 12, y - 20, 10, color.teal, "F2");
-      y -= 46;
+      y -= 52;
       return;
     }
-    items.slice(0, 8).forEach((category, index) => categoryRow(category, index, x, width));
-    y -= 16;
+    items.slice(0, 10).forEach((category, index) => {
+      ensure(42, title);
+      categoryRow(category, index, x, width);
+    });
+    y -= 10;
   };
 
-  rect(0, 792, 612, 118, color.ink);
-  text("AEO GEO VISIBILITY AUDIT.COM", 42, 752, 11, color.mint, "F2");
-  text("AI Visibility, GEO and AEO Audit Report", 42, 734, 10, "0.78 0.84 0.86", "F1");
-  wrapped(publicReport.brand, 42, 708, 32, 26, color.white, "F2", 28);
-  text(publicReport.url, 42, 676, 10, "0.78 0.84 0.86", "F1");
-  rect(412, 744, 134, 48, color.teal);
-  text("Overall Score", 426, 724, 9, color.white, "F2");
-  text(`${publicReport.overall_score}%`, 426, 704, 22, color.white, "F2");
+  drawPageChrome(`Downloaded ${exportedAt}`);
+  rect(42, y, 528, 126, color.ink);
+  text("AI VISIBILITY REPORT", 62, y - 28, 9, color.gold, "F2");
+  wrapped(publicReport.brand, 62, y - 58, 36, 28, color.white, "F2", 30);
+  text(publicReport.url, 62, y - 110, 9, color.muted, "F1");
+  rect(430, y - 32, 104, 62, color.gold);
+  text("Overall Score", 446, y - 54, 8, color.ink, "F2");
+  text(`${publicReport.overall_score}%`, 446, y - 82, 26, color.ink, "F2");
+  y -= 160;
 
-  y = 632;
-  scoreCard(42, "AI Visibility Score", publicReport.overall_score, publicReport.rating_label, "Combined score from technical health and GEO / AEO readiness.");
-  scoreCard(225, "Technical Audit", publicReport.technical_audit.score, `Grade ${publicReport.technical_audit.grade}`, `${publicReport.technical_audit.issues_found} issues found across site health checks.`);
-  scoreCard(408, "GEO / AEO Audit", publicReport.geo_aeo_audit.score, `Grade ${publicReport.geo_aeo_audit.grade}`, `${geoOpportunities} opportunities found for AI answer visibility.`);
+  statCard(42, y, 160, "AI Visibility Score", `${publicReport.overall_score}%`, publicReport.rating_label, color.white);
+  statCard(224, y, 160, "Open Issues", String(totalIssues), "Prioritized findings across the audit.", color.white);
+  statCard(406, y, 164, "AI Citation Readiness", `${publicReport.geo_aeo_audit.score}%`, "GEO, AEO and answer-readiness signals.", color.white);
+  y -= 122;
 
-  y -= 142;
-  rect(42, y, 504, 86, publicReport.overall_score < 70 ? color.coralSoft : color.goldSoft, color.coral);
-  text("Immediate attention required", 60, y - 24, 16, color.coral, "F2");
-  const urgency = `${publicReport.brand} is currently scoring ${publicReport.overall_score}%. We found ${publicReport.technical_audit.issues_found} technical issues and ${geoOpportunities} GEO / AEO opportunities that can limit how confidently AI systems understand, cite, and recommend the brand.`;
-  wrapped(urgency, 60, y - 46, 76, 10, color.ink, "F1", 13);
+  rect(42, y, 528, 92, color.goldSoft, "0.91 0.83 0.66");
+  text("Priority Action", 62, y - 26, 15, color.ink, "F2");
+  wrapped(`We identified ${totalIssues} issues that can materially improve AI visibility and citation readiness. Start with crawl access, entity trust, structured data, local discovery, and answer-ready content.`, 62, y - 48, 82, 10, color.ink, "F1", 13);
+  y -= 122;
 
-  y -= 118;
-  text("Why this matters", 42, y, 15, color.ink, "F2");
-  y = wrapped("AI search engines rely on crawl access, structured data, entity clarity, page quality, and trust signals. When these signals are weak, buyers can complete research without seeing or trusting the brand.", 42, y - 20, 92, 10, color.muted, "F1", 14);
-
-  y -= 22;
-  rect(42, y, 504, 76, color.cloud, color.border);
-  text("About this audit", 60, y - 22, 13, color.ink, "F2");
-  wrapped("This report reviews technical, GEO, and AEO gaps that affect visibility in AI-assisted discovery. It is based on automated crawl checks, structured data review, content signals, and AI readiness indicators.", 60, y - 42, 78, 9, color.muted, "F1", 12);
-
-  y -= 104;
-  rect(42, y, 504, 76, color.ink);
-  text("Recommended next step", 60, y - 22, 12, color.mint, "F2");
-  wrapped("Book a strategy call to prioritize the issues that most directly affect AI visibility, organic traffic, sales, buyer trust, and lead generation.", 60, y - 42, 78, 10, color.white, "F2", 13);
-
-  newPage();
-
-  text("Priority Issues To Fix First", 42, y, 22, color.ink, "F2");
-  y -= 22;
-  wrapped("These are the highest-friction areas found in the audit. Fixing them first can improve how search engines and AI systems crawl, understand, trust, and recommend the brand.", 42, y, 94, 10, color.muted, "F1", 13);
-  y -= 32;
-  issueList("Top Technical Issues", technicalIssues, 42, 504);
-  if (y < 260) newPage();
-  issueList("Top GEO / AEO Opportunities", geoIssues, 42, 504);
-
-  newPage();
-
-  text("Detailed Issue Breakdown", 42, y, 22, color.ink, "F2");
-  y -= 22;
-  wrapped("Rows highlighted in red or yellow deserve priority review. Low-scoring categories usually contain missing crawl, schema, trust, content, or AI readiness signals.", 42, y, 94, 10, color.muted, "F1", 13);
-  y -= 30;
-  text("Technical Audit Categories", 42, y, 14, color.ink, "F2");
-  y -= 16;
-  publicReport.technical_categories.forEach((category, index) => {
-    if (y < 82) {
-      newPage();
-      text("Technical Audit Categories", 42, y, 14, color.ink, "F2");
-      y -= 16;
-    }
-    rect(42, y, 504, 26, severityFill(category.score), color.border);
-    text(category.categoryName, 54, y - 17, 9, color.ink, "F2");
-    text(`${category.score}%`, 338, y - 17, 9, toneForScore(category.score), "F2");
-    text(issueLabel(category.failedChecks), 390, y - 17, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
-    text(category.status, 466, y - 17, 8, color.muted, "F1");
-    y -= 26;
-    if (index === publicReport.technical_categories.length - 1) y -= 20;
+  sectionTitle("Visibility Snapshot", "A board-level summary of how the brand performs across AI visibility, search readiness, trust signals, and technical accessibility.");
+  scoreTiles.slice(0, 6).forEach((tile, index) => {
+    const col = index % 3;
+    const row = Math.floor(index / 3);
+    statCard(42 + col * 176, y - row * 110, 160, tile.label, `${tile.score}%`, `${issueLabel(tile.issues)} found`, severityFill(tile.score));
   });
-  if (y < 220) newPage();
-  text("GEO / AEO Audit Categories", 42, y, 14, color.ink, "F2");
-  y -= 16;
-  publicReport.geo_aeo_audit.categories.forEach((category) => {
-    if (y < 82) {
-      newPage();
-      text("GEO / AEO Audit Categories", 42, y, 14, color.ink, "F2");
-      y -= 16;
-    }
-    rect(42, y, 504, 26, severityFill(category.score), color.border);
-    text(category.categoryName, 54, y - 17, 9, color.ink, "F2");
-    text(`${category.score}%`, 338, y - 17, 9, toneForScore(category.score), "F2");
-    text(issueLabel(category.failedChecks), 390, y - 17, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
-    text(category.status, 466, y - 17, 8, color.muted, "F1");
-    y -= 26;
+  y -= 236;
+
+  rect(42, y, 528, 62, color.white, color.border);
+  text("Want to improve your score?", 62, y - 24, 12, color.ink, "F2");
+  wrapped("Request a free AEO, GEO action plan from the Glomaudit team.", 62, y - 42, 74, 9, color.secondary, "F1", 11);
+  rect(440, y - 16, 96, 30, color.gold, "0.83 0.69 0.22");
+  text("Action Plan", 462, y - 36, 10, color.ink, "F2");
+
+  newPage("AI Readiness");
+  sectionTitle("AI Readiness", "Implemented audit signals for citation, crawl, and answer visibility.");
+  scoreTiles.slice(3).forEach((tile, index) => {
+    const col = index % 3;
+    const row = Math.floor(index / 3);
+    statCard(42 + col * 176, y - row * 108, 160, tile.label, `${tile.score}%`, `${issueLabel(tile.issues)} found`, severityFill(tile.score));
+  });
+  y -= 256;
+
+  sectionTitle("Top Issues To Fix First", "These are the highest-friction areas found in the audit. Fixing them first can improve how search engines and AI systems crawl, understand, trust, and recommend the brand.");
+  issueList("Priority Findings", priorityIssues, 42, 528);
+
+  newPage("Audit Categories");
+  auditGroups.forEach((group) => {
+    y -= 10;
+    ensure(98, group.label);
+    text(group.label, 42, y, 14, color.ink, "F2");
+    y -= 24;
+    group.categories.forEach((category, index) => {
+      ensure(44, group.label);
+      rect(42, y, 528, 30, severityFill(category.score), color.border);
+      text(category.categoryName.slice(0, 48), 54, y - 19, 9, color.ink, "F2");
+      text(`${category.score}%`, 370, y - 19, 9, toneForScore(category.score), "F2");
+      text(issueLabel(category.failedChecks), 426, y - 19, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
+      text(category.status, 502, y - 19, 8, color.muted, "F1");
+      y -= 30;
+      if (index === group.categories.length - 1) y -= 24;
+    });
   });
 
   if (commands.length) pages.push(commands);

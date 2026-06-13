@@ -555,7 +555,7 @@ export default function ReportPage() {
           </div>
           <strong>Increase your visibility across ChatGPT, Gemini and Google AI.</strong>
           <em>⚡ Limited onboarding slots available</em>
-          <button className={styles.blackButton} type="button">Get My AI Visibility Strategy</button>
+          <button className={styles.blackButton} type="button" onClick={() => setIsCallModalOpen(true)}>Get My AI Visibility Strategy</button>
         </section>
 
         <footer className={styles.footer}>
