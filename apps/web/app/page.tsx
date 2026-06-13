@@ -7,23 +7,19 @@ import { createReport } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
 const tasks = [
-  "Scanning AI Search Engines",
-  "Scanning Traditional Search Engines",
-  "Scanning Video Search Engines",
-  "Scanning Local Search Engines",
-  "Running Technical Audit",
+  "Checking if ChatGPT cites your brand",
+  "Auditing your Google visibility gaps",
+  "Detecting video & content authority signals",
+  "Mapping your local AI discovery signals",
+  "Finding technical issues blocking AI access",
   "Running GEO / AEO Audit",
-  "Mapping Market Position",
-  "Generating Visibility Score",
+  "Measuring you against competitors AI trusts",
+  "Calculating your AI visibility score",
   "Compiling Insights"
 ];
 
 const statuses = [
-  "Checking how AI engines perceive your brand",
-  "Mapping market position",
-  "Evaluating GEO / AEO readiness",
-  "Analyzing high-intent customer prompts",
-  "Measuring AI recommendation likelihood"
+  "Checking if AI would recommend you or your competitor"
 ];
 
 const channels = [
@@ -34,6 +30,19 @@ const channels = [
 ];
 
 const signals = ["ChatGPT", "Gemini", "Google", "GEO"];
+
+const auditDimensions = [
+  { dimension: "ChatGPT Citation", reveals: "Are you being recommended in AI chat answers?" },
+  { dimension: "Gemini Citation", reveals: "Does Google's AI see you as a trusted source?" },
+  { dimension: "Schema & Structured Data", reveals: "Can AI engines actually read your content?" },
+  { dimension: "E-E-A-T Audit", reveals: "Do you signal expertise, authority, and trust?" },
+  { dimension: "Technical SEO", reveals: "Are crawl errors silently blocking your visibility?" },
+  { dimension: "GEO / AEO Signals", reveals: "Are you optimized for AI-generated answers?" },
+  { dimension: "On-Page SEO", reveals: "Is your content structured to rank and get cited?" },
+  { dimension: "Indexability", reveals: "Is Google even seeing your pages?" },
+  { dimension: "Trust Signals", reveals: "Does your site pass the credibility test?" },
+  { dimension: "Image SEO", reveals: "Are your visuals working for or against you?" }
+];
 
 export default function HomePage() {
   const router = useRouter();
@@ -80,8 +89,8 @@ export default function HomePage() {
                 <Loader2 className="size-4 animate-spin text-gold" />
                 Live scan running
               </div>
-              <h1 className="text-3xl font-bold md:text-4xl">Building your visibility report</h1>
-              <p className="mt-3 text-sm leading-6 text-white/66">The audit is scoring how buyers discover and compare your brand across AI, search, local, and video surfaces.</p>
+              <h1 className="text-3xl font-bold md:text-4xl">Uncovering your AI blind spots</h1>
+              <p className="mt-3 text-sm leading-6 text-white/66">The audit is crawling how AI engines read, trust, and cite your brand right now across search, answers, schema, and authority signals.</p>
             </div>
             <div className="grid gap-8 p-6 md:grid-cols-[240px_1fr] md:items-center md:p-10">
               <div className="flex flex-col items-center">
@@ -94,8 +103,8 @@ export default function HomePage() {
               </div>
               <div>
                 <div className="mb-6">
-                  <h2 className="text-2xl font-bold md:text-3xl">Analyzing visibility signals</h2>
-                  <p className="mt-2 text-sm text-ink/60">Your report will open automatically when the scan completes.</p>
+                  <h2 className="text-2xl font-bold md:text-3xl">Uncovering what AI really thinks about your brand</h2>
+                  <p className="mt-2 text-sm text-ink/60">Your report opens automatically. This takes about 60 seconds.</p>
                 </div>
                 <div className="mb-6 flex min-h-12 items-center gap-3 rounded-lg border border-gold/30 bg-gold/15 px-4 text-sm font-bold text-ink">
                   <Loader2 className="size-4 animate-spin" />
@@ -188,22 +197,22 @@ export default function HomePage() {
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold via-mint to-teal" />
             <div className="border-b border-black/10 bg-ink p-6 text-white">
               <div className="mb-5 flex items-center justify-between gap-4">
-                <p className="text-sm font-bold text-gold">Start a visibility audit</p>
+                <p className="text-sm font-bold text-gold">AI Visibility Audit - Free</p>
                 <div className="flex size-10 items-center justify-center rounded-lg bg-white/10 text-gold shadow-soft">
                   <Sparkles className="size-5" />
                 </div>
               </div>
-              <h2 className="text-2xl font-black leading-tight">Generate your report</h2>
-              <p className="mt-3 max-w-sm text-sm leading-6 text-white/68">Enter a brand and website to model how discovery surfaces currently understand you.</p>
+              <h2 className="text-m font-black leading-tight">Your competitor is being recommended, Are you?</h2>
+              <p className="mt-3 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn't recommend your brand, you're invisible where buying decisions happen.</p>
             </div>
             <form onSubmit={onSubmit} className="space-y-5 p-6">
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Brand Name</label>
-                <Input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Acme Finance" required />
+                <Input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Brand Name" required />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Website URL</label>
-                <Input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://example.com" required />
+                <Input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://domain.com" required />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Business Email</label>
@@ -211,7 +220,7 @@ export default function HomePage() {
               </div>
               {error ? <p className="rounded-md bg-coral/10 px-3 py-2 text-sm font-medium text-coral">{error}</p> : null}
               <Button className="w-full rounded-lg bg-gold text-ink shadow-soft hover:bg-gold" type="submit">
-                Generate Report
+                Show Me What AI Thinks Of My Brand
                 <ArrowRight className="size-4" />
               </Button>
               <div className="grid grid-cols-3 gap-2 pt-1 text-center">
@@ -225,6 +234,58 @@ export default function HomePage() {
             </form>
           </Card>
         </div>
+
+        <section className="pb-14 pt-8 lg:pb-20">
+          <div className="rounded-lg border border-black/10 bg-white/78 p-5 shadow-soft backdrop-blur md:p-7 lg:p-8">
+            <div className="mb-6 flex flex-col gap-3 border-b border-black/10 pb-5 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="text-sm font-black uppercase text-gold">Free report</p>
+                <h2 className="mt-2 text-2xl font-black leading-tight text-ink md:text-3xl">
+                  10 audit dimensions. Zero fluff.
+                </h2>
+              </div>
+              <p className="max-w-xl text-sm font-medium leading-6 text-ink/60">
+                See where AI engines fail to read, trust, or cite your brand across answers, search, schema, and authority signals.
+              </p>
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
+              <div className="grid grid-cols-[0.85fr_1.15fr] border-b border-black/10 bg-mist/70 px-4 py-3 text-xs font-black uppercase text-ink/56">
+                <div>Dimension</div>
+                <div>What it reveals</div>
+              </div>
+              <div className="divide-y divide-black/10">
+                {auditDimensions.map((item, index) => (
+                  <div key={item.dimension} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[0.85fr_1.15fr] sm:gap-5">
+                    <div className="flex items-center gap-3 font-black text-ink">
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-gold/18 text-xs text-ink">{index + 1}</span>
+                      {item.dimension}
+                    </div>
+                    <p className="font-medium leading-6 text-ink/64">{item.reveals}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 rounded-lg border border-gold/25 bg-gold/10 p-4 md:grid-cols-[1fr_auto] md:items-center">
+              <div>
+                <p className="text-sm font-bold leading-6 text-ink/78">
+                  The brands winning in 2026 are the ones AI trusts enough to recommend. Every week you wait, your competitors get cited instead of you.
+                </p>
+                <p className="mt-1 text-xs font-semibold text-ink/52">No credit card. No login. Just your score, your issues, and we help you to fix them.</p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button className="rounded-lg bg-gold px-5 text-ink shadow-soft hover:bg-gold" type="button">
+                  Run My Free Audit
+                  <ArrowRight className="size-4" />
+                </Button>
+                <button suppressHydrationWarning type="button" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
+                  Request a call back
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );
