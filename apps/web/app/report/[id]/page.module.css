@@ -124,6 +124,7 @@
 .tile,
 .tabs,
 .auditCard,
+.insightsBanner,
 .cta,
 .strategyUpgrade,
 .footer {
@@ -521,7 +522,7 @@
   min-height: 46px;
   flex: 0 0 auto;
   border: 1px solid #D4AF37;
-  border-radius: 999px;
+  border-radius: 8px;
   background: var(--gold);
   color: #111;
   padding: 0 24px;
@@ -537,6 +538,50 @@
 }
 
 .actionPlanBanner button:active {
+  transform: translateY(1px);
+}
+
+.insightsBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 28px;
+  padding: 20px 24px;
+  border: 1px solid #E8D4A8;
+  border-radius: 14px;
+  background:
+    linear-gradient(90deg, rgba(245, 230, 200, 0.62), rgba(255, 255, 255, 0.92));
+  color: #111;
+}
+
+.insightsBanner p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.insightsBanner button {
+  min-height: 42px;
+  flex: 0 0 auto;
+  border: 1px solid #D4AF37;
+  border-radius: 8px;
+  background: var(--gold);
+  color: #111;
+  padding: 0 24px;
+  font-size: 14px;
+  font-weight: 700;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.insightsBanner button:hover {
+  border-color: var(--gold-hover);
+  background: var(--gold-hover);
+  box-shadow: 0 1px 3px rgba(17, 17, 17, 0.05);
+}
+
+.insightsBanner button:active {
   transform: translateY(1px);
 }
 
@@ -1103,6 +1148,7 @@
   .tile,
   .tabs,
   .auditCard,
+  .insightsBanner,
   .cta,
   .strategyUpgrade,
   .footer,
@@ -1173,6 +1219,7 @@
   .topInner,
   .actionPlanBanner,
   .opportunities,
+  .insightsBanner,
   .cta,
   .strategyUpgrade,
   .footer {

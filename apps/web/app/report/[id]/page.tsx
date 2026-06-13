@@ -6,6 +6,7 @@ import { Bot, FileText, MapPin, Search, Video } from "lucide-react";
 import type { StructuredAiVisibilityReport } from "@aiva/core";
 import { API_BASE, getReport } from "@/lib/api";
 import { CHATGPT_CITATION_CATEGORIES, GEMINI_CITATION_CATEGORIES } from "@/lib/audit-citation-categories";
+import { CallbackModal } from "@/components/callback-modal";
 import styles from "./page.module.css";
 
 type Status = "Passed" | "Minor Attention" | "Needs Attention" | "Skipped";
@@ -332,6 +333,7 @@ export default function ReportPage() {
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
   const [active, setActive] = useState<AuditTabId>("technical");
+  const [isCallModalOpen, setIsCallModalOpen] = useState(false);
 
   useEffect(() => {
     getReport(params.id).then(setReport).catch((err) => setError(err instanceof Error ? err.message : "Report not found"));
@@ -484,7 +486,7 @@ export default function ReportPage() {
 
         <section className={styles.actionPlanBanner}>
           <p>Want to improve your score? Request a free AEO, GEO action plan from the Glomaudit team.</p>
-          <button type="button">Request Action Plan ↓</button>
+          <button type="button" onClick={() => setIsCallModalOpen(true)}>Request Action Plan ↓</button>
         </section>
 
         <section className={`${styles.card} ${styles.aiReadiness}`}>
@@ -525,10 +527,15 @@ export default function ReportPage() {
           </div>
         </section>
 
+        <section className={styles.insightsBanner}>
+          <p>Want expert insights on your AI visibility? Get tailored recommendations every two weeks.</p>
+          <button type="button">Send me Insights</button>
+        </section>
+
         <section className={styles.cta} id="full-report">
           <div><h2>Unlock your complete AI visibility report</h2><p>We identified {issueCounts.high} high-impact issues that can materially improve your AI visibility and citation readiness.</p>
             <ul>{["What's hurting your rankings", "Why AI isn't citing your content", "Entity and authority gaps", "Missing trust signals", "Technical visibility blockers", "Revenue-impact opportunities"].map((item) => <li key={item}>{item}</li>)}</ul></div>
-          <div><a className={styles.blackButton} href={pdfExportUrl} download>Get my full report</a><button className={styles.outlineGold}>Schedule strategy call</button></div>
+          <div><a className={styles.blackButton} href={pdfExportUrl} download>Get my full report</a><button className={styles.outlineGold} type="button" onClick={() => setIsCallModalOpen(true)}>Schedule strategy call</button></div>
         </section>
 
         <section className={styles.strategyUpgrade}>
@@ -557,6 +564,7 @@ export default function ReportPage() {
         </footer>
         <p className={styles.copyright}>© 2026 GLOMAUDIT Pvt. Ltd. All Rights Reserved.</p>
       </div>
+      <CallbackModal isOpen={isCallModalOpen} onClose={() => setIsCallModalOpen(false)} />
     </main>
   );
 }
