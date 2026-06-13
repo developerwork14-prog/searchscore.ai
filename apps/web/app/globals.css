@@ -48,6 +48,27 @@ a {
   background-size: 56px 56px;
 }
 
+.audit-card-focus {
+  animation: audit-card-focus 1600ms ease both;
+}
+
+@keyframes audit-card-focus {
+  0% {
+    border-color: #ececec;
+    box-shadow: 0 1px 3px rgba(17, 17, 17, 0.05);
+  }
+
+  32% {
+    border-color: #e8d4a8;
+    box-shadow: 0 0 0 4px rgba(245, 230, 200, 0.72), 0 1px 3px rgba(17, 17, 17, 0.05);
+  }
+
+  100% {
+    border-color: #ececec;
+    box-shadow: 0 1px 3px rgba(17, 17, 17, 0.05);
+  }
+}
+
 .no-scrollbar {
   scrollbar-width: none;
 }

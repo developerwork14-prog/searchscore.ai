@@ -47,6 +47,7 @@ const auditDimensions = [
 export default function HomePage() {
   const router = useRouter();
   const auditFormRef = useRef<HTMLDivElement>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
   const [brandName, setBrandName] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [businessEmail, setBusinessEmail] = useState("");
@@ -55,6 +56,9 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
   const [callRequestSent, setCallRequestSent] = useState(false);
+  const [callRequestError, setCallRequestError] = useState("");
+  const [isSubmittingCallRequest, setIsSubmittingCallRequest] = useState(false);
+  const [isAuditFormHighlighted, setIsAuditFormHighlighted] = useState(false);
 
   const completedTasks = useMemo(() => Math.floor((progress / 100) * tasks.length), [progress]);
 
@@ -65,6 +69,14 @@ export default function HomePage() {
     }, 420);
     return () => window.clearInterval(interval);
   }, [isGenerating]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -83,12 +95,41 @@ export default function HomePage() {
   }
 
   function scrollToAuditForm() {
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
     auditFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setIsAuditFormHighlighted(true);
+    window.setTimeout(() => document.getElementById("audit-brand-name")?.focus(), 520);
+    highlightTimeoutRef.current = window.setTimeout(() => setIsAuditFormHighlighted(false), 1600);
   }
 
-  function onCallRequestSubmit(event: FormEvent) {
+  async function onCallRequestSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setCallRequestSent(true);
+    setCallRequestError("");
+    setIsSubmittingCallRequest(true);
+    const data = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/callback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: data.get("name"),
+          email: data.get("email"),
+          phone: data.get("phone"),
+          website: data.get("website")
+        })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message ?? "Could not submit request");
+      }
+      setCallRequestSent(true);
+    } catch (err) {
+      setCallRequestError(err instanceof Error ? err.message : "Could not submit request");
+    } finally {
+      setIsSubmittingCallRequest(false);
+    }
   }
 
   if (isGenerating) {
@@ -206,7 +247,7 @@ export default function HomePage() {
           </section>
 
           <div ref={auditFormRef}>
-          <Card className="relative overflow-hidden border-black/10 bg-white/96 shadow-panel">
+          <Card className={`relative overflow-hidden border-black/10 bg-white/96 shadow-panel ${isAuditFormHighlighted ? "audit-card-focus" : ""}`}>
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold via-mint to-teal" />
             <div className="border-b border-black/10 bg-ink p-5 text-white">
               <div className="mb-4 flex items-center justify-between gap-4">
@@ -221,7 +262,7 @@ export default function HomePage() {
             <form onSubmit={onSubmit} className="space-y-4 p-5">
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Brand Name</label>
-                <Input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Brand Name" required />
+                <Input id="audit-brand-name" value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Brand Name" required />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Website URL</label>
@@ -284,7 +325,7 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 rounded-lg border border-gold/25 bg-gold/10 p-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="mt-6 grid gap-4 rounded-lg border border-[#ECECEC] bg-[#ECECEC] p-4 md:grid-cols-[1fr_auto] md:items-center">
               <div>
                 <p className="text-sm font-bold leading-6 text-ink/78">
                   The brands winning in 2026 are the ones AI trusts enough to recommend. Every week you wait, your competitors get cited instead of you.
@@ -295,7 +336,7 @@ export default function HomePage() {
                   Run My Free Audit
                   <ArrowRight className="size-4" />
                 </Button>
-                <button suppressHydrationWarning type="button" onClick={() => { setCallRequestSent(false); setIsCallModalOpen(true); }} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
+                <button suppressHydrationWarning type="button" onClick={() => { setCallRequestSent(false); setCallRequestError(""); setIsCallModalOpen(true); }} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
                   Request a call back
                 </button>
               </div>
@@ -310,21 +351,23 @@ export default function HomePage() {
       {isCallModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-5 py-8 backdrop-blur-sm">
           <div className="w-full max-w-sm overflow-hidden rounded-[14px] border border-[#ECECEC] bg-white shadow-panel">
-            <div className="flex items-start justify-between gap-4 border-b border-[#ECECEC] bg-white p-4">
-              <div>
-                <p className="text-xs font-bold text-[#8A6D1F]">Request a call back</p>
-                <h2 className="mt-1 text-xl font-black text-ink">Fix your AI Search Score</h2>
+            {!callRequestSent ? (
+              <div className="flex items-start justify-between gap-4 border-b border-[#ECECEC] bg-white p-4">
+                <div>
+                  <p className="text-xs font-bold text-[#8A6D1F]">Request a call back</p>
+                  <h2 className="mt-1 text-xl font-black text-ink">Fix your AI Search Score</h2>
+                </div>
+                <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(false)} className="flex size-8 shrink-0 items-center justify-center rounded-[10px] border border-[#ECECEC] bg-[#FAFAFA] text-[#666666] transition hover:border-[#D9D9D9] hover:text-ink">
+                  <X className="size-4" />
+                </button>
               </div>
-              <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(false)} className="flex size-8 shrink-0 items-center justify-center rounded-[10px] border border-[#ECECEC] bg-[#FAFAFA] text-[#666666] transition hover:border-[#D9D9D9] hover:text-ink">
-                <X className="size-4" />
-              </button>
-            </div>
+            ) : null}
 
             {callRequestSent ? (
               <div className="p-4">
                 <div className="rounded-lg border border-teal/20 bg-teal/10 p-4">
                   <p className="font-black text-ink">Thanks. We received your request.</p>
-                  <p className="mt-2 text-sm font-medium leading-6 text-ink/62">Our team will use your details to follow up about improving your AI Search Score.</p>
+                  <p className="mt-2 text-sm font-medium leading-6 text-ink/62">Our team will contact you shortly with personalized recommendations.</p>
                 </div>
                 <Button className="mt-5 w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="button" onClick={() => setIsCallModalOpen(false)}>
                   Close
@@ -334,22 +377,23 @@ export default function HomePage() {
               <form onSubmit={onCallRequestSubmit} className="space-y-3 p-4">
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#666666]">Name</label>
-                  <Input className="min-h-10 bg-[#FAFAFA]" placeholder="Your name" required />
+                  <Input name="name" className="min-h-10 bg-[#FAFAFA]" placeholder="Your name" required />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#666666]">Company Email ID</label>
-                  <Input className="min-h-10 bg-[#FAFAFA]" type="email" placeholder="you@company.com" required />
+                  <Input name="email" className="min-h-10 bg-[#FAFAFA]" type="email" placeholder="you@company.com" required />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#666666]">Phone Number</label>
-                  <Input className="min-h-10 bg-[#FAFAFA]" type="tel" placeholder="+91 98765 43210" required />
+                  <Input name="phone" className="min-h-10 bg-[#FAFAFA]" type="tel" placeholder="+91 98765 43210" required />
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-[#666666]">Website</label>
-                  <Input className="min-h-10 bg-[#FAFAFA]" placeholder="https://domain.com" required />
+                  <Input name="website" className="min-h-10 bg-[#FAFAFA]" placeholder="https://domain.com" required />
                 </div>
-                <Button className="w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="submit">
-                  Submit Request
+                {callRequestError ? <p className="rounded-[10px] border border-coral/20 bg-coral/10 px-3 py-2 text-xs font-bold leading-5 text-coral">{callRequestError}</p> : null}
+                <Button className="w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="submit" disabled={isSubmittingCallRequest}>
+                  {isSubmittingCallRequest ? "Submitting..." : "Submit Request"}
                   <ArrowRight className="size-4" />
                 </Button>
               </form>
