@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border border-black/10 bg-white/92 shadow-panel backdrop-blur", className)} {...props} />;
+  return <div className={cn("rounded-[14px] border border-[#ECECEC] bg-white shadow-panel backdrop-blur transition hover:border-[#D9D9D9]", className)} {...props} />;
 }
 
 export function Button({ className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -23,11 +23,15 @@ export function Button({ className, ...props }: React.ButtonHTMLAttributes<HTMLB
 }
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  const { className, ...inputProps } = props;
   return (
     <input
       suppressHydrationWarning
-      className="min-h-12 w-full rounded-md border border-black/10 bg-white px-3.5 text-sm font-medium outline-none transition placeholder:text-ink/35 focus:border-teal focus:ring-4 focus:ring-teal/10"
-      {...props}
+      className={cn(
+        "min-h-12 w-full rounded-[10px] border border-[#ECECEC] bg-white px-3.5 text-sm font-medium text-ink outline-none transition placeholder:text-[#999999] focus:border-[#D9D9D9] focus:ring-4 focus:ring-gold/25",
+        className
+      )}
+      {...inputProps}
     />
   );
 }

@@ -165,7 +165,7 @@ export default function HomePage() {
         <div className="grid flex-1 gap-10 py-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:py-10">
           <section className="max-w-5xl">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/78 px-3 py-2 text-sm font-bold text-ink shadow-soft backdrop-blur">
-              <WandSparkles className="size-4 text-gold" />
+              <WandSparkles className="size-4 text-[#8A6D1F]" />
               Multi-channel visibility scoring
             </div>
             <h1 className="max-w-4xl text-4xl font-black leading-[1.08] tracking-normal text-ink sm:text-5xl lg:text-[56px]">
@@ -186,7 +186,7 @@ export default function HomePage() {
                       <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${channel.tone}`}>
                         <Icon className="size-5" />
                       </div>
-                      <Sparkles className="size-4 text-gold" />
+                      <Sparkles className="size-4 text-[#8A6D1F]" />
                     </div>
                     <p className="mt-5 text-4xl font-black leading-none text-ink">{channel.value}</p>
                     <p className="mt-2 text-sm font-bold leading-5 text-ink/62">{channel.label}</p>
@@ -208,17 +208,17 @@ export default function HomePage() {
           <div ref={auditFormRef}>
           <Card className="relative overflow-hidden border-black/10 bg-white/96 shadow-panel">
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold via-mint to-teal" />
-            <div className="border-b border-black/10 bg-ink p-6 text-white">
-              <div className="mb-5 flex items-center justify-between gap-4">
+            <div className="border-b border-black/10 bg-ink p-5 text-white">
+              <div className="mb-4 flex items-center justify-between gap-4">
                 <p className="text-sm font-bold text-gold">AI Visibility Audit - Free</p>
-                <div className="flex size-10 items-center justify-center rounded-lg bg-white/10 text-gold shadow-soft">
-                  <Sparkles className="size-5" />
+                <div className="flex size-9 items-center justify-center rounded-lg bg-white/10 text-gold shadow-soft">
+                  <Sparkles className="size-4" />
                 </div>
               </div>
-              <h2 className="text-m font-black leading-tight">Your competitor is being recommended, Are you?</h2>
-              <p className="mt-3 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn't recommend your brand, you're invisible where buying decisions happen.</p>
+              <h2 className="text-xl font-black leading-tight">Your competitor is being recommended. Are you?</h2>
+              <p className="mt-2 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn't recommend your brand, you're invisible where buying decisions happen.</p>
             </div>
-            <form onSubmit={onSubmit} className="space-y-5 p-6">
+            <form onSubmit={onSubmit} className="space-y-4 p-5">
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Brand Name</label>
                 <Input value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Brand Name" required />
@@ -236,9 +236,9 @@ export default function HomePage() {
                 Show Me What AI Thinks Of My Brand
                 <ArrowRight className="size-4" />
               </Button>
-              <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+              <div className="grid grid-cols-3 gap-2 pt-0 text-center">
                 {["AI", "SEO", "GEO"].map((label) => (
-                  <div key={label} className="rounded-lg border border-black/10 bg-mist/70 px-2 py-3">
+                  <div key={label} className="rounded-lg border border-black/10 bg-mist/70 px-2 py-2.5">
                     <p className="text-xs font-black text-ink">{label}</p>
                     <p className="mt-1 text-[11px] font-semibold text-ink/48">included</p>
                   </div>
@@ -256,7 +256,7 @@ export default function HomePage() {
           <div className="rounded-lg border border-black/10 bg-white/78 p-5 shadow-soft backdrop-blur md:p-7 lg:p-8">
             <div className="mb-6 flex flex-col gap-3 border-b border-black/10 pb-5 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-sm font-black uppercase text-gold">Free report</p>
+                <p className="text-sm font-black uppercase text-[#8A6D1F]">Free report</p>
                 <h2 className="mt-2 text-2xl font-black leading-tight text-ink md:text-3xl">
                   10 audit dimensions. Zero fluff.
                 </h2>
@@ -308,47 +308,47 @@ export default function HomePage() {
       </div>
 
       {isCallModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 px-5 py-8 backdrop-blur-sm">
-          <div className="w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-panel">
-            <div className="flex items-start justify-between gap-4 border-b border-black/10 bg-ink p-5 text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-5 py-8 backdrop-blur-sm">
+          <div className="w-full max-w-sm overflow-hidden rounded-[14px] border border-[#ECECEC] bg-white shadow-panel">
+            <div className="flex items-start justify-between gap-4 border-b border-[#ECECEC] bg-white p-4">
               <div>
-                <p className="text-sm font-bold text-gold">Request a call back</p>
-                <h2 className="mt-1 text-2xl font-black">Fix your AI Search Score</h2>
+                <p className="text-xs font-bold text-[#8A6D1F]">Request a call back</p>
+                <h2 className="mt-1 text-xl font-black text-ink">Fix your AI Search Score</h2>
               </div>
-              <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(false)} className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white transition hover:bg-white/16">
-                <X className="size-5" />
+              <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(false)} className="flex size-8 shrink-0 items-center justify-center rounded-[10px] border border-[#ECECEC] bg-[#FAFAFA] text-[#666666] transition hover:border-[#D9D9D9] hover:text-ink">
+                <X className="size-4" />
               </button>
             </div>
 
             {callRequestSent ? (
-              <div className="p-6">
+              <div className="p-4">
                 <div className="rounded-lg border border-teal/20 bg-teal/10 p-4">
                   <p className="font-black text-ink">Thanks. We received your request.</p>
                   <p className="mt-2 text-sm font-medium leading-6 text-ink/62">Our team will use your details to follow up about improving your AI Search Score.</p>
                 </div>
-                <Button className="mt-5 w-full rounded-lg bg-gold text-ink hover:bg-gold" type="button" onClick={() => setIsCallModalOpen(false)}>
+                <Button className="mt-5 w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="button" onClick={() => setIsCallModalOpen(false)}>
                   Close
                 </Button>
               </div>
             ) : (
-              <form onSubmit={onCallRequestSubmit} className="space-y-4 p-6">
+              <form onSubmit={onCallRequestSubmit} className="space-y-3 p-4">
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-ink/70">Name</label>
-                  <Input placeholder="Your name" required />
+                  <label className="mb-1.5 block text-xs font-bold text-[#666666]">Name</label>
+                  <Input className="min-h-10 bg-[#FAFAFA]" placeholder="Your name" required />
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-ink/70">Company Email ID</label>
-                  <Input type="email" placeholder="you@company.com" required />
+                  <label className="mb-1.5 block text-xs font-bold text-[#666666]">Company Email ID</label>
+                  <Input className="min-h-10 bg-[#FAFAFA]" type="email" placeholder="you@company.com" required />
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-ink/70">Phone Number</label>
-                  <Input type="tel" placeholder="+91 98765 43210" required />
+                  <label className="mb-1.5 block text-xs font-bold text-[#666666]">Phone Number</label>
+                  <Input className="min-h-10 bg-[#FAFAFA]" type="tel" placeholder="+91 98765 43210" required />
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-bold text-ink/70">Website</label>
-                  <Input placeholder="https://domain.com" required />
+                  <label className="mb-1.5 block text-xs font-bold text-[#666666]">Website</label>
+                  <Input className="min-h-10 bg-[#FAFAFA]" placeholder="https://domain.com" required />
                 </div>
-                <Button className="w-full rounded-lg bg-gold text-ink hover:bg-gold" type="submit">
+                <Button className="w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="submit">
                   Submit Request
                   <ArrowRight className="size-4" />
                 </Button>
