@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowRight, BadgeCheck, Check, EyeOff, Gauge, Loader2, Sparkles, TimerReset, WandSparkles } from "lucide-react";
+import { AlertTriangle, ArrowRight, BadgeCheck, Check, EyeOff, Gauge, Loader2, Sparkles, TimerReset, WandSparkles, X } from "lucide-react";
 import { createReport } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
@@ -46,12 +46,15 @@ const auditDimensions = [
 
 export default function HomePage() {
   const router = useRouter();
+  const auditFormRef = useRef<HTMLDivElement>(null);
   const [brandName, setBrandName] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [businessEmail, setBusinessEmail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
+  const [isCallModalOpen, setIsCallModalOpen] = useState(false);
+  const [callRequestSent, setCallRequestSent] = useState(false);
 
   const completedTasks = useMemo(() => Math.floor((progress / 100) * tasks.length), [progress]);
 
@@ -77,6 +80,15 @@ export default function HomePage() {
       setIsGenerating(false);
       setProgress(0);
     }
+  }
+
+  function scrollToAuditForm() {
+    auditFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function onCallRequestSubmit(event: FormEvent) {
+    event.preventDefault();
+    setCallRequestSent(true);
   }
 
   if (isGenerating) {
@@ -193,6 +205,7 @@ export default function HomePage() {
             </div>
           </section>
 
+          <div ref={auditFormRef}>
           <Card className="relative overflow-hidden border-black/10 bg-white/96 shadow-panel">
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold via-mint to-teal" />
             <div className="border-b border-black/10 bg-ink p-6 text-white">
@@ -233,6 +246,10 @@ export default function HomePage() {
               </div>
             </form>
           </Card>
+          <p className="mt-4 rounded-lg border border-gold/30 bg-gold/15 px-4 py-3 text-center text-sm font-black leading-6 text-ink shadow-soft">
+            No credit card. No login. Just your score, your issues, and we help you to fix them.
+          </p>
+          </div>
         </div>
 
         <section className="pb-14 pt-8 lg:pb-20">
@@ -272,21 +289,74 @@ export default function HomePage() {
                 <p className="text-sm font-bold leading-6 text-ink/78">
                   The brands winning in 2026 are the ones AI trusts enough to recommend. Every week you wait, your competitors get cited instead of you.
                 </p>
-                <p className="mt-1 text-xs font-semibold text-ink/52">No credit card. No login. Just your score, your issues, and we help you to fix them.</p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button className="rounded-lg bg-gold px-5 text-ink shadow-soft hover:bg-gold" type="button">
+                <Button className="rounded-lg bg-gold px-5 text-ink shadow-soft hover:bg-gold" type="button" onClick={scrollToAuditForm}>
                   Run My Free Audit
                   <ArrowRight className="size-4" />
                 </Button>
-                <button suppressHydrationWarning type="button" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
+                <button suppressHydrationWarning type="button" onClick={() => { setCallRequestSent(false); setIsCallModalOpen(true); }} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
                   Request a call back
                 </button>
               </div>
             </div>
           </div>
         </section>
+        <p className="border-t border-black/10 pb-1 pt-3 text-center text-xs font-medium text-ink/40">
+          © 2026 GLOMAUDIT Pvt. Ltd. All Rights Reserved.
+        </p>
       </div>
+
+      {isCallModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 px-5 py-8 backdrop-blur-sm">
+          <div className="w-full max-w-lg overflow-hidden rounded-lg bg-white shadow-panel">
+            <div className="flex items-start justify-between gap-4 border-b border-black/10 bg-ink p-5 text-white">
+              <div>
+                <p className="text-sm font-bold text-gold">Request a call back</p>
+                <h2 className="mt-1 text-2xl font-black">Fix your AI Search Score</h2>
+              </div>
+              <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(false)} className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-white transition hover:bg-white/16">
+                <X className="size-5" />
+              </button>
+            </div>
+
+            {callRequestSent ? (
+              <div className="p-6">
+                <div className="rounded-lg border border-teal/20 bg-teal/10 p-4">
+                  <p className="font-black text-ink">Thanks. We received your request.</p>
+                  <p className="mt-2 text-sm font-medium leading-6 text-ink/62">Our team will use your details to follow up about improving your AI Search Score.</p>
+                </div>
+                <Button className="mt-5 w-full rounded-lg bg-gold text-ink hover:bg-gold" type="button" onClick={() => setIsCallModalOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={onCallRequestSubmit} className="space-y-4 p-6">
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-ink/70">Name</label>
+                  <Input placeholder="Your name" required />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-ink/70">Company Email ID</label>
+                  <Input type="email" placeholder="you@company.com" required />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-ink/70">Phone Number</label>
+                  <Input type="tel" placeholder="+91 98765 43210" required />
+                </div>
+                <div>
+                  <label className="mb-2 block text-sm font-bold text-ink/70">Website</label>
+                  <Input placeholder="https://domain.com" required />
+                </div>
+                <Button className="w-full rounded-lg bg-gold text-ink hover:bg-gold" type="submit">
+                  Submit Request
+                  <ArrowRight className="size-4" />
+                </Button>
+              </form>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
