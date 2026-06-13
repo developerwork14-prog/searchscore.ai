@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { Bot, FileText, MapPin, Search, Video } from "lucide-react";
 import type { StructuredAiVisibilityReport } from "@aiva/core";
 import { API_BASE, getReport } from "@/lib/api";
 import { CHATGPT_CITATION_CATEGORIES, GEMINI_CITATION_CATEGORIES } from "@/lib/audit-citation-categories";
@@ -26,6 +27,14 @@ type CheckLike = { passed?: boolean; skipped?: boolean; severity?: string };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { severity: string }[];
 };
+
+const strategyItems = [
+  { label: "SEO", icon: Search },
+  { label: "Local Search", icon: MapPin },
+  { label: "AEO", icon: FileText },
+  { label: "AI Visibility", icon: Bot },
+  { label: "Video Search", icon: Video }
+];
 
 const statusMeta: Record<Status, { icon: string; className: string }> = {
   Passed: { icon: "OK", className: styles.passed },
@@ -515,6 +524,26 @@ export default function ReportPage() {
           <div><h2>Unlock your complete AI visibility report</h2><p>We identified {issueCounts.high} high-impact issues that can materially improve your AI visibility and citation readiness.</p>
             <ul>{["What's hurting your rankings", "Why AI isn't citing your content", "Entity and authority gaps", "Missing trust signals", "Technical visibility blockers", "Revenue-impact opportunities"].map((item) => <li key={item}>{item}</li>)}</ul></div>
           <div><a className={styles.blackButton} href={pdfExportUrl} download>Get my full report</a><button className={styles.outlineGold}>Schedule strategy call</button></div>
+        </section>
+
+        <section className={styles.strategyUpgrade}>
+          <p>UPGRADE YOUR STRATEGY</p>
+          <h2>Upgrade from SEO → GEO</h2>
+          <span>Your customers are no longer searching only on Google. GEO helps your brand get discovered across AI-powered search and decision platforms.</span>
+          <div className={styles.strategyPills}>
+            {strategyItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <b key={item.label}>
+                  <Icon aria-hidden="true" />
+                  {item.label}
+                </b>
+              );
+            })}
+          </div>
+          <strong>Increase your visibility across ChatGPT, Gemini and Google AI.</strong>
+          <em>⚡ Limited onboarding slots available</em>
+          <button className={styles.blackButton} type="button">Get My AI Visibility Strategy</button>
         </section>
 
         <footer className={styles.footer}>

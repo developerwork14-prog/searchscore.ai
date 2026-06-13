@@ -124,6 +124,7 @@
 .tabs,
 .auditCard,
 .cta,
+.strategyUpgrade,
 .footer {
   animation: fadeUp 420ms ease both;
 }
@@ -841,6 +842,110 @@
   color: #111;
 }
 
+.strategyUpgrade {
+  margin-top: 18px;
+  padding: 38px 40px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(245, 230, 200, 0.18), rgba(255, 255, 255, 0.92)),
+    var(--card);
+  text-align: center;
+}
+
+.strategyUpgrade p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.strategyUpgrade h2 {
+  margin: 14px 0 12px;
+  color: var(--text);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.strategyUpgrade > span {
+  display: block;
+  max-width: 760px;
+  margin: 0 auto;
+  color: var(--secondary);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.strategyPills {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 720px;
+  margin: 28px auto;
+}
+
+.strategyPills b {
+  display: flex;
+  min-height: 74px;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--secondary);
+  font-size: 13px;
+  font-weight: 700;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.strategyPills svg {
+  width: 22px;
+  height: 22px;
+  color: var(--text);
+  stroke-width: 2.2;
+}
+
+.strategyPills b:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 1px 3px rgba(17, 17, 17, 0.05);
+  transform: translateY(-2px);
+}
+
+.strategyUpgrade strong {
+  display: block;
+  max-width: 680px;
+  margin: 0 auto;
+  color: var(--secondary);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.7;
+}
+
+.strategyUpgrade strong::first-letter {
+  color: inherit;
+}
+
+.strategyUpgrade em {
+  display: block;
+  margin: 22px 0 18px;
+  color: #8A6D1F;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.strategyUpgrade .blackButton {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 28px;
+}
+
 .footer {
   justify-content: space-between;
   gap: 16px;
@@ -954,6 +1059,7 @@
   .tabs,
   .auditCard,
   .cta,
+  .strategyUpgrade,
   .footer,
   .liveDot,
   .sparkline polygon,
@@ -1022,6 +1128,7 @@
   .topInner,
   .opportunities,
   .cta,
+  .strategyUpgrade,
   .footer {
     align-items: stretch;
     flex-direction: column;
@@ -1042,7 +1149,8 @@
   .kpiGrid,
   .engineGrid,
   .priorityList,
-  .cta ul {
+  .cta ul,
+  .strategyPills {
     grid-template-columns: 1fr;
   }
 
