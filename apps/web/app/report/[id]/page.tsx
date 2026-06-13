@@ -482,6 +482,11 @@ export default function ReportPage() {
           </article>
         </section>
 
+        <section className={styles.actionPlanBanner}>
+          <p>Want to improve your score? Request a free AEO, GEO action plan from the Glomaudit team.</p>
+          <button type="button">Request Action Plan ↓</button>
+        </section>
+
         <section className={`${styles.card} ${styles.aiReadiness}`}>
           <div className={styles.cardTitle}><h2>AI readiness</h2><p>Implemented audit signals for citation, crawl, and answer visibility.</p></div>
           <div className={styles.engineGrid}>
