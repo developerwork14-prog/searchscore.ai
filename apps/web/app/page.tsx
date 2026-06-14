@@ -14,10 +14,10 @@ const tasks = [
   "Detecting video & content authority signals",
   "Mapping your local AI discovery signals",
   "Finding technical issues blocking AI access",
-  "Running GEO / AEO Audit",
-  "Measuring you against competitors AI trusts",
+  "Running GEO / AEO audit",
+  "Measuring your brand against competitors trusted by AI",
   "Calculating your AI visibility score",
-  "Compiling Insights"
+  "Compiling insights and recommendations"
 ];
 
 const statuses = [
@@ -118,7 +118,7 @@ export default function HomePage() {
                 Live scan running
               </div>
               <h1 className="text-3xl font-bold md:text-4xl">Uncovering your AI blind spots</h1>
-              <p className="mt-3 text-sm leading-6 text-white/66">The audit is crawling how AI engines read, trust, and cite your brand right now across search, answers, schema, and authority signals.</p>
+              <p className="mt-3 text-sm leading-6 text-white/66">This audit is analyzing how AI engines read, trust, and cite your brand right now across search, answers, schema, and authority signals.</p>
             </div>
             <div className="grid gap-8 p-6 md:grid-cols-[240px_1fr] md:items-center md:p-10">
               <div className="flex flex-col items-center">
@@ -231,7 +231,7 @@ export default function HomePage() {
                   <Sparkles className="size-4" />
                 </div>
               </div>
-              <h2 className="text-xl font-black leading-tight">Your competitor is being recommended. Are you?</h2>
+              <h2 className="text-xl font-black leading-tight">Your competitors is being recommended. Are you?</h2>
               <p className="mt-2 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn&apos;t recommend your brand, you&apos;re invisible where buying decisions happen.</p>
             </div>
             <form onSubmit={onSubmit} className="space-y-4 p-5">
@@ -272,9 +272,9 @@ export default function HomePage() {
           <div className="rounded-lg border border-black/10 bg-white/78 p-5 shadow-soft backdrop-blur md:p-7 lg:p-8">
             <div className="mb-6 flex flex-col gap-3 border-b border-black/10 pb-5 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-sm font-black uppercase text-[#8A6D1F]">Free report</p>
+                <p className="text-sm font-black text-[#8A6D1F]">Free Report</p>
                 <h2 className="mt-2 text-2xl font-black leading-tight text-ink md:text-3xl">
-                  10 audit dimensions. Zero fluff.
+                  10 Audit Dimensions. Zero Fluff.
                 </h2>
               </div>
               <p className="max-w-xl text-sm font-medium leading-6 text-ink/60">
