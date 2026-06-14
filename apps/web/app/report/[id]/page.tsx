@@ -334,6 +334,8 @@ export default function ReportPage() {
   const [error, setError] = useState("");
   const [active, setActive] = useState<AuditTabId>("technical");
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
+  const [insightsStatus, setInsightsStatus] = useState<"idle" | "submitting" | "subscribed">("idle");
+  const [insightsError, setInsightsError] = useState("");
 
   useEffect(() => {
     getReport(params.id).then(setReport).catch((err) => setError(err instanceof Error ? err.message : "Report not found"));
@@ -407,6 +409,29 @@ export default function ReportPage() {
   };
   const goToFullReport = () => {
     document.getElementById("full-report")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  const subscribeToInsights = async () => {
+    if (insightsStatus !== "idle") return;
+    setInsightsStatus("submitting");
+    setInsightsError("");
+
+    try {
+      const response = await fetch(`${API_BASE}/api/insights-subscription`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId: params.id })
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(typeof result.message === "string" ? result.message : "Could not subscribe to insights.");
+      }
+
+      setInsightsStatus("subscribed");
+    } catch (err) {
+      setInsightsStatus("idle");
+      setInsightsError(err instanceof Error ? err.message : "Could not subscribe to insights.");
+    }
   };
   const kpis = [
     { label: "AI Visibility Score", value: `${aiVisibilityScore}%`, meta: statusLabel(aiVisibilityScore), icon: "AI", chip: "#FBF1E3", color: "#B8902B", series: auditScores },
@@ -529,7 +554,13 @@ export default function ReportPage() {
 
         <section className={styles.insightsBanner}>
           <p>Want expert insights on your AI visibility? Get tailored recommendations every two weeks.</p>
-          <button type="button">Send me Insights</button>
+          <button type="button" onClick={subscribeToInsights} disabled={insightsStatus !== "idle"}>
+            {insightsStatus === "submitting" ? "Subscribing..." : insightsStatus === "subscribed" ? "Subscribed" : "Send me Insights"}
+          </button>
+          {insightsStatus === "subscribed" ? (
+            <span className={styles.insightsMessage}>You&apos;re now subscribed to personalized AI visibility insights, recommendations, and growth opportunities.</span>
+          ) : null}
+          {insightsError ? <span className={styles.insightsError}>{insightsError}</span> : null}
         </section>
 
         <section className={styles.cta} id="full-report">

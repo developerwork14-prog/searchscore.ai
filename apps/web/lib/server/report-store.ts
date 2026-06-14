@@ -11,15 +11,27 @@ interface StrategyLead {
   createdAt: string;
 }
 
+interface InsightSubscription {
+  reportId: string;
+  email: string;
+  brand: string;
+  website: string;
+  reportUrl: string;
+  frequency: "biweekly";
+  createdAt: string;
+}
+
 declare global {
   var aivaMongoClientPromise: Promise<MongoClient> | undefined;
   var aivaMemoryReports: Map<string, AiVisibilityReport> | undefined;
   var aivaMemoryLeads: StrategyLead[] | undefined;
+  var aivaInsightSubscriptions: InsightSubscription[] | undefined;
   var aivaMongoLastError: string | undefined;
 }
 
 const memoryReports = globalThis.aivaMemoryReports ??= new Map<string, AiVisibilityReport>();
 const memoryLeads = globalThis.aivaMemoryLeads ??= [];
+const memorySubscriptions = globalThis.aivaInsightSubscriptions ??= [];
 
 function mongoClient() {
   const uri = process.env.MONGODB_URI;
@@ -131,5 +143,35 @@ export const reportStore = {
       memoryLeads.push(lead);
     }
     return lead;
+  },
+
+  async saveInsightSubscription(subscription: InsightSubscription) {
+    const db = await database();
+    if (!db) {
+      const existingIndex = memorySubscriptions.findIndex((item) => item.reportId === subscription.reportId && item.email === subscription.email);
+      if (existingIndex >= 0) {
+        memorySubscriptions[existingIndex] = subscription;
+      } else {
+        memorySubscriptions.push(subscription);
+      }
+      return subscription;
+    }
+
+    try {
+      await db.collection<InsightSubscription>("insight_subscriptions").updateOne(
+        { reportId: subscription.reportId, email: subscription.email },
+        { $set: subscription },
+        { upsert: true }
+      );
+    } catch (error) {
+      console.error("MongoDB insight subscription save failed; using memory fallback", error);
+      const existingIndex = memorySubscriptions.findIndex((item) => item.reportId === subscription.reportId && item.email === subscription.email);
+      if (existingIndex >= 0) {
+        memorySubscriptions[existingIndex] = subscription;
+      } else {
+        memorySubscriptions.push(subscription);
+      }
+    }
+    return subscription;
   }
 };
