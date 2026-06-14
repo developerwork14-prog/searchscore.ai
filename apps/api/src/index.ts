@@ -15,16 +15,48 @@ app.use(cors({ origin: env.webOrigin }));
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "ymail.com",
+  "rocketmail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+  "pm.me",
+  "zoho.com",
+  "mail.com",
+  "gmx.com",
+  "gmx.net",
+  "yandex.com",
+  "rediffmail.com"
+]);
+
+const BUSINESS_EMAIL_MESSAGE = "Please use your workspace email. Personal emails (Gmail, Yahoo, Outlook, etc.) are not allowed.";
+
+function isBusinessEmail(email: string) {
+  const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+  return Boolean(domain) && !PERSONAL_EMAIL_DOMAINS.has(domain);
+}
+
 const reportInputSchema = z.object({
   brandName: z.string().min(2).max(120),
   websiteUrl: z.string().min(4).max(300),
-  businessEmail: z.string().email()
+  businessEmail: z.string().email().refine(isBusinessEmail, BUSINESS_EMAIL_MESSAGE)
 });
 
 const strategyCallSchema = z.object({
   reportId: z.string().min(1),
   name: z.string().min(2).max(120),
-  email: z.string().email(),
+  email: z.string().email().refine(isBusinessEmail, BUSINESS_EMAIL_MESSAGE),
   phone: z.string().min(7).max(30)
 });
 
@@ -145,7 +177,7 @@ app.get("/api/reports/:id/export/:format", async (req, res) => {
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (error instanceof z.ZodError) {
-    res.status(400).json({ message: "Invalid request", issues: error.flatten() });
+    res.status(400).json({ message: error.issues[0]?.message ?? "Invalid request", issues: error.flatten() });
     return;
   }
   console.error(error);

@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { ArrowRight, X } from "lucide-react";
 import { Button, Input } from "@/components/ui";
+import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
 
 type CallbackModalProps = {
   isOpen: boolean;
@@ -21,13 +22,19 @@ export function CallbackModal({ isOpen, onClose }: CallbackModalProps) {
     setRequestError("");
     setIsSubmitting(true);
     const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "");
+    if (!isBusinessEmail(email)) {
+      setRequestError(BUSINESS_EMAIL_MESSAGE);
+      setIsSubmitting(false);
+      return;
+    }
     try {
       const response = await fetch("/api/callback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: data.get("name"),
-          email: data.get("email"),
+          email,
           phone: data.get("phone"),
           website: data.get("website")
         })
@@ -94,7 +101,7 @@ export function CallbackModal({ isOpen, onClose }: CallbackModalProps) {
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-bold text-[#666666]">Website</label>
-              <Input name="website" className="min-h-10 bg-[#FAFAFA]" placeholder="https://domain.com" required />
+              <Input name="website" className="min-h-10 bg-[#FAFAFA]" placeholder="https://example.com" required />
             </div>
             {requestError ? <p className="rounded-[10px] border border-coral/20 bg-coral/10 px-3 py-2 text-xs font-bold leading-5 text-coral">{requestError}</p> : null}
             <Button className="w-full rounded-[10px] border border-[#E8D4A8] bg-gold text-ink hover:bg-gold" type="submit" disabled={isSubmitting}>

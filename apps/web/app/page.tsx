@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowRight, BadgeCheck, Check, EyeOff, Gauge, Loader2, S
 import { createReport } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 import { CallbackModal } from "@/components/callback-modal";
+import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
 
 const tasks = [
   "Checking if ChatGPT cites your brand",
@@ -79,6 +80,10 @@ export default function HomePage() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    if (!isBusinessEmail(businessEmail)) {
+      setError(BUSINESS_EMAIL_MESSAGE);
+      return;
+    }
     setIsGenerating(true);
     setProgress(8);
     try {
@@ -231,12 +236,12 @@ export default function HomePage() {
             </div>
             <form onSubmit={onSubmit} className="space-y-4 p-5">
               <div>
-                <label className="mb-2 block text-sm font-bold text-ink/70">Brand Name</label>
+                <label className="mb-2 block text-sm font-bold text-ink/70">Enter Your Brand Name</label>
                 <Input id="audit-brand-name" value={brandName} onChange={(event) => setBrandName(event.target.value)} placeholder="Brand Name" required />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Website URL</label>
-                <Input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://domain.com" required />
+                <Input value={websiteUrl} onChange={(event) => setWebsiteUrl(event.target.value)} placeholder="https://example.com" required />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-bold text-ink/70">Business Email</label>

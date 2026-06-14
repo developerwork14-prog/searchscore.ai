@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { reportStore } from "@/lib/server/report-store";
+import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
 
 export const runtime = "nodejs";
 
 const strategyCallSchema = z.object({
   reportId: z.string().min(1),
   name: z.string().min(2).max(120),
-  email: z.string().email(),
+  email: z.string().email().refine(isBusinessEmail, BUSINESS_EMAIL_MESSAGE),
   phone: z.string().min(7).max(30)
 });
 
@@ -56,7 +57,8 @@ export async function POST(request: NextRequest) {
     }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ message: "Invalid request", issues: error.flatten() }, { status: 400 });
+      const firstError = error.issues[0]?.message;
+      return NextResponse.json({ message: firstError ?? "Invalid request", issues: error.flatten() }, { status: 400 });
     }
     console.error(error);
     return NextResponse.json({ message: "Internal server error" }, { status: 500 });
