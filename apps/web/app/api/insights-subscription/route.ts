@@ -5,6 +5,8 @@ import nodemailer from "nodemailer";
 import { resolve } from "node:path";
 import { z } from "zod";
 
+export const runtime = "nodejs";
+
 for (const envPath of [
   resolve(process.cwd(), ".env.local"),
   resolve(process.cwd(), ".env"),

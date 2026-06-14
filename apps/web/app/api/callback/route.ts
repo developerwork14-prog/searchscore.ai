@@ -48,7 +48,8 @@ export async function POST(request: NextRequest) {
     const origin = request.headers.get("origin") ?? new URL(request.url).origin;
     const subject = `Callback Request - ${body.name}`;
     const text = [
-      "Callback Request",
+      "New callback request",
+      "",
       `Name: ${body.name}`,
       `Company Email: ${body.email}`,
       `Phone: ${body.phone}`,
@@ -90,6 +91,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: firstError ?? "Invalid request", issues: error.flatten() }, { status: 400 });
     }
     console.error(error);
-    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ message: "Could not submit callback request." }, { status: 500 });
   }
 }
