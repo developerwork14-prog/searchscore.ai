@@ -137,15 +137,15 @@ export function reportToPdf(report: AiVisibilityReport) {
     ink: "0.07 0.07 0.07",
     secondary: "0.40 0.40 0.40",
     muted: "0.60 0.60 0.60",
-    border: "0.93 0.93 0.93",
+    border: "0.90 0.90 0.90",
     gold: "0.90 0.77 0.42",
     goldDark: "0.54 0.43 0.12",
-    goldSoft: "0.96 0.91 0.80",
+    goldSoft: "0.99 0.96 0.89",
     teal: "0.12 0.62 0.33",
     tealSoft: "0.92 0.96 0.94",
     coral: "0.86 0.15 0.15",
     coralSoft: "0.99 0.96 0.92",
-    cloud: "0.97 0.97 0.97",
+    cloud: "0.99 0.99 0.99",
     white: "1 1 1"
   };
 
@@ -186,12 +186,20 @@ export function reportToPdf(report: AiVisibilityReport) {
     lines.forEach((line, index) => text(line, x, top - index * lineGap, size, fill, font));
     return top - Math.max(1, lines.length) * lineGap;
   };
+  const watermark = () => {
+    setFill("0.88 0.88 0.88");
+    push("q 0.707 0.707 -0.707 0.707 186 230 cm BT /F2 54 Tf 0 0 Td (glomaudit.com) Tj ET Q");
+  };
   const drawPageChrome = (title = "AI Visibility Report") => {
     rect(0, 792, 612, 792, color.bg);
-    text("GLOMAUDIT", 42, 758, 12, color.ink, "F2");
+    watermark();
+    text("GLOMAUDIT.COM", 42, 758, 12, color.ink, "F2");
     text(title, 430, 758, 9, color.muted, "F1");
     setStroke(color.border);
     push("42 730 m 570 730 l S");
+    setStroke(color.border);
+    push("42 44 m 570 44 l S");
+    text("GLOMAUDIT.COM", 250, 28, 8, color.muted, "F2");
     y = 700;
   };
   const newPage = (title?: string) => {
@@ -203,7 +211,7 @@ export function reportToPdf(report: AiVisibilityReport) {
     if (y - height < 56) newPage(title);
   };
   const toneForScore = (score: number) => score < 55 ? color.coral : score < 75 ? color.gold : color.teal;
-  const severityFill = (score: number) => score < 70 ? color.goldSoft : color.white;
+  const severityFill = (score: number) => score < 70 ? color.goldSoft : "0.995 0.995 0.995";
   const issueLabel = (count: number) => count === 1 ? "1 issue" : `${count} issues`;
   const pill = (value: string, x: number, top: number, width: number, fill = color.goldSoft, textColor = color.ink) => {
     roundedRect(x, top, width, 22, 7, fill, color.border);
@@ -223,7 +231,7 @@ export function reportToPdf(report: AiVisibilityReport) {
   };
   const categoryRow = (category: { categoryName: string; score: number; failedChecks: number; status: string; group?: string }, index: number, x: number, width: number) => {
     const rowTop = y;
-    rect(x, rowTop, width, 32, index % 2 === 0 ? color.white : color.cloud, color.border);
+    rect(x, rowTop, width, 32, index % 2 === 0 ? "0.995 0.995 0.995" : color.cloud, color.border);
     text(category.categoryName.slice(0, 44), x + 12, rowTop - 13, 9, color.ink, "F2");
     if (category.group) text(category.group.slice(0, 36), x + 12, rowTop - 25, 7, color.muted, "F1");
     text(`${category.score}%`, x + width - 218, rowTop - 19, 9, toneForScore(category.score), "F2");
