@@ -138,13 +138,13 @@ export function reportToPdf(report: AiVisibilityReport) {
     secondary: "0.40 0.40 0.40",
     muted: "0.60 0.60 0.60",
     border: "0.93 0.93 0.93",
-    gold: "0.83 0.69 0.22",
+    gold: "0.90 0.77 0.42",
     goldDark: "0.54 0.43 0.12",
-    goldSoft: "0.96 0.90 0.78",
+    goldSoft: "0.96 0.91 0.80",
     teal: "0.12 0.62 0.33",
     tealSoft: "0.92 0.96 0.94",
     coral: "0.86 0.15 0.15",
-    coralSoft: "0.98 0.92 0.92",
+    coralSoft: "0.99 0.96 0.92",
     cloud: "0.97 0.97 0.97",
     white: "1 1 1"
   };
@@ -156,6 +156,26 @@ export function reportToPdf(report: AiVisibilityReport) {
     setFill(fill);
     if (stroke) setStroke(stroke);
     push(`${x} ${top - height} ${width} ${height} re ${stroke ? "B" : "f"}`);
+  };
+  const roundedRect = (x: number, top: number, width: number, height: number, radius: number, fill: string, stroke?: string) => {
+    const right = x + width;
+    const bottom = top - height;
+    const r = Math.min(radius, width / 2, height / 2);
+    const c = r * 0.5522847498;
+    setFill(fill);
+    if (stroke) setStroke(stroke);
+    push([
+      `${x + r} ${top} m`,
+      `${right - r} ${top} l`,
+      `${right - r + c} ${top} ${right} ${top - r + c} ${right} ${top - r} c`,
+      `${right} ${bottom + r} l`,
+      `${right} ${bottom + r - c} ${right - r + c} ${bottom} ${right - r} ${bottom} c`,
+      `${x + r} ${bottom} l`,
+      `${x + r - c} ${bottom} ${x} ${bottom + r - c} ${x} ${bottom + r} c`,
+      `${x} ${top - r} l`,
+      `${x} ${top - r + c} ${x + r - c} ${top} ${x + r} ${top} c`,
+      `h ${stroke ? "B" : "f"}`
+    ].join(" "));
   };
   const text = (value: string | number, x: number, top: number, size = 10, fill = color.ink, font = "F1") => {
     setFill(fill);
@@ -186,11 +206,11 @@ export function reportToPdf(report: AiVisibilityReport) {
   const severityFill = (score: number) => score < 70 ? color.goldSoft : color.white;
   const issueLabel = (count: number) => count === 1 ? "1 issue" : `${count} issues`;
   const pill = (value: string, x: number, top: number, width: number, fill = color.goldSoft, textColor = color.ink) => {
-    rect(x, top, width, 22, fill, color.border);
+    roundedRect(x, top, width, 22, 7, fill, color.border);
     text(value, x + 10, top - 14, 8, textColor, "F2");
   };
   const statCard = (x: number, top: number, width: number, title: string, value: string, note: string, fill = color.white) => {
-    rect(x, top, width, 96, fill, color.border);
+    roundedRect(x, top, width, 96, 10, fill, color.border);
     text(title, x + 14, top - 20, 9, color.secondary, "F2");
     text(value, x + 14, top - 52, 24, color.ink, "F2");
     wrapped(note, x + 14, top - 72, 30, 8, color.secondary, "F1", 10);
@@ -206,9 +226,9 @@ export function reportToPdf(report: AiVisibilityReport) {
     rect(x, rowTop, width, 32, index % 2 === 0 ? color.white : color.cloud, color.border);
     text(category.categoryName.slice(0, 44), x + 12, rowTop - 13, 9, color.ink, "F2");
     if (category.group) text(category.group.slice(0, 36), x + 12, rowTop - 25, 7, color.muted, "F1");
-    text(`${category.score}%`, x + width - 188, rowTop - 19, 9, toneForScore(category.score), "F2");
-    text(issueLabel(category.failedChecks), x + width - 132, rowTop - 19, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
-    text(category.status, x + width - 58, rowTop - 18, 8, color.muted, "F1");
+    text(`${category.score}%`, x + width - 218, rowTop - 19, 9, toneForScore(category.score), "F2");
+    text(issueLabel(category.failedChecks), x + width - 166, rowTop - 19, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
+    text(category.status, x + width - 94, rowTop - 18, 8, color.muted, "F1");
     y -= 32;
   };
   const issueList = (title: string, items: typeof priorityIssues, x: number, width: number) => {
@@ -216,7 +236,7 @@ export function reportToPdf(report: AiVisibilityReport) {
     text(title, x, y, 14, color.ink, "F2");
     y -= 20;
     if (!items.length) {
-      rect(x, y, width, 38, color.cloud, color.border);
+      roundedRect(x, y, width, 38, 9, color.cloud, color.border);
       text("No urgent issues detected in this section.", x + 12, y - 20, 10, color.teal, "F2");
       y -= 52;
       return;
@@ -225,15 +245,15 @@ export function reportToPdf(report: AiVisibilityReport) {
       ensure(42, title);
       categoryRow(category, index, x, width);
     });
-    y -= 10;
+    y -= 4;
   };
 
   drawPageChrome(`Downloaded ${exportedAt}`);
-  rect(42, y, 528, 126, color.ink);
+  roundedRect(42, y, 528, 126, 14, color.ink);
   text("AI VISIBILITY REPORT", 62, y - 28, 9, color.gold, "F2");
   wrapped(publicReport.brand, 62, y - 58, 36, 28, color.white, "F2", 30);
   text(publicReport.url, 62, y - 110, 9, color.muted, "F1");
-  rect(430, y - 32, 104, 62, color.gold);
+  roundedRect(430, y - 32, 104, 62, 10, color.gold);
   text("Overall Score", 446, y - 54, 8, color.ink, "F2");
   text(`${publicReport.overall_score}%`, 446, y - 82, 26, color.ink, "F2");
   y -= 160;
@@ -243,7 +263,7 @@ export function reportToPdf(report: AiVisibilityReport) {
   statCard(406, y, 164, "AI Citation Readiness", `${publicReport.geo_aeo_audit.score}%`, "GEO, AEO and answer-readiness signals.", color.white);
   y -= 122;
 
-  rect(42, y, 528, 92, color.goldSoft, "0.91 0.83 0.66");
+  roundedRect(42, y, 528, 92, 12, color.goldSoft, "0.91 0.83 0.66");
   text("Priority Action", 62, y - 26, 15, color.ink, "F2");
   wrapped(`We identified ${totalIssues} issues that can materially improve AI visibility and citation readiness. Start with crawl access, entity trust, structured data, local discovery, and answer-ready content.`, 62, y - 48, 82, 10, color.ink, "F1", 13);
   y -= 122;
@@ -256,10 +276,10 @@ export function reportToPdf(report: AiVisibilityReport) {
   });
   y -= 236;
 
-  rect(42, y, 528, 62, color.white, color.border);
+  roundedRect(42, y, 528, 62, 12, color.white, color.border);
   text("Want to improve your score?", 62, y - 24, 12, color.ink, "F2");
   wrapped("Request a free AEO, GEO action plan from the Glomaudit team.", 62, y - 42, 74, 9, color.secondary, "F1", 11);
-  rect(440, y - 16, 96, 30, color.gold, "0.83 0.69 0.22");
+  roundedRect(440, y - 16, 96, 30, 8, color.gold, "0.83 0.69 0.22");
   text("Action Plan", 462, y - 36, 10, color.ink, "F2");
 
   newPage("AI Readiness");
@@ -274,21 +294,26 @@ export function reportToPdf(report: AiVisibilityReport) {
   sectionTitle("Top Issues To Fix First", "These are the highest-friction areas found in the audit. Fixing them first can improve how search engines and AI systems crawl, understand, trust, and recommend the brand.");
   issueList("Priority Findings", priorityIssues, 42, 528);
 
-  newPage("Audit Categories");
+  if (y < 190) {
+    newPage("Audit Categories");
+  } else {
+    y -= 18;
+  }
+  sectionTitle("Audit Categories");
   auditGroups.forEach((group) => {
-    y -= 10;
-    ensure(98, group.label);
+    y -= 8;
+    ensure(92, group.label);
     text(group.label, 42, y, 14, color.ink, "F2");
     y -= 24;
     group.categories.forEach((category, index) => {
-      ensure(44, group.label);
-      rect(42, y, 528, 30, severityFill(category.score), color.border);
-      text(category.categoryName.slice(0, 48), 54, y - 19, 9, color.ink, "F2");
-      text(`${category.score}%`, 370, y - 19, 9, toneForScore(category.score), "F2");
-      text(issueLabel(category.failedChecks), 426, y - 19, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
-      text(category.status, 502, y - 19, 8, color.muted, "F1");
-      y -= 30;
-      if (index === group.categories.length - 1) y -= 24;
+      ensure(40, group.label);
+      rect(42, y, 528, 28, severityFill(category.score), color.border);
+      text(category.categoryName.slice(0, 48), 54, y - 18, 9, color.ink, "F2");
+      text(`${category.score}%`, 348, y - 18, 9, toneForScore(category.score), "F2");
+      text(issueLabel(category.failedChecks), 406, y - 18, 9, category.failedChecks > 0 ? color.coral : color.teal, "F2");
+      text(category.status, 482, y - 18, 8, color.muted, "F1");
+      y -= 28;
+      if (index === group.categories.length - 1) y -= 18;
     });
   });
 

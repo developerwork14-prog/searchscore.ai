@@ -47,10 +47,22 @@ export async function POST(request: NextRequest) {
     const from = process.env.LEAD_EMAIL_FROM ?? process.env.EMAIL_FROM ?? smtpUser;
 
     if (!to || !smtpHost || !smtpUser || !smtpPass || !from) {
-      console.log("Insight subscription saved, but email notification is not configured.", subscription);
+      const missing = [
+        !to ? "LEAD_NOTIFICATION_EMAIL" : "",
+        !smtpHost ? "SMTP_HOST" : "",
+        !smtpUser ? "SMTP_USER" : "",
+        !smtpPass ? "SMTP_PASS" : "",
+        !from ? "LEAD_EMAIL_FROM" : ""
+      ].filter(Boolean);
+      console.warn("Insight subscription saved, but SMTP notification is not configured.", {
+        missing,
+        reportId: subscription.reportId,
+        brand: subscription.brand,
+        hasEmail: Boolean(subscription.email)
+      });
       return NextResponse.json(
-        { message: "Subscription saved, but SMTP email notification is not configured." },
-        { status: 503 }
+        { ok: true, notified: false, message: "Insight subscription saved." },
+        { status: 201 }
       );
     }
 
@@ -85,6 +97,27 @@ export async function POST(request: NextRequest) {
         </table>
       </div>
     `;
+    const subscriberText = [
+      `Hi ${report.brandName},`,
+      "",
+      "You're now subscribed to personalized AI visibility insights, recommendations, and growth opportunities.",
+      "",
+      "We'll use your audit details to send relevant AI visibility recommendations and growth opportunities.",
+      "",
+      `Report: ${reportUrl}`,
+      "",
+      "GLOMAUDIT"
+    ].join("\n");
+
+    const subscriberHtml = `
+      <div style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">
+        <h2 style="margin: 0 0 12px;">You're subscribed</h2>
+        <p>You're now subscribed to personalized AI visibility insights, recommendations, and growth opportunities.</p>
+        <p>We'll use your audit details to send relevant AI visibility recommendations and growth opportunities.</p>
+        <p><a href="${safeReportUrl}">View your AI visibility report</a></p>
+        <p style="margin-top: 24px; color: #666;">GLOMAUDIT</p>
+      </div>
+    `;
 
     const transporter = nodemailer.createTransport({
       host: smtpHost,
@@ -105,6 +138,18 @@ export async function POST(request: NextRequest) {
         text,
         html
       });
+      await transporter.sendMail({
+        from,
+        to: report.businessEmail,
+        subject: "You're subscribed to GLOMAUDIT AI visibility insights",
+        text: subscriberText,
+        html: subscriberHtml
+      });
+      console.log("Insight subscription emails sent.", {
+        reportId: subscription.reportId,
+        ownerNotified: Boolean(to),
+        subscriberNotified: Boolean(report.businessEmail)
+      });
     } catch (error) {
       console.error("Insight subscription SMTP email failed", error);
       if (error && typeof error === "object" && "code" in error && error.code === "EAUTH") {
@@ -113,7 +158,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Subscription saved, but the notification email could not be sent." }, { status: 502 });
     }
 
-    return NextResponse.json({ ok: true, message: "Insight subscription saved." }, { status: 201 });
+    return NextResponse.json({ ok: true, notified: true, message: "Insight subscription saved." }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ message: "Invalid request", issues: error.flatten() }, { status: 400 });
