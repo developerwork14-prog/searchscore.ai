@@ -187,7 +187,7 @@ export default function HomePage() {
             <h1 className="max-w-4xl text-4xl font-black leading-[1.08] tracking-normal text-ink sm:text-5xl lg:text-[56px]">
               <span className="block">Your competitors are being</span>
               <span className="block">recommended by AI.</span>
-              <span className="block">You're not. Here's proof.</span>
+              <span className="block">You&apos;re not. Here&apos;s proof.</span>
             </h1>
             <p className="mt-5 max-w-2xl text-base font-medium leading-7 text-ink/62 sm:text-lg">
               Generate a boardroom-ready visibility score across AI answers, classic search, local discovery, video results, entity authority, and category-level prompts.
@@ -232,7 +232,7 @@ export default function HomePage() {
                 </div>
               </div>
               <h2 className="text-xl font-black leading-tight">Your competitor is being recommended. Are you?</h2>
-              <p className="mt-2 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn't recommend your brand, you're invisible where buying decisions happen.</p>
+              <p className="mt-2 max-w-sm text-sm leading-6 text-white/68">You can rank #1 and still lose. If AI doesn&apos;t recommend your brand, you&apos;re invisible where buying decisions happen.</p>
             </div>
             <form onSubmit={onSubmit} className="space-y-4 p-5">
               <div>
