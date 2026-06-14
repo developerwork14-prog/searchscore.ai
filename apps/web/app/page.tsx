@@ -37,11 +37,11 @@ const auditDimensions = [
   { dimension: "ChatGPT Citation", reveals: "Are you being recommended in AI chat answers?" },
   { dimension: "Gemini Citation", reveals: "Does Google's AI see you as a trusted source?" },
   { dimension: "Schema & Structured Data", reveals: "Can AI engines actually read your content?" },
-  { dimension: "E-E-A-T Audit", reveals: "Do you signal expertise, authority, and trust?" },
+  { dimension: "E-E-A-T Audit", reveals: "Do you demonstrate expertise, experience, authority, and trust?" },
   { dimension: "Technical SEO", reveals: "Are crawl errors silently blocking your visibility?" },
   { dimension: "GEO / AEO Signals", reveals: "Are you optimized for AI-generated answers?" },
   { dimension: "On-Page SEO", reveals: "Is your content structured to rank and get cited?" },
-  { dimension: "Indexability", reveals: "Is Google even seeing your pages?" },
+  { dimension: "Indexability", reveals: "Is Google even able to see your pages?" },
   { dimension: "Trust Signals", reveals: "Does your site pass the credibility test?" },
   { dimension: "Image SEO", reveals: "Are your visuals working for or against you?" }
 ];
@@ -157,15 +157,15 @@ export default function HomePage() {
   }
 
   return (
-    <main className="app-shell min-h-screen overflow-hidden px-5 py-6">
+    <main className="app-shell min-h-screen overflow-hidden px-4 py-5 sm:px-5 sm:py-6">
       <div className="mx-auto flex min-h-[calc(100vh-48px)] max-w-7xl flex-col">
         <header className="flex items-center justify-between gap-4 py-2">
           <div className="inline-flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg bg-ink text-gold shadow-soft">
-              <Gauge className="size-5" />
+            <div className="flex size-9 items-center justify-center rounded-lg bg-ink text-gold shadow-soft sm:size-10">
+              <Gauge className="size-[18px] sm:size-5" />
             </div>
             <div>
-              <p className="text-sm font-black text-ink">AI Visibility Analyzer</p>
+              <p className="text-[13px] font-black text-ink sm:text-sm">AI Visibility Analyzer</p>
               <p className="text-xs font-semibold text-ink/50">GLOMAUDIT</p>
             </div>
           </div>
@@ -178,18 +178,18 @@ export default function HomePage() {
           </div>
         </header>
 
-        <div className="grid flex-1 gap-10 py-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:py-10">
+        <div className="grid flex-1 gap-8 py-7 sm:gap-10 sm:py-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:py-10">
           <section className="max-w-5xl">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/78 px-3 py-2 text-sm font-bold text-ink shadow-soft backdrop-blur">
-              <WandSparkles className="size-4 text-[#8A6D1F]" />
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/78 px-3 py-2 text-xs font-bold text-ink shadow-soft backdrop-blur sm:mb-6 sm:text-sm">
+              <WandSparkles className="size-3.5 text-[#8A6D1F] sm:size-4" />
               Multi-channel visibility scoring
             </div>
-            <h1 className="max-w-4xl text-4xl font-black leading-[1.08] tracking-normal text-ink sm:text-5xl lg:text-[56px]">
+            <h1 className="max-w-4xl text-[32px] font-black leading-[1.08] tracking-normal text-ink min-[390px]:text-[36px] sm:text-5xl lg:text-[56px]">
               <span className="block">Your competitors are being</span>
               <span className="block">recommended by AI.</span>
               <span className="block">You&apos;re not. Here&apos;s proof.</span>
             </h1>
-            <p className="mt-5 max-w-2xl text-base font-medium leading-7 text-ink/62 sm:text-lg">
+            <p className="mt-4 max-w-2xl text-[15px] font-medium leading-6 text-ink/62 sm:mt-5 sm:text-lg sm:leading-7">
               Generate a boardroom-ready visibility score across AI answers, classic search, local discovery, video results, entity authority, and category-level prompts.
             </p>
 
@@ -204,8 +204,8 @@ export default function HomePage() {
                       </div>
                       <Sparkles className="size-4 text-[#8A6D1F]" />
                     </div>
-                    <p className="mt-5 text-4xl font-black leading-none text-ink">{channel.value}</p>
-                    <p className="mt-2 text-sm font-bold leading-5 text-ink/62">{channel.label}</p>
+                    <p className="mt-4 text-3xl font-black leading-none text-ink sm:mt-5 sm:text-4xl">{channel.value}</p>
+                    <p className="mt-2 text-[13px] font-bold leading-5 text-ink/62 sm:text-sm">{channel.label}</p>
                   </div>
                 );
               })}
@@ -269,7 +269,7 @@ export default function HomePage() {
         </div>
 
         <section className="pb-14 pt-8 lg:pb-20">
-          <div className="rounded-lg border border-black/10 bg-white/78 p-5 shadow-soft backdrop-blur md:p-7 lg:p-8">
+          <div className="rounded-lg border border-black/10 bg-white/78 p-4 shadow-soft backdrop-blur sm:p-5 md:p-7 lg:p-8">
             <div className="mb-6 flex flex-col gap-3 border-b border-black/10 pb-5 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-sm font-black text-[#8A6D1F]">Free Report</p>
@@ -283,18 +283,18 @@ export default function HomePage() {
             </div>
 
             <div className="overflow-hidden rounded-lg border border-black/10 bg-white">
-              <div className="grid grid-cols-[0.85fr_1.15fr] border-b border-black/10 bg-mist/70 px-4 py-3 text-xs font-black uppercase text-ink/56">
+              <div className="grid grid-cols-[0.82fr_1.18fr] border-b border-black/10 bg-mist/70 px-3 py-3 text-[11px] font-black uppercase text-ink/56 sm:grid-cols-[0.85fr_1.15fr] sm:px-4 sm:text-xs">
                 <div>Dimension</div>
                 <div>What it reveals</div>
               </div>
               <div className="divide-y divide-black/10">
                 {auditDimensions.map((item, index) => (
-                  <div key={item.dimension} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[0.85fr_1.15fr] sm:gap-5">
-                    <div className="flex items-center gap-3 font-black text-ink">
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-gold/18 text-xs text-ink">{index + 1}</span>
+                  <div key={item.dimension} className="grid grid-cols-[0.82fr_1.18fr] gap-3 px-3 py-3 text-[13px] sm:grid-cols-[0.85fr_1.15fr] sm:gap-5 sm:px-4 sm:text-sm">
+                    <div className="flex items-start gap-2 font-black leading-5 text-ink sm:items-center sm:gap-3">
+                      <span className="mt-0.5 shrink-0 text-[11px] font-black text-[#8A6D1F] sm:mt-0 sm:flex sm:size-7 sm:items-center sm:justify-center sm:rounded-md sm:bg-gold/18 sm:text-xs sm:text-ink">{index + 1}</span>
                       {item.dimension}
                     </div>
-                    <p className="font-medium leading-6 text-ink/64">{item.reveals}</p>
+                    <p className="font-medium leading-5 text-ink/64 sm:leading-6">{item.reveals}</p>
                   </div>
                 ))}
               </div>
@@ -312,7 +312,7 @@ export default function HomePage() {
                   <ArrowRight className="size-4" />
                 </Button>
                 <button suppressHydrationWarning type="button" onClick={() => setIsCallModalOpen(true)} className="inline-flex min-h-11 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-sm font-black text-teal transition hover:border-teal/30 hover:text-ink">
-                  Request a call back
+                  Request a Callback
                 </button>
               </div>
             </div>

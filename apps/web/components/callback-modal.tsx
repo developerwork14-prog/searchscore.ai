@@ -69,7 +69,7 @@ export function CallbackModal({ isOpen, onClose }: CallbackModalProps) {
         {!isSubmitted ? (
           <div className="flex items-start justify-between bg-[#111111] px-5 py-4 text-white">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.08em] text-[#F5E6C8]">Request a call back</p>
+              <p className="text-xs font-black uppercase tracking-[0.08em] text-[#F5E6C8]">Request a Callback</p>
               <h2 className="mt-1 text-2xl font-black">Fix your AI Search Score</h2>
             </div>
             <button type="button" onClick={closeModal} className="rounded-lg bg-white/10 p-2 text-white transition hover:bg-white/16" aria-label="Close callback form">
