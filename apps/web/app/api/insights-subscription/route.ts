@@ -1,21 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reportStore } from "@/lib/server/report-store";
-import { config } from "dotenv";
 import nodemailer from "nodemailer";
-import { resolve } from "node:path";
 import { z } from "zod";
 
 export const runtime = "nodejs";
-
-for (const envPath of [
-  resolve(process.cwd(), ".env.local"),
-  resolve(process.cwd(), ".env"),
-  resolve(process.cwd(), "../../.env"),
-  resolve(process.cwd(), "../../../.env"),
-  resolve(process.cwd(), "../.env")
-]) {
-  config({ path: envPath });
-}
 
 const subscriptionSchema = z.object({
   reportId: z.string().min(1)

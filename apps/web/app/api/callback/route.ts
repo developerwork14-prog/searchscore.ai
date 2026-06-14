@@ -1,21 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { config } from "dotenv";
 import nodemailer from "nodemailer";
-import { resolve } from "node:path";
 import { z } from "zod";
 import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
 
 export const runtime = "nodejs";
-
-for (const envPath of [
-  resolve(process.cwd(), ".env.local"),
-  resolve(process.cwd(), ".env"),
-  resolve(process.cwd(), "../../.env"),
-  resolve(process.cwd(), "../../../.env"),
-  resolve(process.cwd(), "../.env")
-]) {
-  config({ path: envPath });
-}
 
 const callbackSchema = z.object({
   name: z.string().min(2).max(120),
