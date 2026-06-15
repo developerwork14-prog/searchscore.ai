@@ -22,12 +22,13 @@ type CategoryLike = {
   skippedChecks?: number;
 };
 type AuditTabId = "technical" | "crawlability" | "structuredData" | "onPageSeo" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability";
-type TabInfo = { label: string; categories: CategoryLike[]; score: number; issues: number; checkedAt?: string };
+type TabInfo = { label: string; categories: CategoryLike[]; checks: CheckLike[]; score: number; issues: number; checkedAt?: string };
 type IssueImpactCounts = { high: number; medium: number; low: number };
 type IssueTrendPoint = IssueImpactCounts & { label: string };
-type CheckLike = { passed?: boolean; skipped?: boolean; severity?: string };
+type CheckLike = { category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string };
 type GeoIssueCategory = CategoryLike & {
-  failedCheckDetails?: { severity: string }[];
+  failedCheckDetails?: { name?: string; severity?: string; evidence?: string; recommendation?: string }[];
+  skippedCheckDetails?: { name?: string; reason?: string }[];
 };
 type AiPlatform = "chatgpt" | "gemini" | "geo" | "overall";
 
@@ -171,8 +172,8 @@ function formatAuditDate(value?: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
-function tabMeta(label: string, categories: CategoryLike[], score?: number, checkedAt?: string): TabInfo {
-  return { label, categories, score: clampScore(score), issues: issueCount(categories), checkedAt };
+function tabMeta(label: string, categories: CategoryLike[], checks: CheckLike[] = [], score?: number, checkedAt?: string): TabInfo {
+  return { label, categories, checks, score: clampScore(score), issues: issueCount(categories), checkedAt };
 }
 
 function statusLabel(score: number) {
@@ -328,17 +329,105 @@ function MiniGauge({ name, sub, score, platform }: { name: string; sub: string; 
   );
 }
 
-function AuditCard({ category }: { category: CategoryLike }) {
+type DetailItem = { name: string; meta?: string };
+
+function checksForCategory(tab: TabInfo, category: CategoryLike) {
+  return tab.checks.filter((check) => check.category === category.categoryName);
+}
+
+function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
+  const checkItems = checks
+    .filter((check) => !check.skipped && (!check.passed || check.warning))
+    .map((check) => ({
+      name: check.name || "Unnamed issue",
+      meta: check.warning ? "Warning" : check.severity
+    }));
+  const detailItems = ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
+    name: detail.name || "Unnamed issue",
+    meta: detail.severity
+  }));
+
+  const seen = new Set<string>();
+  return [...checkItems, ...detailItems].filter((item) => {
+    const key = `${item.name}-${item.meta ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function passedItemsFor(checks: CheckLike[]): DetailItem[] {
+  return checks
+    .filter((check) => !check.skipped && check.passed && !check.warning)
+    .map((check) => ({ name: check.name || "Unnamed passed check", meta: check.severity }));
+}
+
+function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   const skipped = category.status === "Skipped" || category.skippedChecks === category.totalChecks;
   const score = skipped ? null : clampScore(category.score);
   const status = (["Passed", "Minor Attention", "Needs Attention", "Skipped"].includes(category.status) ? category.status : statusFor(score ?? 0, skipped)) as Status;
+  const checks = checksForCategory(tab, category);
+  const issues = issueItemsFor(category, checks);
+  const passed = passedItemsFor(checks);
+  const passedCount = category.passedChecks ?? passed.length;
+  const issueCountLabel = category.failedChecks;
+
   return (
-    <article className={`${styles.card} ${styles.auditCard}`}>
-      <div><h3>{category.categoryName}</h3><span className={`${styles.badge} ${statusMeta[status].className}`}>{statusMeta[status].icon} {status}</span></div>
-      <p>{category.totalChecks} checks · {category.failedChecks} issues</p>
-      <strong>{score === null ? "N/A" : `${score}%`}</strong>
-      <span className={styles.progress}><i style={{ width: score === null ? "0%" : `${score}%` }} /></span>
-    </article>
+    <details className={`${styles.card} ${styles.auditRow}`}>
+      <summary>
+        <div className={styles.auditRowMain}>
+          <h3>{category.categoryName}</h3>
+          <span>{category.totalChecks} checks</span>
+        </div>
+        <div className={styles.auditRowStats}>
+          <span className={styles.passCount}>{passedCount} passed</span>
+          <span className={issueCountLabel > 0 ? styles.issueCount : styles.passCount}>{issueCountLabel} issues</span>
+          <strong>{score === null ? "N/A" : `${score}%`}</strong>
+          <span className={`${styles.badge} ${statusMeta[status].className}`}>{statusMeta[status].icon} {status}</span>
+          <span className={styles.detailToggle}>
+            <span>View details</span>
+            <i aria-hidden="true" />
+          </span>
+        </div>
+      </summary>
+      <div className={styles.auditRowBody}>
+        <span className={styles.progress}><i style={{ width: score === null ? "0%" : `${score}%` }} /></span>
+        <div className={styles.checkColumns}>
+          <div>
+            <h4>Issues found ({issueCountLabel})</h4>
+            {issues.length ? (
+              <ul className={styles.checkList}>
+                {issues.map((issue) => (
+                  <li key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
+                    <b>!</b>
+                    <span>{issue.name}</span>
+                    {issue.meta ? <em>{issue.meta}</em> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={styles.emptyChecks}>No issues found in this category.</p>
+            )}
+          </div>
+          <div>
+            <h4>Passed checks ({passedCount})</h4>
+            {passed.length ? (
+              <ul className={styles.checkList}>
+                {passed.map((item) => (
+                  <li key={`${category.categoryName}-${item.name}-${item.meta ?? "passed"}`} className={styles.passedCheck}>
+                    <b>OK</b>
+                    <span>{item.name}</span>
+                    {item.meta ? <em>{item.meta}</em> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className={styles.emptyChecks}>{passedCount} checks passed. Detailed passed-check names are not available for this audit section.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -360,22 +449,23 @@ export default function ReportPage() {
     if (!report) return null;
     const technical = report.technical_categories ?? [];
     const geoAll = report.geo_aeo_audit?.categories ?? [];
+    const geoChecks = report.geo_aeo_audit?.checks ?? [];
     const geo = geoAll.filter((category) => !CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) && !GEMINI_CITATION_CATEGORIES.includes(category.categoryName) && category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
     const citation = geoAll.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
     const gemini = geoAll.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
     const crawlability = technical.filter((category) => ["Robots.txt & Sitemap", "Indexability & Crawlability", "Internal Linking", "AI Crawl Readiness"].includes(category.categoryName));
     const tabs: Record<AuditTabId, TabInfo> = {
-      technical: tabMeta("Technical Audit", technical, report.technical_audit?.score, report.technical_audit?.checked_at ?? report.created_at),
-      crawlability: tabMeta("Crawlability", crawlability, scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
-      structuredData: tabMeta("Structured data", report.structured_data_audit?.categories ?? [], report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
-      onPageSeo: tabMeta("On-Page SEO", report.on_page_seo_audit?.categories ?? [], report.on_page_seo_audit?.score, report.on_page_seo_audit?.checked_at),
-      imageSeo: tabMeta("Image SEO", report.image_seo_audit?.categories ?? [], report.image_seo_audit?.score, report.image_seo_audit?.checked_at),
-      eeat: tabMeta("EEAT Audit", report.eeat_audit?.categories ?? [], report.eeat_audit?.score, report.eeat_audit?.checked_at),
-      trustSignals: tabMeta("Trust Signal", report.trust_signals_audit?.categories ?? [], report.trust_signals_audit?.score, report.trust_signals_audit?.checked_at),
-      geo: tabMeta("GEO / AEO Audit", geo, scoreFromCategories(geo, report.geo_aeo_audit?.score), report.geo_aeo_audit?.checked_at),
-      citation: tabMeta("ChatGPT Citation", citation, scoreFromCategories(citation), report.geo_aeo_audit?.checked_at),
-      gemini: tabMeta("Gemini Citation", gemini, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
-      indexability: tabMeta("Indexability", report.indexability_audit?.categories ?? [], report.indexability_audit?.score, report.indexability_audit?.checked_at)
+      technical: tabMeta("Technical Audit", technical, report.technical_audit?.checks ?? [], report.technical_audit?.score, report.technical_audit?.checked_at ?? report.created_at),
+      crawlability: tabMeta("Crawlability", crawlability, report.technical_audit?.checks ?? [], scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
+      structuredData: tabMeta("Structured data", report.structured_data_audit?.categories ?? [], report.structured_data_audit?.checks ?? [], report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
+      onPageSeo: tabMeta("On-Page SEO", report.on_page_seo_audit?.categories ?? [], report.on_page_seo_audit?.checks ?? [], report.on_page_seo_audit?.score, report.on_page_seo_audit?.checked_at),
+      imageSeo: tabMeta("Image SEO", report.image_seo_audit?.categories ?? [], report.image_seo_audit?.checks ?? [], report.image_seo_audit?.score, report.image_seo_audit?.checked_at),
+      eeat: tabMeta("EEAT Audit", report.eeat_audit?.categories ?? [], report.eeat_audit?.checks ?? [], report.eeat_audit?.score, report.eeat_audit?.checked_at),
+      trustSignals: tabMeta("Trust Signal", report.trust_signals_audit?.categories ?? [], report.trust_signals_audit?.checks ?? [], report.trust_signals_audit?.score, report.trust_signals_audit?.checked_at),
+      geo: tabMeta("GEO / AEO Audit", geo, geoChecks, scoreFromCategories(geo, report.geo_aeo_audit?.score), report.geo_aeo_audit?.checked_at),
+      citation: tabMeta("ChatGPT Citation", citation, geoChecks, scoreFromCategories(citation), report.geo_aeo_audit?.checked_at),
+      gemini: tabMeta("Gemini Citation", gemini, geoChecks, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
+      indexability: tabMeta("Indexability", report.indexability_audit?.categories ?? [], report.indexability_audit?.checks ?? [], report.indexability_audit?.score, report.indexability_audit?.checked_at)
     };
     const scores = [
       tabs.onPageSeo.score, tabs.imageSeo.score, tabs.eeat.score, tabs.trustSignals.score, tabs.geo.score,
@@ -562,8 +652,8 @@ export default function ReportPage() {
           <div className={styles.tabs}>
             {(Object.keys(tabs) as AuditTabId[]).map((tab) => <button key={tab} type="button" className={tab === active ? styles.activeTab : ""} onClick={() => setActive(tab)}>{tabs[tab].label}</button>)}
           </div>
-          <div className={styles.auditGrid}>
-            {activeTab.categories.length ? activeTab.categories.map((category) => <AuditCard key={category.categoryName} category={category} />) : <article className={`${styles.card} ${styles.auditCard}`}><h3>No categories available</h3><p>This audit section did not return category data.</p></article>}
+          <div className={styles.auditList}>
+            {activeTab.categories.length ? activeTab.categories.map((category) => <AuditRow key={category.categoryName} category={category} tab={activeTab} />) : <article className={`${styles.card} ${styles.auditEmpty}`}><h3>No categories available</h3><p>This audit section did not return category data.</p></article>}
           </div>
         </section>
 
