@@ -1103,8 +1103,8 @@
 
 .checkList li {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: flex-start;
   gap: 8px;
   min-height: 34px;
   border-radius: 8px;
@@ -1116,6 +1116,7 @@
   display: inline-grid;
   min-width: 24px;
   height: 22px;
+  margin-top: 1px;
   place-items: center;
   border-radius: 999px;
   background: #FBEAEA;
@@ -1130,6 +1131,8 @@
 }
 
 .checkList span {
+  display: grid;
+  gap: 6px;
   min-width: 0;
   color: #111;
   font-size: 13px;
@@ -1137,7 +1140,35 @@
   line-height: 1.35;
 }
 
+.checkList span strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.checkList small {
+  display: grid;
+  gap: 3px;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.checkList small i {
+  color: #8A6D1F;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.evidenceText {
+  color: var(--muted) !important;
+}
+
 .checkList em {
+  margin-top: 2px;
   color: var(--muted);
   font-size: 11px;
   font-style: normal;

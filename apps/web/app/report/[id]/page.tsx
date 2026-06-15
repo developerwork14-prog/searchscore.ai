@@ -25,7 +25,7 @@ type AuditTabId = "technical" | "crawlability" | "structuredData" | "onPageSeo" 
 type TabInfo = { label: string; categories: CategoryLike[]; checks: CheckLike[]; score: number; issues: number; checkedAt?: string };
 type IssueImpactCounts = { high: number; medium: number; low: number };
 type IssueTrendPoint = IssueImpactCounts & { label: string };
-type CheckLike = { category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string };
+type CheckLike = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string; evidence?: unknown; recommendation?: string };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { name?: string; severity?: string; evidence?: string; recommendation?: string }[];
   skippedCheckDetails?: { name?: string; reason?: string }[];
@@ -329,10 +329,68 @@ function MiniGauge({ name, sub, score, platform }: { name: string; sub: string; 
   );
 }
 
-type DetailItem = { name: string; meta?: string };
+type DetailItem = { name: string; meta?: string; fix?: string; evidence?: string };
 
 function checksForCategory(tab: TabInfo, category: CategoryLike) {
   return tab.checks.filter((check) => check.category === category.categoryName);
+}
+
+function evidenceText(value: unknown) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function fixForIssue(name: string, categoryName: string) {
+  const text = `${categoryName} ${name}`.toLowerCase();
+  if (/robots|bot|gptbot|oai-searchbot|chatgpt-user|google-extended|googleother|crawler|crawlability|waf/.test(text)) {
+    return "Update robots.txt and bot-protection/WAF rules so the required AI crawler can access public, citable pages without being blocked or challenged.";
+  }
+  if (/llms\.txt/.test(text)) {
+    return "Create or update /llms.txt with clean Markdown, priority URLs, brand context, service pages, and citation-worthy resources.";
+  }
+  if (/noindex|nosnippet|max-snippet|data-nosnippet|x-robots/.test(text)) {
+    return "Remove restrictive robots directives from pages that should be indexed, summarized, cited, or shown in AI/search answers.";
+  }
+  if (/canonical/.test(text)) {
+    return "Use a self-referencing absolute HTTPS canonical URL that points directly to a 200-status page, with no chains or conflicting canonical headers.";
+  }
+  if (/sitemap/.test(text)) {
+    return "Publish a clean XML sitemap, include only indexable canonical URLs, and declare the sitemap location in robots.txt.";
+  }
+  if (/title|meta description|meta tag/.test(text)) {
+    return "Rewrite the title and meta description to clearly match the page intent, primary service/category, and user search language.";
+  }
+  if (/heading|h1|content structure|question-based|bluf/.test(text)) {
+    return "Restructure the page with one clear H1, logical H2/H3 sections, concise answer-first copy, and question-led subsections where relevant.";
+  }
+  if (/schema|json-ld|structured data|sameas|organization|localbusiness|product|faqpage|videoobject|speakable/.test(text)) {
+    return "Add or correct JSON-LD schema so it matches visible page content, validates cleanly, and includes the required entity fields.";
+  }
+  if (/faq/.test(text)) {
+    return "Add a visible FAQ section with direct answers, then mirror those questions and answers in valid FAQPage schema.";
+  }
+  if (/nap|address|phone|email|contact|privacy|terms|trust|review|testimonial|merchant/.test(text)) {
+    return "Make trust signals visible and consistent across the site: contact details, policies, reviews, legal/business identity, and schema values.";
+  }
+  if (/alt|image|photo|ocr|visual|transcript/.test(text)) {
+    return "Add descriptive alt text or transcripts for meaningful media, use crawlable text near visuals, and avoid image-only critical information.";
+  }
+  if (/lcp|inp|core web vitals|performance|render|javascript|js-rendered|server-side|ssr/.test(text)) {
+    return "Improve render access and performance by reducing blocking scripts, serving key content in HTML, optimizing media, and fixing Core Web Vitals bottlenecks.";
+  }
+  if (/internal link|linking|anchor|pagination|redirect|http->https|www|parameter url/.test(text)) {
+    return "Fix crawl paths and URL signals with descriptive internal links, clean redirects, consistent host handling, and canonicalized parameter URLs.";
+  }
+  if (/content|word count|authority|author|bio|credential|updated|outbound/.test(text)) {
+    return "Strengthen the page with deeper expert content, author/proof signals, freshness cues, and credible supporting references.";
+  }
+  return `Review the ${categoryName} evidence and update the page or configuration until "${name}" passes.`;
 }
 
 function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
@@ -340,20 +398,24 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
     .filter((check) => !check.skipped && (!check.passed || check.warning))
     .map((check) => ({
       name: check.name || "Unnamed issue",
-      meta: check.warning ? "Warning" : check.severity
+      meta: check.warning ? "Warning" : check.severity,
+      fix: check.recommendation || fixForIssue(check.name || "this check", check.category || category.categoryName),
+      evidence: evidenceText(check.evidence)
     }));
   const detailItems = ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
     name: detail.name || "Unnamed issue",
-    meta: detail.severity
+    meta: detail.severity,
+    fix: detail.recommendation,
+    evidence: detail.evidence
   }));
 
-  const seen = new Set<string>();
-  return [...checkItems, ...detailItems].filter((item) => {
+  const seen = new Map<string, DetailItem>();
+  for (const item of [...detailItems, ...checkItems]) {
     const key = `${item.name}-${item.meta ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const existing = seen.get(key);
+    if (!existing || (!existing.fix && item.fix)) seen.set(key, item);
+  }
+  return [...seen.values()];
 }
 
 function passedItemsFor(checks: CheckLike[]): DetailItem[] {
@@ -400,7 +462,11 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                 {issues.map((issue) => (
                   <li key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
                     <b>!</b>
-                    <span>{issue.name}</span>
+                    <span>
+                      <strong>{issue.name}</strong>
+                      {issue.fix ? <small><i>How to fix</i>{issue.fix}</small> : null}
+                      {issue.evidence ? <small className={styles.evidenceText}><i>Evidence</i>{issue.evidence}</small> : null}
+                    </span>
                     {issue.meta ? <em>{issue.meta}</em> : null}
                   </li>
                 ))}
