@@ -7,6 +7,7 @@ import type { StructuredAiVisibilityReport } from "@aiva/core";
 import { API_BASE, getReport } from "@/lib/api";
 import { CHATGPT_CITATION_CATEGORIES, GEMINI_CITATION_CATEGORIES } from "@/lib/audit-citation-categories";
 import { CallbackModal } from "@/components/callback-modal";
+import { PlatformBrandIcon } from "@/components/platform-brand-icon";
 import styles from "./page.module.css";
 
 type Status = "Passed" | "Minor Attention" | "Needs Attention" | "Skipped";
@@ -28,6 +29,7 @@ type CheckLike = { passed?: boolean; skipped?: boolean; severity?: string };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { severity: string }[];
 };
+type AiPlatform = "chatgpt" | "gemini" | "geo" | "overall";
 
 const strategyItems = [
   { label: "SEO", icon: Search },
@@ -297,18 +299,31 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number) 
   return `M ${sx} ${sy} A ${r} ${r} 0 ${end - start > 180 ? 1 : 0} 1 ${ex} ${ey}`;
 }
 
-function MiniGauge({ name, sub, score }: { name: string; sub: string; score: number }) {
+function PlatformIcon({ platform }: { platform: AiPlatform }) {
+  return (
+    <span className={`${styles.platformIcon} ${styles[platform]}`}>
+      <PlatformBrandIcon platform={platform} className={styles.platformSvg} />
+    </span>
+  );
+}
+
+function MiniGauge({ name, sub, score, platform }: { name: string; sub: string; score: number; platform: AiPlatform }) {
   const color = score >= 70 ? "#1F9D55" : score >= 40 ? "#B8902B" : "#DC2626";
   const end = 225 + 270 * (score / 100);
   return (
     <div className={styles.engineTile}>
+      <div className={styles.engineHeader}>
+        <PlatformIcon platform={platform} />
+        <div>
+          <strong>{name}</strong>
+          <span>{sub}</span>
+        </div>
+      </div>
       <svg viewBox="0 0 116 116" className={styles.miniGauge} aria-label={`${name} ${score} percent`}>
         <path d={arcPath(58, 58, 44, 225, 495)} stroke="#ECECEC" strokeWidth="10" strokeLinecap="round" fill="none" />
         <path d={arcPath(58, 58, 44, 225, end)} stroke={color} strokeWidth="10" strokeLinecap="round" fill="none" />
         <text x="58" y="64" textAnchor="middle" className={styles.miniGaugeText}>{score}%</text>
       </svg>
-      <strong>{name}</strong>
-      <span>{sub}</span>
     </div>
   );
 }
@@ -517,10 +532,10 @@ export default function ReportPage() {
         <section className={`${styles.card} ${styles.aiReadiness}`}>
           <div className={styles.cardTitle}><h2>AI readiness</h2><p>Implemented audit signals for citation, crawl, and answer visibility.</p></div>
           <div className={styles.engineGrid}>
-            <MiniGauge name="ChatGPT" sub="GPT-4o · Search" score={tabs.citation.score} />
-            <MiniGauge name="Gemini" sub="Google AI Overviews" score={tabs.gemini.score} />
-            <MiniGauge name="GEO / AEO" sub="Answer readiness" score={tabs.geo.score} />
-            <MiniGauge name="Overall AI" sub="Weighted readiness" score={aiVisibilityScore} />
+            <MiniGauge name="ChatGPT" sub="GPT-4o · Search" score={tabs.citation.score} platform="chatgpt" />
+            <MiniGauge name="Gemini" sub="Google AI Overviews" score={tabs.gemini.score} platform="gemini" />
+            <MiniGauge name="GEO / AEO" sub="Answer readiness" score={tabs.geo.score} platform="geo" />
+            <MiniGauge name="Overall AI" sub="Weighted readiness" score={aiVisibilityScore} platform="overall" />
           </div>
         </section>
 

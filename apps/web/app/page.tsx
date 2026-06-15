@@ -7,6 +7,7 @@ import { createReport } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 import { CallbackModal } from "@/components/callback-modal";
 import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
+import { PlatformBrandIcon } from "@/components/platform-brand-icon";
 
 const tasks = [
   "Checking if ChatGPT cites your brand",
@@ -31,7 +32,12 @@ const channels = [
   { label: "to see exactly what AI thinks of your brand", value: "60 sec", icon: TimerReset, tone: "bg-ink text-white" }
 ];
 
-const signals = ["ChatGPT", "Gemini", "Google", "GEO"];
+const signals = [
+  { label: "ChatGPT", platform: "chatgpt" },
+  { label: "Gemini", platform: "gemini" },
+  { label: "Google", platform: "google" },
+  { label: "GEO", platform: "geo" }
+] as const;
 
 const auditDimensions = [
   { dimension: "ChatGPT Citation", reveals: "Are you being recommended in AI chat answers?" },
@@ -171,8 +177,11 @@ export default function HomePage() {
           </div>
           <div className="hidden items-center gap-2 md:flex">
             {signals.map((signal) => (
-              <span key={signal} className="rounded-full border border-black/10 bg-white/75 px-3 py-1.5 text-xs font-bold text-ink/64 shadow-soft backdrop-blur">
-                {signal}
+              <span key={signal.label} className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/82 px-2.5 py-1.5 text-xs font-bold text-ink/68 shadow-soft backdrop-blur">
+                <span className={`grid size-5 shrink-0 place-items-center rounded-full ${signal.platform === "chatgpt" ? "bg-ink text-white" : signal.platform === "geo" ? "bg-teal text-white" : "bg-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]"}`}>
+                  <PlatformBrandIcon platform={signal.platform} className={signal.platform === "google" ? "size-4" : signal.platform === "gemini" ? "size-3.5" : "size-3.5"} />
+                </span>
+                {signal.label}
               </span>
             ))}
           </div>
