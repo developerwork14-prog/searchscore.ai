@@ -19,7 +19,16 @@ export interface SiteCrawlResult {
   origin: string;
   sitemapUrls: string[];
   sitemapSummary?: SitemapFetchSummary;
+  crawlStats: SiteCrawlStats;
   pages: CrawledPage[];
+}
+
+export interface SiteCrawlStats {
+  targetUrls: number;
+  attemptedUrls: number;
+  htmlPages: number;
+  failedOrNonHtmlUrls: number;
+  cappedByMaxPages: boolean;
 }
 
 export interface SitemapFetchSummary {
@@ -27,6 +36,8 @@ export interface SitemapFetchSummary {
   sitemapsFound: number;
   sitemapsFailed: number;
   discoveryMethod: string;
+  sitemapsDiscovered: number;
+  sitemapFileLimit: number;
 }
 
 export interface SitemapFetchResult {
@@ -40,6 +51,7 @@ interface CrawlOptions {
   timeoutMs?: number;
   concurrency?: number;
   maxSitemapFiles?: number;
+  followInternalLinks?: boolean;
 }
 
 function wordCount(text: string) {
@@ -209,10 +221,12 @@ async function fetchSitemapText(url: string, timeoutMs: number) {
 async function urlsFromSitemapFile(
   sitemapUrl: string,
   timeoutMs: number,
-  state: { remaining: number; found: number; failed: number },
+  state: { remaining: number; found: number; failed: number; discovered: number; seenSitemaps: Set<string> },
   depth = 0
 ): Promise<string[]> {
-  if (state.remaining <= 0 || depth > 3) return [];
+  const normalizedSitemapUrl = canonicalize(sitemapUrl);
+  if (state.remaining <= 0 || depth > 6 || !normalizedSitemapUrl || state.seenSitemaps.has(normalizedSitemapUrl)) return [];
+  state.seenSitemaps.add(normalizedSitemapUrl);
   state.remaining -= 1;
   const fetched = await fetchSitemapText(sitemapUrl, timeoutMs);
   if (!fetched.ok || !fetched.text || isLikelyHtml(fetched.text)) {
@@ -232,6 +246,7 @@ async function urlsFromSitemapFile(
   const locs = extractLocValues(xml).map((loc) => resolveLoc(fetched.finalUrl || sitemapUrl, loc)).filter(Boolean);
   if (isUrlset) return locs.map(canonicalize).filter(Boolean);
 
+  state.discovered += locs.length;
   const urls: string[] = [];
   for (const child of locs) {
     const nested = await urlsFromSitemapFile(child, timeoutMs, state, depth + 1);
@@ -247,25 +262,30 @@ export async function fetchSitemapUrls(origin: string, timeoutMs: number, maxSit
   const robotsSitemaps = [...(robots?.text.matchAll(/^sitemap:\s*(.+)$/gim) ?? [])]
     .map((match) => resolveLoc(origin, match[1].trim()))
     .filter(Boolean);
-  const candidates = [
-    `${origin}/sitemap_index.xml`,
+  const commonSitemapCandidates = [
     `${origin}/sitemap.xml`,
+    `${origin}/sitemap_index.xml`,
     `${origin}/sitemap-index.xml`,
+    `${origin}/wp-sitemap.xml`,
+    `${origin}/sitemap.xml.gz`,
     `${origin}/sitemap_index.xml.gz`,
-    ...robotsSitemaps
+    `${origin}/post-sitemap.xml`,
+    `${origin}/page-sitemap.xml`,
+    `${origin}/category-sitemap.xml`,
+    `${origin}/post_tag-sitemap.xml`,
+    `${origin}/author-sitemap.xml`
   ];
-  const state = { remaining: maxSitemapFiles, found: 0, failed: 0 };
+  const candidates = [...robotsSitemaps, ...commonSitemapCandidates];
+  const state = { remaining: maxSitemapFiles, found: 0, failed: 0, discovered: 0, seenSitemaps: new Set<string>() };
   let discoveryMethod = "none";
   let urls: string[] = [];
 
   for (const candidate of [...new Set(candidates)]) {
     urls = await urlsFromSitemapFile(candidate, timeoutMs, state);
     if (urls.length) {
-      discoveryMethod = candidate.includes("/sitemap_index.xml") ? "sitemap_index.xml" :
-        candidate.includes("/sitemap.xml") ? "sitemap.xml" :
-        candidate.includes("/sitemap-index.xml") ? "sitemap-index.xml" :
-        candidate.includes(".gz") ? "sitemap_index.xml.gz" :
-        robotsSitemaps.includes(candidate) ? "robots.txt" : candidate;
+      discoveryMethod = robotsSitemaps.includes(candidate)
+        ? "robots.txt"
+        : new URL(candidate).pathname.replace(/^\//, "") || candidate;
       break;
     }
     if (state.remaining <= 0) break;
@@ -286,27 +306,32 @@ export async function fetchSitemapUrls(origin: string, timeoutMs: number, maxSit
       totalUrls: filtered.length,
       sitemapsFound: state.found,
       sitemapsFailed: state.failed,
-      discoveryMethod
+      discoveryMethod,
+      sitemapsDiscovered: state.discovered,
+      sitemapFileLimit: maxSitemapFiles
     }
   };
 }
 
 export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): Promise<SiteCrawlResult> {
-  const maxPages = options.maxPages ?? 100;
+  const maxPages = options.maxPages ?? 1000;
   const maxDepth = options.maxDepth ?? 5;
   const timeoutMs = options.timeoutMs ?? 7000;
   const concurrency = options.concurrency ?? 6;
-  const maxSitemapFiles = options.maxSitemapFiles ?? 2;
+  const maxSitemapFiles = options.maxSitemapFiles ?? 250;
+  const followInternalLinks = options.followInternalLinks ?? true;
   const root = new URL(normalizeUrl(inputUrl));
   const origin = `${root.protocol}//${root.host}`;
   const seen = new Set<string>();
   const pages: CrawledPage[] = [];
+  let attemptedUrls = 0;
   const sitemapResult = await fetchSitemapUrls(origin, timeoutMs, maxSitemapFiles);
   const sitemap = sitemapResult.urls.filter((href) => sameOrigin(root, href));
   const queue: Array<{ url: string; depth: number; source: CrawledPage["source"] }> = [
     { url: canonicalize(root.toString()), depth: 0, source: "homepage" },
     ...sitemap.map((url) => ({ url, depth: 1, source: "sitemap" as const }))
   ];
+  const initialTargetUrls = queue.length;
 
   while (queue.length && pages.length < maxPages) {
     const batch: Array<{ url: string; depth: number; source: CrawledPage["source"] }> = [];
@@ -322,6 +347,7 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
 
     if (!batch.length) continue;
 
+    attemptedUrls += batch.length;
     const fetchedPages = await Promise.all(
       batch.map((next) => fetchPage(next.url, next.depth, next.source, timeoutMs))
     );
@@ -330,7 +356,7 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
       if (!page || pages.length >= maxPages) continue;
       pages.push(page);
 
-      if (page.depth >= maxDepth) continue;
+      if (!followInternalLinks || page.depth >= maxDepth) continue;
       for (const href of internalLinks(page, root)) {
         if (seen.has(href) || queue.some((item) => canonicalize(item.url) === href)) continue;
         queue.push({ url: href, depth: page.depth + 1, source: "internal" });
@@ -339,5 +365,17 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
     }
   }
 
-  return { origin, sitemapUrls: sitemap, sitemapSummary: sitemapResult.summary, pages };
+  return {
+    origin,
+    sitemapUrls: sitemap,
+    sitemapSummary: sitemapResult.summary,
+    crawlStats: {
+      targetUrls: initialTargetUrls,
+      attemptedUrls,
+      htmlPages: pages.length,
+      failedOrNonHtmlUrls: Math.max(0, attemptedUrls - pages.length),
+      cappedByMaxPages: pages.length >= maxPages && queue.length > 0
+    },
+    pages
+  };
 }

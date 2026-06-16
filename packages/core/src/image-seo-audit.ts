@@ -42,6 +42,11 @@ function normalizeUrl(value: string) {
   return value.startsWith("http") ? value : `https://${value}`;
 }
 
+function linkElementsByRel($: cheerio.CheerioAPI, rel: string) {
+  const expected = rel.toLowerCase();
+  return $("link").toArray().filter((el) => ($(el).attr("rel") ?? "").toLowerCase().split(/\s+/).includes(expected));
+}
+
 async function fetchHtml(url: string) {
   try {
     const response = await fetch(url, {
@@ -142,7 +147,10 @@ export async function runImageSeoAudit(inputUrl: string, html?: string): Promise
   const imageUrls = imgElements.map((el) => imageUrlFrom($, el)).filter(Boolean);
   const imageCount = imgElements.length;
   const pictureElements = $("picture").toArray();
-  const preloadedImages = $("link[rel='preload' i][as='image' i]").toArray().map((el) => $(el).attr("href") ?? "").filter(Boolean);
+  const preloadedImages = linkElementsByRel($, "preload")
+    .filter((el) => ($(el).attr("as") ?? "").trim().toLowerCase() === "image")
+    .map((el) => $(el).attr("href") ?? "")
+    .filter(Boolean);
   const lazyImages = imgElements.filter((el) => ($(el).attr("loading") ?? "").toLowerCase() === "lazy");
   const jsLazySignals = imgElements.filter((el) => $(el).attr("data-src") || $(el).attr("data-lazy-src") || /lazyload|lazy-load/i.test($(el).attr("class") ?? ""));
   const responsiveImages = imgElements.filter((el) => Boolean($(el).attr("srcset") && $(el).attr("sizes")));

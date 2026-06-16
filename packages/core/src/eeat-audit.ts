@@ -128,7 +128,15 @@ function bylineBioLink($: cheerio.CheerioAPI, base: URL) {
 }
 
 function phoneFound(text: string) {
-  return /\+?\d[\d\s().-]{7,}\d/.test(text);
+  return (text.match(/\+?\d[\d\s().-]{7,}\d/g) ?? []).some((candidate) => {
+    const normalized = candidate.replace(/\D+/g, "");
+    if (/\b\d+(?:\.\d+){2,}\b/.test(candidate)) return false;
+    if (/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/.test(candidate)) return false;
+    if (/^1800\d{6,7}$/.test(normalized)) return true;
+    if (/^[6-9]\d{9}$/.test(normalized)) return true;
+    if (/^0\d{9,11}$/.test(normalized)) return true;
+    return /^[1-9]\d{9,10}$/.test(normalized);
+  });
 }
 
 function emailFound(text: string) {
@@ -184,27 +192,27 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
     if (def) results.push(result(def, state));
   };
 
-  add(1, { passed: articleApplicable && hasByline(article$), evidence: { articleUrl: links.article?.href ?? normalized, articleDetected: articleApplicable } });
-  add(2, { passed: articleApplicable && Boolean(bioLink), evidence: { bioLink: bioLink?.href ?? "", articleDetected: articleApplicable } });
-  add(3, { passed: Boolean(bioPage?.html), evidence: { bioUrl: bioLink?.href ?? "", status: bioPage?.status ?? 0 } });
-  add(4, { passed: wordCount(bioText) >= 150, evidence: { bioUrl: bioLink?.href ?? "", words: wordCount(bioText) } });
-  add(5, { passed: bio$("a[href*='linkedin.com']").length > 0, evidence: { linkedinLinks: bio$("a[href*='linkedin.com']").length } });
-  add(6, { passed: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length >= 3, evidence: { contentLinks: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length } });
-  add(21, { passed: /\b\d+\+?\s+(years?|yrs?)\b|\b(since|experience)\s+\d{4}\b/i.test(bioText), evidence: { bioUrl: bioLink?.href ?? "" } });
+  add(1, { passed: articleApplicable && hasByline(article$), skipped: !articleApplicable, evidence: { articleUrl: links.article?.href ?? normalized, articleDetected: articleApplicable } });
+  add(2, { passed: articleApplicable && Boolean(bioLink), skipped: !articleApplicable, warning: articleApplicable && hasByline(article$) && !bioLink, evidence: { bioLink: bioLink?.href ?? "", articleDetected: articleApplicable } });
+  add(3, { passed: Boolean(bioPage?.html), skipped: !articleApplicable && !bioLink, warning: Boolean(bioLink) && !bioPage?.html, evidence: { bioUrl: bioLink?.href ?? "", status: bioPage?.status ?? 0 } });
+  add(4, { passed: wordCount(bioText) >= 150, skipped: !bioPage?.html, warning: wordCount(bioText) >= 80, evidence: { bioUrl: bioLink?.href ?? "", words: wordCount(bioText) } });
+  add(5, { passed: bio$("a[href*='linkedin.com']").length > 0, skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { linkedinLinks: bio$("a[href*='linkedin.com']").length } });
+  add(6, { passed: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length >= 3, skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { contentLinks: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length } });
+  add(21, { passed: /\b\d+\+?\s+(years?|yrs?)\b|\b(since|experience)\s+\d{4}\b/i.test(bioText), skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { bioUrl: bioLink?.href ?? "" } });
 
-  add(7, { passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100, evidence: { editorialUrl: links.editorial?.href ?? "" } });
+  add(7, { passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100, warning: !pageFor("editorial"), evidence: { editorialUrl: links.editorial?.href ?? "" } });
   add(8, { passed: addressFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
   add(9, { passed: phoneFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
   add(10, { passed: emailFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
   add(11, { skipped: true, evidence: { reason: "Form functionality cannot be verified with 100% accuracy without submitting a form." } });
-  add(12, { passed: wordCount(privacyText) >= 300, evidence: { privacyUrl: links.privacy?.href ?? "", words: wordCount(privacyText) } });
-  add(13, { passed: Boolean(pageFor("terms")) && wordCount(termsText) >= 100, evidence: { termsUrl: links.terms?.href ?? "", words: wordCount(termsText) } });
-  add(15, { passed: wordCount(aboutText) >= 300, evidence: { aboutUrl: links.about?.href ?? "", words: wordCount(aboutText) } });
-  add(20, { passed: Boolean(pageFor("team")) && (team$("img").length >= 2 || team$("a[href*='linkedin.com']").length >= 2 || (teamText.match(/\b(CEO|Founder|Director|Manager|Lead|Head of)\b/g) ?? []).length >= 2), evidence: { teamUrl: links.team?.href ?? "" } });
+  add(12, { passed: wordCount(privacyText) >= 300, warning: wordCount(privacyText) >= 120, evidence: { privacyUrl: links.privacy?.href ?? "", words: wordCount(privacyText) } });
+  add(13, { passed: Boolean(pageFor("terms")) && wordCount(termsText) >= 100, warning: Boolean(pageFor("terms")), evidence: { termsUrl: links.terms?.href ?? "", words: wordCount(termsText) } });
+  add(15, { passed: wordCount(aboutText) >= 300, warning: wordCount(aboutText) >= 120, evidence: { aboutUrl: links.about?.href ?? "", words: wordCount(aboutText) } });
+  add(20, { passed: Boolean(pageFor("team")) && (team$("img").length >= 2 || team$("a[href*='linkedin.com']").length >= 2 || (teamText.match(/\b(CEO|Founder|Director|Manager|Lead|Head of)\b/g) ?? []).length >= 2), skipped: !pageFor("team"), warning: Boolean(pageFor("team")), evidence: { teamUrl: links.team?.href ?? "" } });
 
   add(14, { passed: /trusted by|clients|customers|partners|featured in/i.test(homepage) && $("img[alt]").length >= 2, evidence: { logoImages: $("img[alt]").length } });
-  add(16, { passed: outboundLinks.some((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)), evidence: { eduGovLinks: outboundLinks.filter((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)).slice(0, 10) } });
-  add(17, { passed: articleApplicable && sourceCitations > 0, evidence: { sourceCitations, articleDetected: articleApplicable } });
+  add(16, { passed: outboundLinks.some((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)), warning: outboundLinks.length > 0, evidence: { eduGovLinks: outboundLinks.filter((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)).slice(0, 10) } });
+  add(17, { passed: articleApplicable && sourceCitations > 0, skipped: !articleApplicable, warning: articleApplicable, evidence: { sourceCitations, articleDetected: articleApplicable } });
   add(18, { skipped: true, evidence: { reason: "Verifiable claim ratio requires claim extraction and source validation; static HTML alone cannot verify it exactly." } });
   add(19, { passed: Boolean(pageFor("caseStudy")) && /\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText), evidence: { caseStudyUrl: links.caseStudy?.href ?? "" } });
 

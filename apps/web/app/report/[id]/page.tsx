@@ -346,68 +346,180 @@ function evidenceText(value: unknown) {
   }
 }
 
+function skippedReasonText(check: CheckLike) {
+  const evidence = check.evidence;
+  if (evidence && typeof evidence === "object") {
+    const record = evidence as Record<string, unknown>;
+    const reason = record.reason ?? record.skippedReason ?? record.note;
+    if (typeof reason === "string" && reason.trim()) return reason;
+  }
+  return evidenceText(evidence);
+}
+
 function fixForIssue(name: string, categoryName: string) {
   const text = `${categoryName} ${name}`.toLowerCase();
+  if (/title length|titles within recommended|title tag.*30|title.*30-60/.test(text)) {
+    return "Shorten or rewrite page titles so most are about 30-60 characters. Keep the main keyword/service and brand name, but remove extra repeated words.";
+  }
+  if (/duplicate content at slug and slug slash|slug and slug slash|slash variant|trailing slash/.test(text)) {
+    return "Choose one URL style: either with a slash at the end or without it. Then redirect the other version to your chosen version.";
+  }
+  if (/duplicate title/.test(text)) {
+    return "Give each important page a unique title. Avoid using the exact same title on many pages.";
+  }
+  if (/duplicate meta description/.test(text)) {
+    return "Give each important page its own meta description. Do not reuse the same description across many pages.";
+  }
+  if (/nap: footer vs schema vs contact|schema-dom phone|address matches schema|phone format consistent/.test(text)) {
+    return "Make the business name, address, and phone number match in three places: footer, contact page, and JSON-LD schema.";
+  }
+  if (/org: telephone|org: address|localbusiness.*address|schema.*phone|schema.*address/.test(text)) {
+    return "Add the visible business phone and address into your Organization or LocalBusiness JSON-LD schema.";
+  }
+  if (/sameas/.test(text)) {
+    return "Add official profile links in schema, such as LinkedIn, Facebook, Instagram, YouTube, Crunchbase, or Wikidata if available.";
+  }
+  if (/https \+ valid ssl|ssl certificate valid|https protocol|ssl covers|ssl covers all subdomains|ssl covers discovered subdomains/.test(text)) {
+    return "Make sure the website opens with https:// and shows a secure lock in the browser. If it does not, ask your hosting provider to install or renew the SSL certificate.";
+  }
+  if (/hsts|strict-transport-security/.test(text)) {
+    return "After HTTPS is working correctly, ask your developer or hosting provider to enable the HSTS security header. This tells browsers to always use the secure version of your site.";
+  }
+  if (/ttfb|time to first byte|server response/.test(text)) {
+    return "The server is slow to start loading the page. Turn on page caching, use a CDN, reduce heavy plugins/scripts, or upgrade hosting.";
+  }
+  if (/gzip|brotli|compression|content-encoding/.test(text)) {
+    return "Turn on GZIP or Brotli compression in your hosting, CDN, or caching plugin so text files load faster.";
+  }
+  if (/cache-control|browser cach/.test(text)) {
+    return "Enable browser caching for images, CSS, JavaScript, and fonts. In most sites this can be done from your CDN, hosting panel, or caching plugin.";
+  }
+  if (/etag|last-modified/.test(text)) {
+    return "Ask your server or CDN to send ETag or Last-Modified headers. These help browsers avoid downloading unchanged files again.";
+  }
+  if (/cdn edge caching|cdn edge/.test(text)) {
+    return "Use a CDN such as Cloudflare, Bunny, Fastly, or your hosting CDN so pages and files load from servers closer to visitors.";
+  }
+  if (/lcp.*lazy|lcp image not lazy-loaded|hero image.*lazy/.test(text)) {
+    return "Do not lazy-load the main hero image at the top of the page. Load that image immediately, and lazy-load only images lower down the page.";
+  }
+  if (/mixed content/.test(text)) {
+    return "Some files on an HTTPS page are still loaded with http://. Change those file URLs to https:// or enable automatic HTTPS rewrite in your CDN.";
+  }
+  if (/content-type/.test(text)) {
+    return "Make sure each file is served as the correct type, for example HTML as text/html, CSS as text/css, and JavaScript as application/javascript.";
+  }
+  if (/canonical.*noindex|canonical not/.test(text)) {
+    return "The canonical URL should point to a real page that can be indexed. Do not point it to a blocked, noindex, redirected, or missing page.";
+  }
+  if (/canonical chains|no canonical chains/.test(text)) {
+    return "Point the canonical tag directly to the final preferred page. Avoid pointing to a URL that redirects again.";
+  }
+  if (/canonical on all|canonical tag exists|self-referencing canonical|canonical url is self-referencing/.test(text)) {
+    return "Add a canonical tag to each important page. It should usually point to that same page's preferred URL.";
+  }
+  if (/no noindex in sitemap|noindex pages included in sitemap/.test(text)) {
+    return "Remove pages from the sitemap if you do not want Google to index them. The sitemap should list only important public pages.";
+  }
+  if (/soft-?404/.test(text)) {
+    return "If a page does not exist, the server should return a real 404 or 410 status, even if you show a nice custom error page.";
+  }
+  if (/broken external link/.test(text)) {
+    return "Check the broken outgoing links. Replace them with working links or remove them.";
+  }
+  if (/back-button hijacking|exit-intent redirect|intrusive interstitial/.test(text)) {
+    return "Remove popups or scripts that force redirects, block the page, or stop users from using the browser back button.";
+  }
+  if (/301 for permanent redirects|permanent redirects/.test(text)) {
+    return "If a URL has permanently moved, use a 301 redirect to the new URL. Use temporary redirects only for temporary changes.";
+  }
+  if (/url path case|path all lowercase|case inconsistency/.test(text)) {
+    return "Use lowercase URLs everywhere. Redirect uppercase versions to the lowercase version.";
+  }
+  if (/infinite scroll/.test(text)) {
+    return "If content loads while scrolling, also add normal page links like page 2, page 3, so Google can crawl all content.";
+  }
+  if (/ssr contains primary content|empty-shell spa|server-side|js content rendering|headless browser content match/.test(text)) {
+    return "Make sure the main text is visible in the page HTML, not only after JavaScript runs. This helps Google and AI crawlers read the page.";
+  }
+  if (/rss feed full-text/.test(text)) {
+    return "Include enough article text in your RSS feed so feed readers and AI tools can understand each post.";
+  }
+  if (/llms\.txt|ai\.txt/.test(text)) {
+    return "Create an /llms.txt file that explains your brand, services, best pages, and useful resources in simple Markdown.";
+  }
+  if (/ai crawler ip accessibility|ai crawler accessibility/.test(text)) {
+    return "Do not block trusted AI crawlers from public pages. Check robots.txt, firewall, CDN, and bot-protection settings.";
+  }
+  if (/indexnow/.test(text)) {
+    return "Turn on IndexNow in your SEO plugin or CMS. This helps search engines know faster when you add or update pages.";
+  }
+  if (/internal search blocked/.test(text)) {
+    return "Stop your site's own search result pages from being indexed. Usually these URLs look like ?s=keyword or /search/.";
+  }
+  if (/url params stripped|parameter url/.test(text)) {
+    return "Use clean internal links. Do not link to your own pages with tracking parameters like utm_source or ?ref=.";
+  }
   if (/robots|bot|gptbot|oai-searchbot|chatgpt-user|google-extended|googleother|crawler|crawlability|waf/.test(text)) {
-    return "Update robots.txt and bot-protection/WAF rules so the required AI crawler can access public, citable pages without being blocked or challenged.";
+    return "Check robots.txt and firewall settings. Public pages should be reachable by search engines and trusted AI crawlers.";
   }
   if (/llms\.txt/.test(text)) {
-    return "Create or update /llms.txt with clean Markdown, priority URLs, brand context, service pages, and citation-worthy resources.";
+    return "Create an /llms.txt file with your brand summary, service pages, important URLs, and resources AI tools can cite.";
   }
   if (/noindex|nosnippet|max-snippet|data-nosnippet|x-robots/.test(text)) {
-    return "Remove restrictive robots directives from pages that should be indexed, summarized, cited, or shown in AI/search answers.";
+    return "Remove noindex or nosnippet from pages you want Google and AI tools to show, summarize, or cite.";
   }
   if (/canonical/.test(text)) {
-    return "Use a self-referencing absolute HTTPS canonical URL that points directly to a 200-status page, with no chains or conflicting canonical headers.";
+    return "Choose one preferred URL for the page. If both /page and /page/ open, redirect one to the other and set the canonical tag to the preferred version.";
   }
   if (/sitemap/.test(text)) {
-    return "Publish a clean XML sitemap, include only indexable canonical URLs, and declare the sitemap location in robots.txt.";
+    return "Create a clean XML sitemap with only important public pages. Add the sitemap URL inside robots.txt.";
   }
   if (/title|meta description|meta tag/.test(text)) {
-    return "Rewrite the title and meta description to clearly match the page intent, primary service/category, and user search language.";
+    return "Rewrite the page title and meta description so they clearly say what the page is about and match what users search for.";
   }
   if (/heading|h1|content structure|question-based|bluf/.test(text)) {
-    return "Restructure the page with one clear H1, logical H2/H3 sections, concise answer-first copy, and question-led subsections where relevant.";
+    return "Use one clear H1 title, then organize the page with H2 and H3 headings. Put the most important answer near the top.";
   }
   if (/schema|json-ld|structured data|sameas|organization|localbusiness|product|faqpage|videoobject|speakable/.test(text)) {
-    return "Add or correct JSON-LD schema so it matches visible page content, validates cleanly, and includes the required entity fields.";
+    return "Add or fix JSON-LD schema. The schema should describe the same business, address, phone, products, FAQs, or articles that users can see on the page.";
   }
   if (/faq/.test(text)) {
-    return "Add a visible FAQ section with direct answers, then mirror those questions and answers in valid FAQPage schema.";
+    return "Add real FAQs on the page, with short direct answers. If you use FAQ schema, make sure it matches the visible FAQs.";
   }
   if (/nap|address|phone|email|contact|privacy|terms|trust|review|testimonial|merchant/.test(text)) {
-    return "Make trust signals visible and consistent across the site: contact details, policies, reviews, legal/business identity, and schema values.";
+    return "Show the same business name, address, phone, email, policies, and reviews across your website and schema. Do not let footer, contact page, and schema disagree.";
   }
   if (/alt|image|photo|ocr|visual|transcript/.test(text)) {
-    return "Add descriptive alt text or transcripts for meaningful media, use crawlable text near visuals, and avoid image-only critical information.";
+    return "Add helpful alt text to important images. If an image contains important information, also write that information as normal text on the page.";
   }
   if (/lcp|inp|core web vitals|performance|render|javascript|js-rendered|server-side|ssr/.test(text)) {
-    return "Improve render access and performance by reducing blocking scripts, serving key content in HTML, optimizing media, and fixing Core Web Vitals bottlenecks.";
+    return "Make the page faster and easier to read. Reduce heavy scripts, optimize images, and make sure important content appears without waiting for JavaScript.";
   }
   if (/internal link|linking|anchor|pagination|redirect|http->https|www|parameter url/.test(text)) {
-    return "Fix crawl paths and URL signals with descriptive internal links, clean redirects, consistent host handling, and canonicalized parameter URLs.";
+    return "Use clear internal links, fix redirect problems, and keep one consistent website version, such as https://www or https:// without www.";
   }
   if (/content|word count|authority|author|bio|credential|updated|outbound/.test(text)) {
-    return "Strengthen the page with deeper expert content, author/proof signals, freshness cues, and credible supporting references.";
+    return "Improve the page with more useful detail, author or company proof, updated dates when relevant, and links to credible supporting sources.";
   }
-  return `Review the ${categoryName} evidence and update the page or configuration until "${name}" passes.`;
+  return `Check the evidence shown for this issue. Fix the page, setting, or plugin related to "${name}", then run the audit again.`;
 }
 
 function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
   const checkItems = checks
-    .filter((check) => !check.skipped && (!check.passed || check.warning))
+    .filter((check) => !check.skipped && check.passed === false)
     .map((check) => ({
       name: check.name || "Unnamed issue",
       meta: check.warning ? "Warning" : check.severity,
       fix: check.recommendation || fixForIssue(check.name || "this check", check.category || category.categoryName),
       evidence: evidenceText(check.evidence)
     }));
-  const detailItems = ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
-    name: detail.name || "Unnamed issue",
-    meta: detail.severity,
-    fix: detail.recommendation,
-    evidence: detail.evidence
-  }));
+  const detailItems = checks.length ? [] : ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
+      name: detail.name || "Unnamed issue",
+      meta: detail.severity,
+      fix: detail.recommendation,
+      evidence: detail.evidence
+    }));
 
   const seen = new Map<string, DetailItem>();
   for (const item of [...detailItems, ...checkItems]) {
@@ -424,14 +536,33 @@ function passedItemsFor(checks: CheckLike[]): DetailItem[] {
     .map((check) => ({ name: check.name || "Unnamed passed check", meta: check.severity }));
 }
 
+function skippedItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
+  const checkItems = checks
+    .filter((check) => check.skipped)
+    .map((check) => ({
+      name: check.name || "Unnamed skipped check",
+      meta: "Not applicable",
+      evidence: skippedReasonText(check)
+    }));
+  const detailItems = checks.length ? [] : ((category as GeoIssueCategory).skippedCheckDetails ?? []).map((detail) => ({
+    name: detail.name || "Skipped check",
+    meta: "Not applicable",
+    evidence: detail.reason
+  }));
+
+  return [...checkItems, ...detailItems];
+}
+
 function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   const skipped = category.status === "Skipped" || category.skippedChecks === category.totalChecks;
   const score = skipped ? null : clampScore(category.score);
-  const status = (["Passed", "Minor Attention", "Needs Attention", "Skipped"].includes(category.status) ? category.status : statusFor(score ?? 0, skipped)) as Status;
+  const status = (skipped ? "Skipped" : ["Passed", "Minor Attention", "Needs Attention", "Skipped"].includes(category.status) ? category.status : statusFor(score ?? 0, skipped)) as Status;
   const checks = checksForCategory(tab, category);
   const issues = issueItemsFor(category, checks);
   const passed = passedItemsFor(checks);
+  const skippedItems = skippedItemsFor(category, checks);
   const passedCount = category.passedChecks ?? passed.length;
+  const skippedCount = category.skippedChecks ?? skippedItems.length;
   const issueCountLabel = category.failedChecks;
 
   return (
@@ -444,6 +575,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
         <div className={styles.auditRowStats}>
           <span className={styles.passCount}>{passedCount} passed</span>
           <span className={issueCountLabel > 0 ? styles.issueCount : styles.passCount}>{issueCountLabel} issues</span>
+          {skippedCount > 0 ? <span className={styles.skipCount}>{skippedCount} skipped</span> : null}
           <strong>{score === null ? "N/A" : `${score}%`}</strong>
           <span className={`${styles.badge} ${statusMeta[status].className}`}>{statusMeta[status].icon} {status}</span>
           <span className={styles.detailToggle}>
@@ -476,8 +608,24 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
             )}
           </div>
           <div>
-            <h4>Passed checks ({passedCount})</h4>
-            {passed.length ? (
+            <h4>{skipped ? `Skipped checks (${skippedCount})` : `Passed checks (${passedCount})`}</h4>
+            {skipped && skippedItems.length ? (
+              <>
+                <p className={styles.emptyChecks}>This category is not applicable for the audited page or site type.</p>
+                <ul className={styles.checkList}>
+                  {skippedItems.map((item) => (
+                    <li key={`${category.categoryName}-${item.name}-${item.meta ?? "skipped"}`} className={styles.skippedCheck}>
+                      <b>-</b>
+                      <span>
+                        <strong>{item.name}</strong>
+                        {item.evidence ? <small className={styles.evidenceText}><i>Reason</i>{item.evidence}</small> : null}
+                      </span>
+                      {item.meta ? <em>{item.meta}</em> : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : passed.length ? (
               <ul className={styles.checkList}>
                 {passed.map((item) => (
                   <li key={`${category.categoryName}-${item.name}-${item.meta ?? "passed"}`} className={styles.passedCheck}>

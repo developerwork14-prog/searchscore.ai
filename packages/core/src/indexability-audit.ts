@@ -76,8 +76,8 @@ const CATEGORY_ORDER = [
   "Rendering & Content Access"
 ];
 
-const SITEMAP_INDEXABILITY_SAMPLE_LIMIT = 20;
-const SITEMAP_INDEXABILITY_CONCURRENCY = 5;
+const SITEMAP_INDEXABILITY_SAMPLE_LIMIT = 8;
+const SITEMAP_INDEXABILITY_CONCURRENCY = 4;
 
 function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(value)));
@@ -335,7 +335,7 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
   const canonicalUrl = canonicalHref(pageHtml, normalizedUrl, serverPage.response);
   const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 3000).catch(() => null) : null;
   const secondCanonicalUrl = canonicalTarget ? canonicalHref(canonicalTarget.text, canonicalUrl, canonicalTarget.response) : "";
-  const sitemapUrls = await fetchSitemapUrls(url.origin, 5000, SITEMAP_INDEXABILITY_SAMPLE_LIMIT).then((result) => result.urls.slice(0, SITEMAP_INDEXABILITY_SAMPLE_LIMIT)).catch(() => []);
+  const sitemapUrls = await fetchSitemapUrls(url.origin, 2500, SITEMAP_INDEXABILITY_SAMPLE_LIMIT).then((result) => result.urls.slice(0, SITEMAP_INDEXABILITY_SAMPLE_LIMIT)).catch(() => []);
   const sitemapSamples = await mapWithConcurrency(sitemapUrls, SITEMAP_INDEXABILITY_CONCURRENCY, async (sampleUrl) => {
     const page = await fetchText(sampleUrl, 1800).catch(() => null);
     const sampleCanonical = page ? canonicalHref(page.text, sampleUrl, page.response) : "";

@@ -240,13 +240,13 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   add(2, { passed: Boolean(textValue(org?.name)), evidence: { name: textValue(org?.name) } });
   add(3, { passed: textValue(org?.url).startsWith("https://"), evidence: { url: textValue(org?.url) } });
   add(4, { passed: Boolean(textValue(org?.logo)), evidence: { logo: textValue(org?.logo) } });
-  add(5, { passed: Boolean(textValue(org?.telephone)), skipped: !localApplicable, evidence: { telephone: textValue(org?.telephone), skippedReason: localApplicable ? "" : "No local/service intent detected" } });
-  add(6, { passed: Boolean(objectValue(org?.address)["@type"] || textValue(org?.address)), skipped: !localApplicable, evidence: { address: org?.address ?? null } });
-  add(7, { passed: sameAs.length >= 4, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs } });
-  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)) } });
+  add(5, { passed: Boolean(textValue(org?.telephone)), skipped: !localApplicable, warning: localApplicable && Boolean(org) && !textValue(org?.telephone), evidence: { telephone: textValue(org?.telephone), skippedReason: localApplicable ? "" : "No local/service intent detected" } });
+  add(6, { passed: Boolean(objectValue(org?.address)["@type"] || textValue(org?.address)), skipped: !localApplicable, warning: localApplicable && Boolean(org) && !objectValue(org?.address)["@type"] && !textValue(org?.address), evidence: { address: org?.address ?? null } });
+  add(7, { passed: sameAs.length >= 2, warning: sameAs.length > 0 && sameAs.length < 2, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs, note: "2+ official profiles is production-ready; 4+ is ideal for stronger entity disambiguation." } });
+  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), warning: sameAs.length > 0 && !sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)) } });
   add(9, { passed: sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), warning: !sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), evidence: { sameAsUrls: sameAs } });
   add(10, { passed: knowsAbout.length >= 5, warning: knowsAbout.length > 0 && knowsAbout.length < 5, evidence: { knowsAboutCount: knowsAbout.length } });
-  add(11, { passed: textValue(org?.["@id"]).startsWith("https://"), evidence: { id: textValue(org?.["@id"]) } });
+  add(11, { passed: textValue(org?.["@id"]).startsWith("https://"), warning: Boolean(org) && !textValue(org?.["@id"]).startsWith("https://"), evidence: { id: textValue(org?.["@id"]) } });
   add(12, { passed: /^\d{4}(-\d{2}-\d{2})?$/.test(textValue(org?.foundingDate)), skipped: !hasDom($, /\b(founded|since|established)\b/i), evidence: { foundingDate: textValue(org?.foundingDate) } });
 
   add(13, { passed: Boolean(objectValue(local?.geo).latitude && objectValue(local?.geo).longitude), skipped: !localApplicable, evidence: { geo: local?.geo ?? null } });
@@ -258,15 +258,15 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   add(17, { passed: Boolean(article?.headline), skipped: !articleApplicable, evidence: { headline: article?.headline ?? "" } });
   add(18, { passed: Boolean(article?.author), skipped: !articleApplicable, evidence: { author: article?.author ?? null } });
   add(19, { passed: /^\d{4}-\d{2}-\d{2}/.test(textValue(article?.datePublished)), skipped: !articleApplicable, evidence: { datePublished: article?.datePublished ?? "" } });
-  add(20, { passed: Boolean(article?.dateModified && normalizedText(body).includes(normalizedText(textValue(article.dateModified)).slice(0, 10))), skipped: !articleApplicable, evidence: { dateModified: article?.dateModified ?? "" } });
-  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable, evidence: { about: article?.about ?? null } });
-  add(22, { passed: Boolean(article?.image), skipped: !articleApplicable, evidence: { image: article?.image ?? null } });
+  add(20, { passed: Boolean(article?.dateModified && normalizedText(body).includes(normalizedText(textValue(article.dateModified)).slice(0, 10))), skipped: !articleApplicable, warning: Boolean(article?.dateModified), evidence: { dateModified: article?.dateModified ?? "" } });
+  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable, warning: Boolean(article), evidence: { about: article?.about ?? null } });
+  add(22, { passed: Boolean(article?.image), skipped: !articleApplicable, warning: Boolean(article), evidence: { image: article?.image ?? null } });
   add(23, { passed: Boolean(article?.publisher), skipped: !articleApplicable, evidence: { publisher: article?.publisher ?? null } });
 
   add(24, { passed: Boolean(person), skipped: !personApplicable, evidence: { personFound: Boolean(person) } });
   add(25, { passed: Boolean(person?.name && person?.jobTitle && person?.url), skipped: !personApplicable, evidence: { name: person?.name ?? "", jobTitle: person?.jobTitle ?? "", url: person?.url ?? "" } });
-  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable, evidence: { sameAs: person?.sameAs ?? [] } });
-  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable, evidence: { knowsAbout: person?.knowsAbout ?? [] } });
+  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable, warning: Boolean(person), evidence: { sameAs: person?.sameAs ?? [] } });
+  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable, warning: Boolean(person), evidence: { knowsAbout: person?.knowsAbout ?? [] } });
 
   const faqItems = asArray(faq?.mainEntity as unknown[] | undefined);
   add(28, { passed: Boolean(faq), skipped: !faqApplicable, evidence: { faqFound: Boolean(faq) } });
@@ -279,8 +279,8 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   const offers = objectValue(product?.offers);
   add(32, { passed: Boolean(product?.name && product?.brand && product?.description), skipped: !productApplicable, evidence: { name: product?.name ?? "", brand: product?.brand ?? "", description: Boolean(product?.description) } });
   add(33, { passed: Boolean(offers.price && offers.availability), skipped: !productApplicable, evidence: { offers } });
-  add(34, { passed: Boolean(product?.aggregateRating), skipped: !productApplicable, evidence: { aggregateRating: product?.aggregateRating ?? null } });
-  add(35, { passed: Boolean(product?.gtin || product?.gtin13 || product?.mpn || product?.sku), skipped: !productApplicable, evidence: { gtin: product?.gtin ?? product?.gtin13 ?? "", mpn: product?.mpn ?? "", sku: product?.sku ?? "" } });
+  add(34, { passed: Boolean(product?.aggregateRating), skipped: !productApplicable, warning: Boolean(product), evidence: { aggregateRating: product?.aggregateRating ?? null } });
+  add(35, { passed: Boolean(product?.gtin || product?.gtin13 || product?.mpn || product?.sku), skipped: !productApplicable, warning: Boolean(product), evidence: { gtin: product?.gtin ?? product?.gtin13 ?? "", mpn: product?.mpn ?? "", sku: product?.sku ?? "" } });
 
   add(36, { passed: Boolean(breadcrumb), skipped: url.pathname === "/", evidence: { breadcrumbFound: Boolean(breadcrumb) } });
   add(37, { passed: Boolean(breadcrumb?.itemListElement), skipped: !breadcrumb, evidence: { itemListElement: breadcrumb?.itemListElement ?? null } });
@@ -289,7 +289,7 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   add(40, { passed: findByType(records, (type) => type === "ImageObject").length > 0, skipped: !imageApplicable, evidence: { images: $("img").length } });
   add(41, { passed: findByType(records, (type) => type === "VideoObject").length > 0, skipped: !videoApplicable, evidence: { videos: $("video,iframe[src*='youtube'],iframe[src*='vimeo']").length } });
 
-  add(42, { passed: errors.length === 0, evidence: { parseErrors: errors } });
+  add(42, { passed: errors.length === 0, skipped: $("script[type='application/ld+json']").length === 0, evidence: { parseErrors: errors } });
   add(43, { passed: $("script[type='application/ld+json']").length > 0, warning: $("[itemscope],[typeof],[property]").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, microdataRdfaSignals: $("[itemscope],[typeof],[property]").length } });
   add(44, { passed: allUrls.every((item) => item.invalid.length === 0), evidence: { invalidHttpUrls: allUrls.flatMap((item) => item.invalid).slice(0, 10) } });
   add(51, { passed: duplicateIds.length === 0, evidence: { duplicateIds: [...new Set(duplicateIds)] } });

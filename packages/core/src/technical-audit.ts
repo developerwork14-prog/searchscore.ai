@@ -14,7 +14,7 @@ interface CheckDefinition {
   severity: TechnicalSeverity;
 }
 
-interface FetchedPage {
+export interface FetchedPage {
   url: string;
   finalUrl: string;
   status: number;
@@ -24,6 +24,19 @@ interface FetchedPage {
   redirectHops: number;
   $: cheerio.CheerioAPI;
   wordCount: number;
+}
+
+interface MixedContentAsset {
+  tag: string;
+  url: string;
+  pageUrl: string;
+}
+
+export interface ViewportMetaDebug {
+  viewportFound: boolean;
+  rawViewportTag: string;
+  viewportContent: string;
+  passed: boolean;
 }
 
 export interface TechnicalCheckResult extends CheckDefinition {
@@ -296,6 +309,16 @@ const CHECKS: CheckDefinition[] = [
   [238, "Security & HTTPS", "Correct Content-Type Headers", 1.13, "MINOR"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
+const DUPLICATE_CHECK_IDS = new Set([
+  1, 2, 3, 4, 5, 8, 9,
+  27, 28, 29, 37, 38, 39, 40,
+  46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+  59, 60, 63, 64, 65, 72, 73, 74, 75, 76,
+  103, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 125, 126, 127, 128, 129, 130, 131,
+  133, 134, 135, 136, 137, 138, 141, 142,
+  148, 159, 162, 164, 165, 166, 178, 181
+]);
+
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
 const DOMAIN_CHECK_IDS = new Set([3, 4, 7, 10, 11, 12, 13, 14, 15, 22, 23, 35, 37, 38, 45, 56, 59, 67, 68, 69, 70, 80, 81, 83, 91, 98, 99, 106, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142]);
 
@@ -334,6 +357,50 @@ interface LabVitals {
 
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export function viewportMetaDebug($: cheerio.CheerioAPI): ViewportMetaDebug {
+  const viewportTag = metaElementByName($, "viewport");
+  const rawViewportTag = viewportTag ? $.html(viewportTag) : "";
+  const viewportContent = viewportTag ? ($(viewportTag).attr("content") ?? "").trim() : "";
+  return {
+    viewportFound: Boolean(viewportTag),
+    rawViewportTag,
+    viewportContent,
+    passed: Boolean(viewportTag && viewportContent)
+  };
+}
+
+export function metaElementByName($: cheerio.CheerioAPI, name: string) {
+  const expected = name.trim().toLowerCase();
+  return $("meta").toArray().find((el) => ($(el).attr("name") ?? "").trim().toLowerCase() === expected);
+}
+
+export function metaContentByName($: cheerio.CheerioAPI, name: string) {
+  const el = metaElementByName($, name);
+  return el ? ($(el).attr("content") ?? "").trim() : "";
+}
+
+function metaContentsByNames($: cheerio.CheerioAPI, names: string[]) {
+  const expected = new Set(names.map((name) => name.trim().toLowerCase()));
+  return $("meta").toArray()
+    .filter((el) => expected.has(($(el).attr("name") ?? "").trim().toLowerCase()))
+    .map((el) => ($(el).attr("content") ?? "").trim())
+    .filter(Boolean);
+}
+
+function relTokens(value: string) {
+  return value.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+export function linkElementsByRel($: cheerio.CheerioAPI, rel: string) {
+  const expected = rel.toLowerCase();
+  return $("link").toArray().filter((el) => relTokens($(el).attr("rel") ?? "").includes(expected));
+}
+
+export function linkHrefByRel($: cheerio.CheerioAPI, rel: string) {
+  const el = linkElementsByRel($, rel)[0];
+  return el ? ($(el).attr("href") ?? "").trim() : "";
 }
 
 function passRate<T>(items: T[], predicate: (item: T) => boolean) {
@@ -560,7 +627,7 @@ function expectedKindFromContentType(contentType: string): AssetKind {
 }
 
 function isTextAsset(kind: AssetKind) {
-  return kind === "css" || kind === "js" || kind === "json" || kind === "xml" || kind === "txt" || kind === "svg";
+  return kind === "html" || kind === "css" || kind === "js" || kind === "json" || kind === "xml" || kind === "txt" || kind === "svg";
 }
 
 function extractSrcsetUrls(root: URL, srcset: string) {
@@ -832,7 +899,7 @@ async function canonicalChainLength(startUrl: string, timeoutMs = 2200) {
     if (seen.has(current)) return { hops: hops + 1, loop: true };
     seen.add(current);
     const nextPage = await fetchPage(current, timeoutMs).catch(() => null);
-    const nextCanonical = nextPage?.$("link[rel='canonical']").attr("href");
+    const nextCanonical = nextPage ? linkHrefByRel(nextPage.$, "canonical") : "";
     const resolved = nextCanonical && nextPage ? absolute(new URL(nextPage.finalUrl), nextCanonical) : "";
     if (!resolved || resolved === current) return { hops, loop: false };
     hops += 1;
@@ -861,12 +928,12 @@ function indexNowCandidateUrls(origin: string, robotsText: string, html: string)
 
 function robotsContentAllowsIndex(page: FetchedPage) {
   const header = page.headers.get("x-robots-tag")?.toLowerCase() ?? "";
-  const meta = page.$("meta[name='robots'],meta[name='googlebot']").attr("content")?.toLowerCase() ?? "";
+  const meta = metaContentsByNames(page.$, ["robots", "googlebot", "bingbot"]).join(",").toLowerCase();
   return !`${header} ${meta}`.includes("noindex");
 }
 
 function metaRobots(page: FetchedPage) {
-  return (page.$("meta[name='robots'],meta[name='googlebot']").attr("content") ?? "").toLowerCase();
+  return metaContentsByNames(page.$, ["robots", "googlebot", "bingbot"]).join(",").toLowerCase();
 }
 
 function jsonLd(page: FetchedPage) {
@@ -1020,13 +1087,50 @@ function pass(def: CheckDefinition, passed: boolean, evidence: string): Technica
   return { ...def, passed, evidence, scope: checkScope(def.id) };
 }
 
+const BROWSER_LOADED_HTTP_ASSET_SELECTORS = [
+  { tag: "script", attr: "src" },
+  { tag: "link", attr: "href" },
+  { tag: "img", attr: "src" },
+  { tag: "iframe", attr: "src" },
+  { tag: "video", attr: "src" },
+  { tag: "audio", attr: "src" }
+];
+
+function linkElementLoadsResource($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0]) {
+  const rel = ($(el).attr("rel") ?? "").toLowerCase();
+  return /\b(?:stylesheet|preload|modulepreload|prefetch|icon|apple-touch-icon|manifest)\b/.test(rel);
+}
+
+export function mixedContentAssets(pages: FetchedPage[]): MixedContentAsset[] {
+  return pages.flatMap((page) =>
+    BROWSER_LOADED_HTTP_ASSET_SELECTORS.flatMap(({ tag, attr }) =>
+      page.$(`${tag}[${attr}]`).toArray()
+        .filter((el) => tag !== "link" || linkElementLoadsResource(page.$, el))
+        .map((el) => ({
+          tag,
+          url: (page.$(el).attr(attr) ?? "").trim(),
+          pageUrl: page.finalUrl
+        }))
+        .filter((asset) => /^http:\/\//i.test(asset.url))
+    )
+  );
+}
+
+export function http200SeverityForPercent(percent: number): TechnicalSeverity {
+  if (percent >= 95) return "ADVISORY";
+  if (percent >= 80) return "MAJOR";
+  return "BLOCKER";
+}
+
 export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAuditResult> {
   const url = new URL(normalizeUrl(inputUrl));
   let page: FetchedPage;
   try {
     page = await fetchPage(url.toString(), 3500);
   } catch (error) {
-    const checks = CHECKS.map((check) => pass(check, check.severity === "ADVISORY", `Fetch failed: ${error instanceof Error ? error.message : "unknown error"}`));
+    const checks = CHECKS
+      .filter((check) => !DUPLICATE_CHECK_IDS.has(check.id))
+      .map((check) => pass(check, check.severity === "ADVISORY", `Fetch failed: ${error instanceof Error ? error.message : "unknown error"}`));
     return scoreChecks(checks);
   }
 
@@ -1041,7 +1145,14 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
     fetchPageSpeedInsights(page.finalUrl, "mobile"),
     fetchPageSpeedInsights(page.finalUrl, "desktop"),
     fetchCrux(page.finalUrl),
-    crawlSite(url.toString(), { maxPages: 20, maxDepth: 6, timeoutMs: 2200, concurrency: 6, maxSitemapFiles: 1 })
+    crawlSite(url.toString(), {
+      maxPages: 1000,
+      maxDepth: 0,
+      timeoutMs: 3500,
+      concurrency: 8,
+      maxSitemapFiles: 250,
+      followInternalLinks: false
+    })
   ]);
   const sitemap$ = sitemap?.text ? cheerio.load(sitemap.text, { xmlMode: true }) : null;
   const pages = (crawled.pages.length ? crawled.pages : [page]) as FetchedPage[];
@@ -1061,10 +1172,10 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const interactiveLabelRate = interactiveAggregate.total ? interactiveAggregate.labelled / interactiveAggregate.total : 1;
   const links = internalLinks(page, url);
   const allInternalLinks = pages.flatMap((p) => internalLinks(p, new URL(p.finalUrl)));
-  const canonical = page.$("link[rel='canonical']").attr("href");
+  const canonical = linkHrefByRel(page.$, "canonical");
   const canonicalAbs = canonical ? absolute(url, canonical) : "";
   const canonicalSelfRef = passRate(pages, (p) => {
-    const value = p.$("link[rel='canonical']").attr("href");
+    const value = linkHrefByRel(p.$, "canonical");
     const resolved = value ? absolute(new URL(p.finalUrl), value) : "";
     try {
       return Boolean(resolved) && new URL(resolved).pathname.replace(/\/$/, "") === new URL(p.finalUrl).pathname.replace(/\/$/, "");
@@ -1075,8 +1186,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const robotsValue = metaRobots(page);
   const h1 = page.$("h1").first().text().trim();
   const title = page.$("title").first().text().trim();
-  const description = page.$("meta[name='description']").attr("content")?.trim() ?? "";
-  const viewport = page.$("meta[name='viewport']").attr("content")?.toLowerCase() ?? "";
+  const description = metaContentByName(page.$, "description");
+  const viewportDebug = viewportMetaDebug(page.$);
+  const viewport = viewportDebug.viewportContent.toLowerCase();
   const headBlockingScripts = page.$("head script[src]:not([async]):not([defer]):not([type='module'])").length;
   const hiddenWords = page.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(page.$(el).text()), 0);
   const semanticCount = page.$("article,section,main,aside,header,footer").length;
@@ -1095,20 +1207,22 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
     return typeof context === "string" ? context.includes("schema.org") : true;
   });
   const titleValues = pages.map((p) => p.$("title").first().text().trim());
-  const descriptionValues = pages.map((p) => p.$("meta[name='description']").attr("content")?.trim() ?? "");
+  const descriptionValues = pages.map((p) => metaContentByName(p.$, "description"));
   const titlePresence = passRate(titleValues, (value) => value.length > 0);
   const titleLength = passRate(titleValues, (value) => value.length >= 30 && value.length <= 60);
   const descriptionPresence = passRate(descriptionValues, (value) => value.length > 0);
   const availableDescriptions = descriptionValues.filter(Boolean);
   const descriptionLength = passRate(availableDescriptions, (value) => value.length >= 120 && value.length <= 160);
-  const viewportPresence = passRate(pages, (p) => (p.$("meta[name='viewport']").attr("content")?.toLowerCase() ?? "").includes("width=device-width"));
+  const viewportPresence = passRate(pages, (p) => viewportMetaDebug(p.$).passed);
+  const viewportDebugEvidence = JSON.stringify(viewportDebug);
+  console.debug("Technical audit viewport meta", viewportDebug);
   const duplicateTitleSet = new Set([...titleValues.filter(Boolean).reduce((counts, value) => counts.set(value, (counts.get(value) ?? 0) + 1), new Map<string, number>()).entries()].filter(([, count]) => count > 1).map(([value]) => value));
   const duplicateDescriptionSet = new Set([...availableDescriptions.reduce((counts, value) => counts.set(value, (counts.get(value) ?? 0) + 1), new Map<string, number>()).entries()].filter(([, count]) => count > 1).map(([value]) => value));
   const duplicateTitlePages = titleValues.filter((value) => duplicateTitleSet.has(value)).length;
   const duplicateDescriptionPages = availableDescriptions.filter((value) => duplicateDescriptionSet.has(value)).length;
   const duplicateTitleRate = pages.length ? duplicateTitlePages / pages.length : 0;
   const duplicateDescriptionRate = availableDescriptions.length ? duplicateDescriptionPages / availableDescriptions.length : 0;
-  const hreflangs = page.$("link[rel='alternate'][hreflang]").length;
+  const hreflangs = linkElementsByRel(page.$, "alternate").filter((el) => Boolean(page.$(el).attr("hreflang"))).length;
   const hasLanguageAlternates = page.html.match(/\/(en|hi|fr|es|de|ar)\//i) !== null || hreflangs > 0;
   const aboutWords = aboutLink ? await fetchPage(absolute(url, page.$(aboutLink).attr("href") ?? ""), 2000).then((p) => p.wordCount).catch(() => 0) : 0;
   const contactText = contactLink ? await fetchPage(absolute(url, page.$(contactLink).attr("href") ?? ""), 2000).then((p) => p.$("body").text()).catch(() => "") : "";
@@ -1116,7 +1230,14 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const reviewWords = (page.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length;
   const everyPage = (predicate: (p: FetchedPage) => boolean) => pages.every(predicate);
   const somePage = (predicate: (p: FetchedPage) => boolean) => pages.some(predicate);
-  const pageCountEvidence = `${pages.length} pages crawled`;
+  const pagePassRate = (predicate: (p: FetchedPage) => boolean) => passRate(pages, predicate);
+  const pageRateEvidence = (rate: ReturnType<typeof passRate<FetchedPage>>, label: string) =>
+    `${rate.passed}/${rate.total} pages ${label} (${rate.percent}%)`;
+  const crawlStats = crawled.crawlStats;
+  const sitemapTargetCount = crawlStats?.targetUrls || crawled.sitemapUrls.length || crawled.sitemapSummary?.totalUrls || pages.length;
+  const crawlLimitNote = crawlStats?.cappedByMaxPages ? `, capped by max page limit` : "";
+  const crawlDropNote = crawlStats?.failedOrNonHtmlUrls ? `, ${crawlStats.failedOrNonHtmlUrls} failed or non-HTML` : "";
+  const pageCountEvidence = `${pages.length}/${sitemapTargetCount} sitemap/homepage pages returned crawlable HTML${crawlLimitNote}${crawlDropNote}`;
   const assetRefs = dedupeByUrl(pages.flatMap((p) => extractAssets(p, new URL(p.finalUrl))));
   const textAssetRefs = assetRefs.filter((asset) => isTextAsset(asset.kind));
   const sampleableAssetRefs = assetRefs.filter((asset) => asset.kind !== "other");
@@ -1147,6 +1268,8 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
 
   const compressedCount = compressedTextAssets.filter((asset) => /gzip|br|deflate/i.test(asset.headers.get("content-encoding") ?? "")).length;
   const compressionPercent = compressedTextAssets.length ? Math.round((compressedCount / compressedTextAssets.length) * 100) : 0;
+  const htmlCompressionSample = compressedTextAssets.find((asset) => asset.kind === "html");
+  const htmlCompression = htmlCompressionSample?.headers.get("content-encoding") ?? page.headers.get("content-encoding") ?? "";
   const cacheOkCount = headerAssetSamples.filter(appropriateCacheControl).length;
   const cachePercent = headerAssetSamples.length ? Math.round((cacheOkCount / headerAssetSamples.length) * 100) : 0;
   const validatorHeaders = [
@@ -1207,7 +1330,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const ttfbSamples = [page.responseTimeMs, ...headerAssetSamples.filter((asset) => asset.kind === "html").map(() => page.responseTimeMs)];
   const medianTtfb = ttfbSamples.sort((a, b) => a - b)[Math.floor(ttfbSamples.length / 2)] ?? page.responseTimeMs;
   const aiCrawlerResponses = [openAiFetch, perplexityFetch, googleExtendedFetch].filter((item): item is NonNullable<typeof item> => Boolean(item));
-  const aiCrawlerOk = aiCrawlerResponses.length > 0 && aiCrawlerResponses.every((item) => item.response.status < 400 && wordCount(cheerio.load(item.text)("body").text()) >= Math.max(50, Math.round(page.wordCount * 0.5)));
+  const aiCrawlerOk = aiCrawlerResponses.length === 3 && aiCrawlerResponses.every((item) => item.response.status < 400 && wordCount(cheerio.load(item.text)("body").text()) >= 50);
   const headlessRatios = aiCrawlerResponses.map((item) => {
     const botWords = wordCount(cheerio.load(item.text)("body").text());
     return page.wordCount ? botWords / page.wordCount : 1;
@@ -1236,7 +1359,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
     : psi?.modernImagePass ?? imageAggregate.modernRate >= 0.7;
   const lcpPreloaded = somePage((p) => {
     const root = new URL(p.finalUrl);
-    const preloadUrls = p.$("link[rel='preload'][as='image']").toArray().map((el) => absolute(root, p.$(el).attr("href") ?? ""));
+    const preloadUrls = linkElementsByRel(p.$, "preload")
+      .filter((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")
+      .map((el) => absolute(root, p.$(el).attr("href") ?? ""));
     return firstImgUrl ? preloadUrls.includes(firstImgUrl) : preloadUrls.length > 0;
   });
   const lcpElementFound = psi?.lcpElementFound ?? Boolean(firstImg.length || page.$("main h1,h1,main video,video[poster]").length);
@@ -1276,15 +1401,25 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const selfHostedFontPercent = fontAssetSamples.length
     ? Math.round((fontAssetSamples.filter((asset) => sameOrigin(new URL(page.finalUrl), asset.url)).length / fontAssetSamples.length) * 100)
     : 100;
-  const preconnectCount = pages.reduce((sum, p) => sum + p.$("link[rel='preconnect']").length, 0);
-  const preloadCriticalCount = pages.reduce((sum, p) => sum + p.$("link[rel='preload']").length, 0);
+  const preconnectCount = pages.reduce((sum, p) => sum + linkElementsByRel(p.$, "preconnect").length, 0);
+  const preloadCriticalCount = pages.reduce((sum, p) => sum + linkElementsByRel(p.$, "preload").length, 0);
+  const http200Count = pages.filter((p) => p.status === 200).length;
+  const http200Rate = pages.length ? http200Count / pages.length : 0;
+  const http200Percent = Math.round(http200Rate * 100);
+  const http200Severity = http200SeverityForPercent(http200Percent);
+  const browserMixedContentAssets = url.protocol === "https:" ? mixedContentAssets(pages) : [];
+  const mixedContentDebug = {
+    mixedContentAssets: browserMixedContentAssets.map(({ tag, url }) => ({ tag, url }))
+  };
+  console.debug("Technical audit mixed content", mixedContentDebug);
   const checksById = new Map(CHECKS.map((check) => [check.id, check]));
 
   const results: TechnicalCheckResult[] = [];
-  const add = (id: number, passed: boolean, evidence: string) => {
+  const add = (id: number, passed: boolean, evidence: string, overrides: Partial<Pick<CheckDefinition, "severity" | "weight" | "name" | "category">> = {}) => {
+    if (DUPLICATE_CHECK_IDS.has(id)) return;
     const def = checksById.get(id);
     if (!def) return;
-    results.push(pass(def, passed, evidence));
+    results.push(pass({ ...def, ...overrides }, passed, evidence));
   };
   const hsts = page.headers.get("strict-transport-security") ?? "";
   const hstsMaxAge = Number(hsts.match(/max-age=(\d+)/i)?.[1] ?? 0);
@@ -1296,7 +1431,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(5, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
   add(6, !(page.headers.get("x-robots-tag") ?? "").toLowerCase().includes("noindex"), page.headers.get("x-robots-tag") ?? "none");
   add(7, await fetchText(`${url.protocol}//www.${url.hostname.replace(/^www\./, "")}`, { method: "GET" }, 1800).then((r) => r.response.redirected || r.response.status === 200).catch(() => true), "www variant checked");
-  add(8, url.protocol !== "https:" || page.$("[src^='http://'],[href^='http://']").length === 0, "HTTP assets/links on HTTPS page");
+  add(8, browserMixedContentAssets.length === 0, browserMixedContentAssets.length ? JSON.stringify(mixedContentDebug) : "No browser-loaded HTTP assets detected");
   add(9, page.responseTimeMs < 800, `${page.responseTimeMs}ms`);
   add(10, robots?.response.status === 200 && /text|plain/i.test(robots.response.headers.get("content-type") ?? ""), `Status ${robots?.response.status ?? "missing"}`);
   add(11, /sitemap:/i.test(robots?.text ?? ""), "robots.txt sitemap directive");
@@ -1308,8 +1443,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(17, titleLength.rate >= 0.8, `${titleLength.passed}/${titleLength.total} titles within recommended range (${titleLength.percent}%)`);
   add(18, descriptionPresence.rate >= 0.8, `${descriptionPresence.passed}/${descriptionPresence.total} pages contain meta descriptions (${descriptionPresence.percent}%)`);
   add(19, descriptionLength.rate >= 0.75, `${descriptionLength.passed}/${descriptionLength.total} descriptions within recommended range (${descriptionLength.percent}%)`);
-  add(20, viewportPresence.rate >= 0.95, `${viewportPresence.passed}/${viewportPresence.total} pages contain valid viewport tag (${viewportPresence.percent}%)`);
-  add(21, everyPage((p) => !metaRobots(p).includes("noindex")), pageCountEvidence);
+  add(20, viewportPresence.rate >= 0.95, `${viewportPresence.passed}/${viewportPresence.total} pages contain valid viewport tag (${viewportPresence.percent}%). ${viewportDebugEvidence}`);
+  const noindexMetaRate = pagePassRate((p) => !metaRobots(p).includes("noindex"));
+  add(21, noindexMetaRate.rate >= 0.98, pageRateEvidence(noindexMetaRate, "do not contain meta noindex"));
   add(22, duplicateTitleRate <= 0.1, `${duplicateTitlePages} duplicate title pages out of ${pages.length} (${Math.round(duplicateTitleRate * 100)}%)`);
   add(23, duplicateDescriptionRate <= 0.15, `${duplicateDescriptionPages} duplicate description pages out of ${availableDescriptions.length} (${Math.round(duplicateDescriptionRate * 100)}%)`);
   const visibleHeadings = (p: FetchedPage, selector = "h1,h2,h3,h4,h5,h6") => p.$(selector).toArray().filter((el) => {
@@ -1365,25 +1501,36 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(25, headingPassRate("h1LengthOk") >= 0.6, headingEvidence("h1LengthOk", "have H1 length between 10 and 90 characters"));
 
   add(26, headingPassRate("hierarchyOk") >= 0.6, headingEvidence("hierarchyOk", "have valid visible heading hierarchy"));
-  add(27, everyPage((p) => Boolean(p.$("link[rel='canonical']").attr("href"))), pageCountEvidence);
+  const canonicalPresence = pagePassRate((p) => Boolean(linkHrefByRel(p.$, "canonical")));
+  add(27, canonicalPresence.rate >= 0.9, pageRateEvidence(canonicalPresence, "contain a canonical tag"));
   add(28, canonicalSelfRef.rate >= 0.9, `${canonicalSelfRef.passed}/${canonicalSelfRef.total} pages have self-referencing canonical (${canonicalSelfRef.percent}%)`);
   add(29, !canonicalAbs || await fetchPage(canonicalAbs, 1800).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
   add(30, !/[?&]page=|\/page\//i.test(url.toString()) || page.$("link[rel='next'],link[rel='prev']").length > 0, "pagination signal");
   add(31, !slashDuplicateFailed, slashVariant ? `Slash variant status ${slashVariant.response.status}${slashDuplicateFailed ? ", both versions returned different 200 content" : ""}` : "slash variant unavailable");
-  add(32, everyPage(robotsContentAllowsIndex), pageCountEvidence);
-  add(33, everyPage((p) => !metaRobots(p).includes("nosnippet") && !metaRobots(p).includes("max-snippet:0")), pageCountEvidence);
-  add(34, everyPage((p) => p.wordCount >= 50), pageCountEvidence);
+  const indexableRate = pagePassRate(robotsContentAllowsIndex);
+  const snippetRate = pagePassRate((p) => !metaRobots(p).includes("nosnippet") && !metaRobots(p).includes("max-snippet:0"));
+  const rawContentRate = pagePassRate((p) => p.wordCount >= 50);
+  add(32, indexableRate.rate >= 0.95, pageRateEvidence(indexableRate, "are indexable"));
+  add(33, snippetRate.rate >= 0.95, pageRateEvidence(snippetRate, "allow snippets"));
+  add(34, rawContentRate.rate >= 0.85, pageRateEvidence(rawContentRate, "contain at least 50 body words in raw HTML"));
   add(35, (await Promise.all(allInternalLinks.slice(0, 10).map((link) => fetchHeadOk(link.href)))).every(Boolean), `${allInternalLinks.length} internal links found`);
   add(36, page.redirectHops <= 1, `${page.redirectHops} redirect hops`);
   add(37, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
   add(38, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");
-  add(39, everyPage((p) => p.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(p.$(el).text()), 0) < 100), pageCountEvidence);
-  add(40, everyPage((p) => !/infinite|load more|IntersectionObserver/i.test(p.html)), pageCountEvidence);
-  add(41, everyPage((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html)), pageCountEvidence);
-  add(42, everyPage((p) => !new URL(p.finalUrl).pathname.includes("_")), pageCountEvidence);
-  add(43, everyPage((p) => p.finalUrl.length <= 75), pageCountEvidence);
-  add(44, everyPage((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()), pageCountEvidence);
-  add(45, pages.every((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/")), `${pages.length} pages sampled`);
+  const hiddenContentRate = pagePassRate((p) => p.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(p.$(el).text()), 0) < 100);
+  const infiniteScrollRate = pagePassRate((p) => !/infinite|load more|IntersectionObserver/i.test(p.html));
+  const cookieWallRate = pagePassRate((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html));
+  const underscoreRate = pagePassRate((p) => !new URL(p.finalUrl).pathname.includes("_"));
+  const urlLengthRate = pagePassRate((p) => p.finalUrl.length <= 115);
+  const lowercasePathRate = pagePassRate((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase());
+  const slashConsistencyRate = pagePassRate((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/"));
+  add(39, hiddenContentRate.rate >= 0.9, pageRateEvidence(hiddenContentRate, "avoid large hidden-content blocks"));
+  add(40, infiniteScrollRate.rate >= 0.95, pageRateEvidence(infiniteScrollRate, "avoid infinite-scroll risk patterns"));
+  add(41, cookieWallRate.rate >= 0.9, pageRateEvidence(cookieWallRate, "avoid consent-wall blocking patterns"));
+  add(42, underscoreRate.rate >= 0.95, pageRateEvidence(underscoreRate, "avoid underscores in URL paths"));
+  add(43, urlLengthRate.rate >= 0.9, pageRateEvidence(urlLengthRate, "have URLs <= 115 characters"));
+  add(44, lowercasePathRate.rate >= 0.95, pageRateEvidence(lowercasePathRate, "use lowercase URL paths"));
+  add(45, slashConsistencyRate.rate >= 0.9, pageRateEvidence(slashConsistencyRate, "follow the dominant trailing-slash pattern"));
   add(46, lcp !== undefined ? lcp < 2500 : page.responseTimeMs < 2500, lcp !== undefined ? `${Math.round(lcp)}ms via API` : `Local fallback ${page.responseTimeMs}ms`);
   add(47, inp !== undefined ? inp < 200 : headBlockingScripts === 0, inp !== undefined ? `${Math.round(inp)}ms via API` : "Local fallback from blocking scripts");
   add(48, cls !== undefined ? cls < 0.1 : page.$("img").length === 0 || images.missingDimensions === 0, cls !== undefined ? `${cls} via API` : "Local fallback from layout-stability image dimensions");
@@ -1393,10 +1540,10 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(52, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
   add(53, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
   add(54, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
-  add(55, somePage((p) => p.$("link[rel='preload'][as='image']").length > 0), pageCountEvidence);
+  add(55, somePage((p) => linkElementsByRel(p.$, "preload").some((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")), pageCountEvidence);
   add(56, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
   add(57, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
-  add(58, viewport.includes("width=device-width") && viewport.includes("initial-scale=1"), viewport || "missing");
+  add(58, viewportDebug.passed, viewportDebugEvidence);
   add(59, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
   add(60, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(61, imageAggregate.altRate >= 0.9, `${imageAggregate.altPresent}/${imageAggregate.nonDecorativeCount} non-decorative images have alt text (${Math.round(imageAggregate.altRate * 100)}%)`);
@@ -1413,9 +1560,11 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(72, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
   add(73, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
   add(74, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
-  add(75, somePage((p) => p.$("link[rel='preload'][as='image']").length > 0), pageCountEvidence);
-  add(76, pageImages.every((item) => item.modernRatio >= 0.7), pageCountEvidence);
-  add(77, pageLd.every((item) => item.blocks.length > 0), pageCountEvidence);
+  add(75, somePage((p) => linkElementsByRel(p.$, "preload").some((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")), pageCountEvidence);
+  const modernImagePageRate = passRate(pageImages, (item) => item.modernRatio >= 0.7);
+  const jsonLdPageRate = passRate(pageLd, (item) => item.blocks.length > 0);
+  add(76, modernImagePageRate.rate >= 0.75, `${modernImagePageRate.passed}/${modernImagePageRate.total} pages have at least 70% WebP/AVIF images (${modernImagePageRate.percent}%)`);
+  add(77, jsonLdPageRate.rate >= 0.5 || ld.blocks.length > 0, `${jsonLdPageRate.passed}/${jsonLdPageRate.total} pages contain JSON-LD blocks (${jsonLdPageRate.percent}%)`);
   add(78, pageLd.every((item) => item.errors.length === 0), `${pageLd.reduce((sum, item) => sum + item.errors.length, 0)} JSON-LD errors`);
   add(79, allLdBlocks.every((block) => {
     const context = (block as Record<string, unknown>)?.["@context"];
@@ -1425,38 +1574,57 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(81, pages.some((p) => p.html.match(/"sameAs"\s*:\s*\[/) !== null && (p.html.match(/https?:\/\//g)?.length ?? 0) >= 4), pageCountEvidence);
   add(82, hasSchemaType(allLdBlocks, /WebSite/) && pages.some((p) => /SearchAction/.test(p.html)), "WebSite/SearchAction schema");
   add(83, !samplePages.length || samplePages.every((p) => hasSchemaType(jsonLd(p).blocks, /BreadcrumbList/)), `${samplePages.length} interior pages crawled`);
-  add(84, everyPage((p) => !/blog|article/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Article|BlogPosting/)), pageCountEvidence);
-  add(85, everyPage((p) => p.$("details, .faq, [class*='faq']").length < 1 || hasSchemaType(jsonLd(p).blocks, /FAQPage/)), pageCountEvidence);
-  add(86, everyPage((p) => !/how-to|how to/i.test(`${new URL(p.finalUrl).pathname} ${p.$("h1").first().text().trim()}`) || hasSchemaType(jsonLd(p).blocks, /HowTo/)), pageCountEvidence);
-  add(87, everyPage((p) => !/service/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/)), pageCountEvidence);
-  add(88, everyPage((p) => !/author|team/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Person/)), pageCountEvidence);
-  add(89, everyPage((p) => !/product|pricing/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Product/)), pageCountEvidence);
-  add(90, everyPage((p) => !/"price"\s*:/.test(p.html) || /\$|₹|€|£|\bprice\b/i.test(p.$("body").text())), pageCountEvidence);
+  const articleSchemaRate = pagePassRate((p) => !/blog|article/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Article|BlogPosting/));
+  const faqSchemaRate = pagePassRate((p) => p.$("details, .faq, [class*='faq']").length < 1 || hasSchemaType(jsonLd(p).blocks, /FAQPage/));
+  const howToSchemaRate = pagePassRate((p) => !/how-to|how to/i.test(`${new URL(p.finalUrl).pathname} ${p.$("h1").first().text().trim()}`) || hasSchemaType(jsonLd(p).blocks, /HowTo/));
+  const serviceSchemaRate = pagePassRate((p) => !/service/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/));
+  const personSchemaRate = pagePassRate((p) => !/author|team/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Person/));
+  const productSchemaRate = pagePassRate((p) => !/product|pricing/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Product/));
+  const priceParityRate = pagePassRate((p) => !/"price"\s*:/.test(p.html) || /\$|₹|€|£|\bprice\b/i.test(p.$("body").text()));
+  add(84, articleSchemaRate.rate >= 0.8, pageRateEvidence(articleSchemaRate, "have Article schema when they look like articles"));
+  add(85, faqSchemaRate.rate >= 0.8, pageRateEvidence(faqSchemaRate, "have FAQPage schema when visible FAQ content exists"));
+  add(86, howToSchemaRate.rate >= 0.8, pageRateEvidence(howToSchemaRate, "have HowTo schema when they look like how-to pages"));
+  add(87, serviceSchemaRate.rate >= 0.75, pageRateEvidence(serviceSchemaRate, "have service/local schema when they look like service pages"));
+  add(88, personSchemaRate.rate >= 0.8, pageRateEvidence(personSchemaRate, "have Person schema when they look like author/team pages"));
+  add(89, productSchemaRate.rate >= 0.8, pageRateEvidence(productSchemaRate, "have Product schema when they look like product/pricing pages"));
+  add(90, priceParityRate.rate >= 0.95, pageRateEvidence(priceParityRate, "keep schema price visible in DOM"));
   add(91, pageLd.every((item) => item.errors.length === 0), "Local rich-results fallback");
-  add(92, everyPage((p) => Boolean(p.$("meta[property='og:title']").attr("content")?.trim())), pageCountEvidence);
-  add(93, everyPage((p) => Boolean(p.$("meta[property='og:description']").attr("content")?.trim())), pageCountEvidence);
+  const ogTitleRate = pagePassRate((p) => Boolean(p.$("meta[property='og:title']").attr("content")?.trim()));
+  const ogDescriptionRate = pagePassRate((p) => Boolean(p.$("meta[property='og:description']").attr("content")?.trim()));
+  add(92, ogTitleRate.rate >= 0.8, pageRateEvidence(ogTitleRate, "contain og:title"));
+  add(93, ogDescriptionRate.rate >= 0.8, pageRateEvidence(ogDescriptionRate, "contain og:description"));
   add(94, await fetchImageHeadOk(absolute(url, page.$("meta[property='og:image']").attr("content") ?? "")), "og:image HEAD");
-  add(95, ["twitter:card", "twitter:title", "twitter:description"].every((name) => page.$(`meta[name='${name}']`).attr("content")), "Twitter card tags");
-  add(96, everyPage((p) => internalLinks(p, new URL(p.finalUrl)).length >= 3), pageCountEvidence);
+  add(95, ["twitter:card", "twitter:title", "twitter:description"].every((name) => metaContentByName(page.$, name)), "Twitter card tags");
+  const internalLinkDepthRate = pagePassRate((p) => internalLinks(p, new URL(p.finalUrl)).length >= 3);
+  add(96, internalLinkDepthRate.rate >= 0.75, pageRateEvidence(internalLinkDepthRate, "have at least 3 internal links"));
   add(97, allInternalLinks.every((link) => !GENERIC_ANCHORS.has(link.text)), "anchor text scanned");
   add(98, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");
   add(99, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
-  add(100, everyPage((p) => p.$("article,section,main,aside,header,footer").length >= 3), pageCountEvidence);
-  add(101, everyPage((p) => p.$("table").toArray().every((el) => p.$(el).find("caption").length > 0)), pageCountEvidence);
-  add(102, everyPage((p) => p.$("time").toArray().every((el) => Boolean(p.$(el).attr("datetime")))), pageCountEvidence);
+  const semanticHtmlRate = pagePassRate((p) => p.$("article,section,main,aside,header,footer").length >= 3);
+  const tableCaptionRate = pagePassRate((p) => p.$("table").toArray().every((el) => p.$(el).find("caption").length > 0));
+  const timeDatetimeRate = pagePassRate((p) => p.$("time").toArray().every((el) => Boolean(p.$(el).attr("datetime"))));
+  add(100, semanticHtmlRate.rate >= 0.75, pageRateEvidence(semanticHtmlRate, "use at least 3 semantic HTML5 elements"));
+  add(101, tableCaptionRate.rate >= 0.9, pageRateEvidence(tableCaptionRate, "give tables captions when tables exist"));
+  add(102, timeDatetimeRate.rate >= 0.9, pageRateEvidence(timeDatetimeRate, "use datetime on time elements"));
   add(103, imageAggregate.altRate >= 0.9, `${imageAggregate.altPresent}/${imageAggregate.nonDecorativeCount} non-decorative images have alt text (${Math.round(imageAggregate.altRate * 100)}%)`);
   add(104, interactiveLabelRate >= 0.8, `${interactiveAggregate.labelled}/${interactiveAggregate.total} label-required interactive elements labelled (${Math.round(interactiveLabelRate * 100)}%)`);
-  add(105, everyPage((p) => Boolean(p.$("html").attr("lang"))), pageCountEvidence);
+  const htmlLangRate = pagePassRate((p) => Boolean(p.$("html").attr("lang")));
+  add(105, htmlLangRate.rate >= 0.95, pageRateEvidence(htmlLangRate, "set html lang"));
   add(106, !hasLanguageAlternates || hreflangs > 0, `${hreflangs} hreflang tags`);
-  add(107, everyPage((p) => p.wordCount >= (/blog|article/i.test(new URL(p.finalUrl).pathname) ? 800 : 300)), pageCountEvidence);
-  add(108, everyPage((p) => p.$("time[datetime]").length > 0 || /datePublished/.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
-  add(109, everyPage((p) => /dateModified|last-modified/i.test(p.html) || p.headers.has("last-modified") || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
-  add(110, everyPage((p) => /author|byline|rel=.author.|itemprop=.author./i.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname)), pageCountEvidence);
+  const wordCountRate = pagePassRate((p) => p.wordCount >= (/blog|article/i.test(new URL(p.finalUrl).pathname) ? 500 : 180));
+  const publishedDateRate = pagePassRate((p) => p.$("time[datetime]").length > 0 || /datePublished/.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname));
+  const modifiedDateRate = pagePassRate((p) => /dateModified|last-modified/i.test(p.html) || p.headers.has("last-modified") || !/blog|article/i.test(new URL(p.finalUrl).pathname));
+  const authorBylineRate = pagePassRate((p) => /author|byline|rel=.author.|itemprop=.author./i.test(p.html) || !/blog|article/i.test(new URL(p.finalUrl).pathname));
+  add(107, wordCountRate.rate >= 0.75, pageRateEvidence(wordCountRate, "meet practical word-count depth thresholds"));
+  add(108, publishedDateRate.rate >= 0.8, pageRateEvidence(publishedDateRate, "show published dates on article-like pages"));
+  add(109, modifiedDateRate.rate >= 0.8, pageRateEvidence(modifiedDateRate, "show modified dates on article-like pages"));
+  add(110, authorBylineRate.rate >= 0.8, pageRateEvidence(authorBylineRate, "show author signals on article-like pages"));
   add(111, somePage((p) => p.$("a[href*='/author/'],a[href*='/team/']").length > 0), pageCountEvidence);
-  add(112, everyPage((p) => p.$("a[href]").toArray().filter((el) => {
+  const outboundLinkRate = pagePassRate((p) => p.$("a[href]").toArray().filter((el) => {
     const href = p.$(el).attr("href") ?? "";
     return href.startsWith("http") && !sameOrigin(new URL(p.finalUrl), href);
-  }).length >= 2), pageCountEvidence);
+  }).length >= 2);
+  add(112, outboundLinkRate.rate >= 0.5, pageRateEvidence(outboundLinkRate, "include at least 2 outbound citation links"));
   add(113, pages.some((p) => p.$("[class*='review'],[class*='testimonial'],[id*='review'],[id*='testimonial']").length > 0 || ((p.$("body").text().match(/\b(review|reviews|testimonial|testimonials|rating|ratings|stars?|customer stories)\b/gi) ?? []).length >= 2)), pageCountEvidence);
   add(114, llms?.response.status === 200 && /text|plain|markdown/i.test(llmsContentType) && llmsWordStats.words >= 100 && llmsWordStats.sections >= 2, `Status ${llms?.response.status ?? "missing"}, ${llmsWordStats.words} words, ${llmsWordStats.sections} sections${llmsWordStats.words >= 200 && llmsWordStats.strongSignals > 0 ? ", strong content signals" : ""}`);
   add(115, compressedTextAssets.length === 0 || compressionPercent >= 80, compressedTextAssets.length === 0 ? "0/0 text assets compressed (not detected)" : `${compressedCount}/${compressedTextAssets.length} text assets compressed (${compressionPercent}%)${compressionPercent >= 60 && compressionPercent < 80 ? " - partial coverage" : ""}`);
@@ -1534,39 +1702,42 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(188, psi?.tti !== undefined ? psi.tti < 3800 : page.responseTimeMs < 3800 && headBlockingScripts === 0, psi?.tti !== undefined ? `${Math.round(psi.tti)}ms via PageSpeed` : "Local TTI fallback");
   add(189, psi?.speedIndex !== undefined ? psi.speedIndex < 3400 : page.responseTimeMs < 3400, psi?.speedIndex !== undefined ? `${Math.round(psi.speedIndex)}ms via PageSpeed` : `Local fallback ${page.responseTimeMs}ms`);
   add(190, psi?.tbt !== undefined ? psi.tbt < 200 : headBlockingScripts === 0, psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms via PageSpeed` : "Local TBT fallback");
-  add(191, pages.every((p) => p.status === 200), `${pages.filter((p) => p.status === 200).length}/${pages.length} target pages returned HTTP 200`);
+  add(191, http200Percent === 100, `${http200Count}/${pages.length} target pages returned HTTP 200 (${http200Percent}%)`, { severity: http200Severity });
   add(192, url.protocol === "https:" && await sslValid(url), `${url.protocol} TLS certificate checked`);
   add(193, hstsMaxAge > 0, hsts ? `HSTS max-age=${hstsMaxAge}` : "HSTS header missing");
   add(194, subdomainSslResults.every((item) => item.valid), subdomainSslResults.length ? `${subdomainSslResults.filter((item) => item.valid).length}/${subdomainSslResults.length} discovered subdomains have valid SSL` : "No linked subdomains discovered");
   add(195, compressedTextAssets.length === 0 || compressionPercent >= 80, compressedTextAssets.length === 0 ? "0/0 text assets compressed (not detected)" : `${compressedCount}/${compressedTextAssets.length} text assets compressed (${compressionPercent}%)`);
   add(196, headerAssetSamples.length === 0 || cachePercent >= 80, `${cacheOkCount}/${headerAssetSamples.length} assets have appropriate Cache-Control`);
-  add(197, everyPage((p) => !/infinite|load more|IntersectionObserver/i.test(p.html)), pageCountEvidence);
+  add(197, infiniteScrollRate.rate >= 0.95, pageRateEvidence(infiniteScrollRate, "avoid infinite-scroll risk patterns"));
   add(198, psi?.lcpLazyLoadedPass ?? !firstImgLazy, psi?.lcpLazyLoadedPass !== undefined ? `PageSpeed lcp-lazy-loaded ${psi.lcpLazyLoadedPass ? "passed" : "failed"}` : "First image loading attribute checked");
   add(199, Boolean(headerCanonical), headerCanonical ? `Link canonical: ${headerCanonical}` : "missing");
-  add(200, everyPage((p) => !metaRobots(p).includes("noindex") && Boolean(p.$("link[rel='canonical']").attr("href"))), pageCountEvidence);
+  const indexableCanonicalRate = pagePassRate((p) => !metaRobots(p).includes("noindex") && Boolean(linkHrefByRel(p.$, "canonical")));
+  add(200, indexableCanonicalRate.rate >= 0.9, pageRateEvidence(indexableCanonicalRate, "are indexable and have canonical tags"));
   add(201, canonicalSelfRef.rate >= 0.9, `${canonicalSelfRef.passed}/${canonicalSelfRef.total} pages have self-referencing canonical (${canonicalSelfRef.percent}%)`);
   add(202, !canonicalAbs || await fetchPage(canonicalAbs, 1800).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
   add(203, canonicalChain.hops <= 1 && !canonicalChain.loop, `${canonicalChain.hops} canonical hops${canonicalChain.loop ? ", loop detected" : ""}`);
   add(204, !historyMatch, historyMatch ? `Matched pattern: ${historyMatch}` : "No suspicious history manipulation found");
   add(205, !exitIntentMatch, exitIntentMatch ? `Matched pattern: ${exitIntentMatch}` : "No exit-intent redirects found");
-  add(206, pages.every(robotsContentAllowsIndex), pageCountEvidence);
+  add(206, indexableRate.rate >= 0.98, pageRateEvidence(indexableRate, "are not noindex sitemap targets"));
   add(207, soft404Status === 404 || soft404Status === 410, `Fake URL returned status ${soft404Status || "missing"}${soft404Status === 200 && /\b(not found|page not found|no results|error)\b/i.test(soft404Body) ? " with soft error language" : ""}`);
   add(208, slashRedirectStatus === 0 || slashRedirectStatus === 301 || slashRedirectStatus === 308 || caseVariantStatus === 0 || caseVariantStatus === 301 || caseVariantStatus === 308 || caseVariantStatus === 404, `Slash variant status ${slashRedirectStatus || "missing"}, case variant status ${caseVariantStatus || "missing"}`);
-  add(209, everyPage((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()), pageCountEvidence);
+  add(209, lowercasePathRate.rate >= 0.95, pageRateEvidence(lowercasePathRate, "use lowercase URL paths"));
   add(210, externalLinkResponses.length === 0 || externalLiveCount / externalLinkResponses.length >= 0.9, `${externalLiveCount}/${externalLinkResponses.length} external links live (${Math.round((externalLinkResponses.length ? externalLiveCount / externalLinkResponses.length : 1) * 100)}%)`);
-  add(211, url.protocol !== "https:" || page.$("[src^='http://'],[href^='http://']").length === 0, "HTTP assets/links on HTTPS page");
-  add(212, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
+  add(211, browserMixedContentAssets.length === 0, browserMixedContentAssets.length ? JSON.stringify(mixedContentDebug) : "No browser-loaded HTTP assets detected");
+  add(212, /gzip|br|deflate/i.test(htmlCompression), htmlCompression || "missing");
   add(213, Boolean(cdnEvidence), cdnEvidence || "No CDN/cache header signal detected");
   add(214, validatorHeaders.length > 0 || assetValidatorCount > 0, validatorHeaders.length ? validatorHeaders.join(", ") : assetValidatorCount > 0 ? `${assetValidatorCount}/${headerAssetSamples.length} sampled assets have ETag or Last-Modified` : "missing");
   add(215, ssrPassCount / Math.max(pages.length, 1) >= 0.7, `${ssrPassCount}/${pages.length} pages have primary content in raw HTML`);
   add(216, emptyShells.length === 0, emptyShells.length ? `${emptyShells.length} empty-shell SPA pages found` : "No empty-shell SPA detected");
   add(217, accordionWords < 100, `${accordionWords} words hidden in accordions/tabs`);
-  add(218, everyPage((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html)), pageCountEvidence);
+  add(218, cookieWallRate.rate >= 0.9, pageRateEvidence(cookieWallRate, "avoid consent-wall blocking patterns"));
   add(219, maxDomNodes < 1500, `${maxDomNodes} DOM nodes on largest sampled page`);
   add(220, hiddenWords < 100, `${hiddenWords} words hidden on primary page`);
   add(221, hiddenKeywordCount === 0, `${hiddenKeywordCount} CSS-hidden keyword text blocks`);
-  add(222, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
-  add(223, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
+  const nonBlockingScriptRate = pagePassRate((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0);
+  const criticalCssRate = pagePassRate((p) => p.$("head style").text().trim().length > 0);
+  add(222, nonBlockingScriptRate.rate >= 0.8, pageRateEvidence(nonBlockingScriptRate, "avoid render-blocking scripts in head"));
+  add(223, criticalCssRate.rate >= 0.5, pageRateEvidence(criticalCssRate, "include inline critical CSS"));
   add(224, imageAggregate.dimensionsRate >= 0.9, `${imageAggregate.dimensionsPresent}/${imageAggregate.count} images have width and height (${Math.round(imageAggregate.dimensionsRate * 100)}%)`);
   add(225, imageAggregate.belowFoldLazyRate >= 0.8, imageAggregate.belowFoldCount ? `${imageAggregate.belowFoldLazy}/${imageAggregate.belowFoldCount} below-fold images lazy-loaded (${Math.round(imageAggregate.belowFoldLazyRate * 100)}%)` : "No below-fold images detected");
   add(226, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");

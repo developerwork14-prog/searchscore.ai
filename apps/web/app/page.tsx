@@ -65,13 +65,17 @@ export default function HomePage() {
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
   const [isAuditFormHighlighted, setIsAuditFormHighlighted] = useState(false);
 
+  const displayProgress = Math.round(progress);
   const completedTasks = useMemo(() => Math.floor((progress / 100) * tasks.length), [progress]);
 
   useEffect(() => {
     if (!isGenerating) return;
     const interval = window.setInterval(() => {
-      setProgress((value) => Math.min(96, value + 2));
-    }, 420);
+      setProgress((value) => {
+        const step = value < 70 ? 3 : value < 88 ? 1 : 0.5;
+        return Math.min(96, value + step);
+      });
+    }, 700);
     return () => window.clearInterval(interval);
   }, [isGenerating]);
 
@@ -128,17 +132,17 @@ export default function HomePage() {
             </div>
             <div className="grid gap-8 p-6 md:grid-cols-[240px_1fr] md:items-center md:p-10">
               <div className="flex flex-col items-center">
-                <div className="progress-ring flex size-52 items-center justify-center rounded-full shadow-soft" style={{ "--progress": `${progress}%` } as React.CSSProperties}>
+                <div className="progress-ring flex size-52 items-center justify-center rounded-full shadow-soft" style={{ "--progress": `${displayProgress}%` } as React.CSSProperties}>
                   <div className="flex size-40 flex-col items-center justify-center rounded-full bg-white">
                     <Gauge className="mb-2 size-8 text-gold" />
-                    <span className="text-4xl font-bold">{progress}%</span>
+                    <span className="text-4xl font-bold">{displayProgress}%</span>
                   </div>
                 </div>
               </div>
               <div>
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold md:text-3xl">Uncovering what AI really thinks about your brand</h2>
-                  <p className="mt-2 text-sm text-ink/60">Your report opens automatically. This takes about 60 seconds.</p>
+                  <p className="mt-2 text-sm text-ink/60">Your report opens automatically. Full sitemap scans can take 1-3 minutes.</p>
                 </div>
                 <div className="mb-6 flex min-h-12 items-center gap-3 rounded-lg border border-gold/30 bg-gold/15 px-4 text-sm font-bold text-ink">
                   <Loader2 className="size-4 animate-spin" />

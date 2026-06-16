@@ -642,19 +642,19 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   const htmlContentPromise = fetchHomepageHtml(normalizedUrl);
   const technicalAuditPromise = withAuditTimeout(
     runTechnicalAudit(normalizedUrl),
-    35000,
+    90000,
     fallbackTechnicalAudit("Technical audit timed out"),
     "Technical audit"
   );
   const geoAeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runGeoAeoAudit(normalizedUrl, html),
-    110000,
+    32000,
     fallbackGeoAeoAudit("GEO / AEO audit timed out"),
     "GEO / AEO audit"
   ));
   const indexabilityAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runIndexabilityAudit(normalizedUrl, html),
-    30000,
+    18000,
     fallbackIndexabilityAudit("Indexability audit timed out"),
     "Indexability audit"
   ));
@@ -678,13 +678,13 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   ));
   const eeatAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runEeatAudit(normalizedUrl, html),
-    14000,
+    10000,
     fallbackEeatAudit("EEAT audit timed out"),
     "EEAT audit"
   ));
   const trustSignalsAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runTrustSignalsAudit(normalizedUrl, html, input.brandName, input.businessEmail),
-    14000,
+    10000,
     fallbackTrustSignalsAudit("Trust Signals audit timed out"),
     "Trust Signals audit"
   ));

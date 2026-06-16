@@ -1450,7 +1450,18 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const url = new URL(normalizedUrl);
   const origin = `${url.protocol}//${url.host}`;
   const pageHtml = html ?? await fetchText(normalizedUrl, 3000).then((result) => result.text).catch(() => "");
-  const emptyCrawl = { origin, sitemapUrls: [], pages: [] };
+  const emptyCrawl = {
+    origin,
+    sitemapUrls: [],
+    crawlStats: {
+      targetUrls: 0,
+      attemptedUrls: 0,
+      htmlPages: 0,
+      failedOrNonHtmlUrls: 0,
+      cappedByMaxPages: false
+    },
+    pages: []
+  };
   const [
     robots,
     llms,

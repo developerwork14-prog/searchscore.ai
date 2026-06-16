@@ -317,9 +317,11 @@ function extractProductServiceText($: cheerio.CheerioAPI) {
 
 function extractWebsiteSignals(url: string, htmlContent: string): WebsiteSignal[] {
   const $ = cheerio.load(htmlContent || "");
+  const metaDescription = $("meta").toArray()
+    .find((element) => ($(element).attr("name") ?? "").trim().toLowerCase() === "description");
   const signals: WebsiteSignal[] = [
     { name: "title", text: $("title").first().text(), weight: 8 },
-    { name: "description", text: $('meta[name="description"]').attr("content") ?? "", weight: 7 },
+    { name: "description", text: metaDescription ? ($(metaDescription).attr("content") ?? "") : "", weight: 7 },
     { name: "h1", text: $("h1").first().text(), weight: 7 },
     { name: "h2", text: $("h2").map((_, element) => $(element).text()).get().join(" "), weight: 5 },
     { name: "navigation", text: $("nav, header").find("a, button").map((_, element) => $(element).text()).get().join(" "), weight: 4 },

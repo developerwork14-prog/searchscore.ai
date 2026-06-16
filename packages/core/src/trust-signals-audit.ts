@@ -152,8 +152,26 @@ function digits(value: string) {
   return value.replace(/\D+/g, "");
 }
 
-function phoneCandidates(text: string) {
-  return Array.from(new Set((text.match(/\+?\d[\d\s().-]{7,}\d/g) ?? []).map((phone) => phone.trim()).filter((phone) => digits(phone).length >= 8)));
+function normalizedPhoneDigits(value: string) {
+  const valueDigits = digits(value);
+  return valueDigits.length === 12 && valueDigits.startsWith("91") ? valueDigits.slice(2) : valueDigits;
+}
+
+function isLikelyPhone(value: string) {
+  const valueDigits = normalizedPhoneDigits(value);
+  if (/\b\d+(?:\.\d+){2,}\b/.test(value)) return false;
+  if (/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/.test(value)) return false;
+  if (/\b(?:19|20)\d{2}\b/.test(value) && /[-/.]/.test(value)) return false;
+  if (/^1800\d{6,7}$/.test(valueDigits)) return true;
+  if (/^[6-9]\d{9}$/.test(valueDigits)) return true;
+  if (/^0\d{9,11}$/.test(valueDigits)) return true;
+  return /^[1-9]\d{9,10}$/.test(valueDigits);
+}
+
+export function phoneCandidates(text: string) {
+  return Array.from(new Set((text.match(/\+?\d[\d\s().-]{7,}\d/g) ?? [])
+    .map((phone) => phone.trim())
+    .filter(isLikelyPhone)));
 }
 
 function emailCandidates(text: string) {
@@ -199,6 +217,20 @@ function schemaPrices(records: Record<string, unknown>[]) {
 
 function schemaPhones(record: Record<string, unknown> | undefined) {
   return [textValue(record?.telephone), ...asArray(record?.contactPoint as Record<string, unknown> | Record<string, unknown>[] | undefined).map((item) => textValue(objectValue(item).telephone))].filter(Boolean);
+}
+
+export function addressCandidates(text: string) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  const candidates = [
+    cleaned.match(/\b(?:office\s+address|address|location)\b\s*:?\s*(.{20,260}?\b\d{5,6}\b)/i)?.[1] ?? "",
+    cleaned.match(/(.{0,80}\b(?:floor|court|block|road|rd\.|street|st\.|avenue|lane|koramangala|bangalore|bengaluru|karnataka|india)\b.{20,180}?\b\d{5,6}\b)/i)?.[1] ?? ""
+  ].map((candidate) =>
+    candidate
+      .replace(/\b(?:our\s+email|email|call\s+center|phone|telephone|mobile)\b[\s\S]*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  ).filter((candidate) => candidate.length >= 20 && /\b\d{5,6}\b/.test(candidate));
+  return Array.from(new Set(candidates));
 }
 
 function containsExactText(haystack: string, needle: string) {
@@ -305,9 +337,16 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   const allText = [body, footer, contactText, privacyText].join(" ");
   const footerPhones = phoneCandidates(footer);
   const contactPhones = phoneCandidates(contactText);
+  const footerAddresses = addressCandidates(footer);
+  const contactAddresses = addressCandidates(contactText);
+  const visibleAddress = contactAddresses[0] ?? footerAddresses[0] ?? "";
   const allPhones = Array.from(new Set([...phoneCandidates(body), ...footerPhones, ...contactPhones]));
-  const allPhoneDigits = Array.from(new Set(allPhones.map(digits).filter(Boolean)));
-  const schemaPhoneDigits = Array.from(new Set(schemaPhoneValues.map(digits).filter(Boolean)));
+  const allPhoneDigits = Array.from(new Set(allPhones.map(normalizedPhoneDigits).filter(Boolean)));
+  const schemaPhoneDigits = Array.from(new Set(schemaPhoneValues.map(normalizedPhoneDigits).filter(Boolean)));
+  const visiblePhoneDigits = Array.from(new Set([...footerPhones, ...contactPhones].map(normalizedPhoneDigits).filter(Boolean)));
+  const schemaAddressMatchesVisible = Boolean(address.full && (containsExactText(body, address.full) || containsExactText(contactText, address.full) || containsExactText(footer, address.full)));
+  const visibleNapPresent = Boolean(visibleAddress && visiblePhoneDigits.length);
+  const schemaPhoneMatchesVisible = schemaPhoneDigits.length > 0 && schemaPhoneDigits.some((phone) => visiblePhoneDigits.includes(phone));
   const allEmails = emailCandidates(allText);
   const brandCandidate = brandName || schemaName;
   const currentYear = new Date().getFullYear();
@@ -318,8 +357,18 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   };
 
   add(1, {
-    passed: Boolean(address.full && schemaPhoneDigits.length && containsExactText(footer, address.full) && containsExactText(contactText, address.full) && schemaPhoneDigits.some((phone) => footerPhones.map(digits).includes(phone)) && schemaPhoneDigits.some((phone) => contactPhones.map(digits).includes(phone))),
-    evidence: { schemaAddress: address.full, schemaPhones: schemaPhoneValues, contactUrl: contactLink?.href ?? "", footerPhones, contactPhones }
+    passed: Boolean(schemaAddressMatchesVisible && schemaPhoneMatchesVisible),
+    warning: visibleNapPresent && (!address.full || !schemaPhoneDigits.length),
+    evidence: {
+      schemaAddress: address.full,
+      schemaPhones: schemaPhoneValues,
+      contactUrl: contactLink?.href ?? "",
+      visibleAddress,
+      footerAddresses,
+      contactAddresses,
+      footerPhones,
+      contactPhones
+    }
   });
   add(2, {
     passed: Boolean(address.city && [body, footer, contactText].every((text) => !text || containsExactText(text, address.city))),
@@ -338,8 +387,9 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
     evidence: { emails: allEmails, expectedDomain: businessEmail ? rootDomain(domainFromEmail(businessEmail)) : rootDomain(base.hostname) }
   });
   add(5, {
-    passed: Boolean(address.full && (containsExactText(body, address.full) || containsExactText(contactText, address.full) || containsExactText(footer, address.full))),
-    evidence: { schemaAddress: address.full, contactUrl: contactLink?.href ?? "" }
+    passed: schemaAddressMatchesVisible,
+    warning: Boolean(visibleAddress && !address.full),
+    evidence: { schemaAddress: address.full, visibleAddress, footerAddresses, contactAddresses, contactUrl: contactLink?.href ?? "" }
   });
   add(6, {
     passed: allPhoneDigits.length === 1,
@@ -355,6 +405,7 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   });
   add(9, {
     passed: schemaPhoneDigits.length > 0 && schemaPhoneDigits.every((phone) => allPhoneDigits.includes(phone)),
+    warning: allPhoneDigits.length > 0 && schemaPhoneDigits.length === 0,
     evidence: { schemaPhones: schemaPhoneValues, domPhones: allPhones }
   });
   add(10, {

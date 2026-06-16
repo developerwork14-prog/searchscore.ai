@@ -1040,7 +1040,8 @@
 }
 
 .passCount,
-.issueCount {
+.issueCount,
+.skipCount {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
@@ -1059,6 +1060,11 @@
 .issueCount {
   background: #FBEAEA;
   color: #DC2626;
+}
+
+.skipCount {
+  background: #F2F2F2;
+  color: #666666;
 }
 
 .auditRowBody {
@@ -1128,6 +1134,11 @@
 .passedCheck b {
   background: #EAF6EF;
   color: #1F9D55;
+}
+
+.skippedCheck b {
+  background: #F2F2F2;
+  color: #666666;
 }
 
 .checkList span {
