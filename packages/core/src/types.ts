@@ -111,6 +111,7 @@ export interface PublicTechnicalCheck {
   weight: number;
   severity: PublicTechnicalSeverity;
   passed: boolean;
+  warning?: boolean;
   evidence: string;
   scope: PublicTechnicalScope;
 }
@@ -180,6 +181,7 @@ export interface IndexabilityCheckResult {
   maxScore: number;
   passed: boolean;
   skipped: boolean;
+  warning?: boolean;
   score: number;
   evidence: Record<string, unknown>;
 }

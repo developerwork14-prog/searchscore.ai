@@ -61,8 +61,8 @@ async function fetchHtml(url: string) {
 
 function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): ImageSeoCheckResult {
   const skipped = Boolean(state.skipped);
-  const warning = !skipped && Boolean(state.warning);
   const passed = skipped ? true : Boolean(state.passed);
+  const warning = !skipped && !passed && Boolean(state.warning);
   return {
     ...def,
     passed,
@@ -168,15 +168,20 @@ export async function runImageSeoAudit(inputUrl: string, html?: string): Promise
     .filter((el) => !($(el).attr("alt") ?? "").trim())
     .map((el) => imageUrlFrom($, el) || $(el).attr("src") || "inline image")
     .slice(0, 10);
+  const missingAltCount = imgElements.filter((el) => !($(el).attr("alt") ?? "").trim()).length;
+  const altCoverage = imageCount ? (imageCount - missingAltCount) / imageCount : 1;
   add(1, {
-    passed: imageCount === 0 || missingAlt.length === 0,
-    evidence: { imageCount, missingAlt }
+    passed: imageCount === 0 || altCoverage >= 0.9,
+    warning: altCoverage >= 0.7,
+    evidence: { imageCount, missingAltCount, altCoverage: Number(altCoverage.toFixed(2)), missingAlt }
   });
 
   const modernImages = imageUrls.filter((src) => /\.(?:webp|avif)(?:[?#]|$)/i.test(src)).length;
+  const modernRatio = imageUrls.length ? modernImages / imageUrls.length : 1;
   add(2, {
-    passed: imageUrls.length === 0 || modernImages / imageUrls.length >= 0.7,
-    evidence: { imageCount: imageUrls.length, modernImages, ratio: imageUrls.length ? Number((modernImages / imageUrls.length).toFixed(2)) : 1 }
+    passed: imageUrls.length === 0 || modernRatio >= 0.5,
+    warning: modernRatio >= 0.25,
+    evidence: { imageCount: imageUrls.length, modernImages, ratio: Number(modernRatio.toFixed(2)), note: "50%+ modern formats is acceptable; 70%+ is ideal." }
   });
 
   add(3, {
@@ -214,14 +219,18 @@ export async function runImageSeoAudit(inputUrl: string, html?: string): Promise
   });
 
   add(7, {
-    passed: imageCount === 0 || responsiveImages.length / imageCount >= 0.7,
+    passed: imageCount === 0 || responsiveImages.length / imageCount >= 0.5,
+    warning: imageCount > 0 && responsiveImages.length / imageCount >= 0.25,
     evidence: { imageCount, responsiveImages: responsiveImages.length, ratio: imageCount ? Number((responsiveImages.length / imageCount).toFixed(2)) : 1 }
   });
 
+  const descriptiveCount = imageUrls.filter(isDescriptiveFileName).length;
+  const descriptiveRatio = imageUrls.length ? descriptiveCount / imageUrls.length : 1;
   const nonDescriptive = imageUrls.filter((src) => !isDescriptiveFileName(src)).slice(0, 10);
   add(8, {
-    passed: imageUrls.length === 0 || nonDescriptive.length === 0,
-    evidence: { imageCount: imageUrls.length, nonDescriptive }
+    passed: imageUrls.length === 0 || descriptiveRatio >= 0.6,
+    warning: descriptiveRatio >= 0.3,
+    evidence: { imageCount: imageUrls.length, descriptiveCount, descriptiveRatio: Number(descriptiveRatio.toFixed(2)), nonDescriptive }
   });
 
   add(9, {
@@ -247,7 +256,8 @@ export async function runImageSeoAudit(inputUrl: string, html?: string): Promise
 
   add(13, {
     passed: imageObjects.length > 0,
-    skipped: imageCount === 0,
+    skipped: imageCount === 0 || imageCount < 3,
+    warning: imageCount >= 3,
     evidence: { imageObjectCount: imageObjects.length }
   });
 

@@ -356,10 +356,14 @@ function skippedReasonText(check: CheckLike) {
   return evidenceText(evidence);
 }
 
-function fixForIssue(name: string, categoryName: string) {
+function fixForIssue(name: string, categoryName: string, evidence = "") {
   const text = `${categoryName} ${name}`.toLowerCase();
+  const evidenceText = evidence.toLowerCase();
   if (/title length|titles within recommended|title tag.*30|title.*30-60/.test(text)) {
-    return "Shorten or rewrite page titles so most are about 30-60 characters. Keep the main keyword/service and brand name, but remove extra repeated words.";
+    return "Some page titles are outside the recommended 30-60 character range. Review longer or shorter titles and keep the primary keyword and brand while removing unnecessary words.";
+  }
+  if (/meta description length|descriptions within recommended|description.*120-160/.test(text)) {
+    return "Review meta descriptions that are missing, too short, or too long. Write concise summaries that accurately describe the page and encourage clicks from search results.";
   }
   if (/duplicate content at slug and slug slash|slug and slug slash|slash variant|trailing slash/.test(text)) {
     return "Choose one URL style: either with a slash at the end or without it. Then redirect the other version to your chosen version.";
@@ -449,6 +453,9 @@ function fixForIssue(name: string, categoryName: string) {
     return "Create an /llms.txt file that explains your brand, services, best pages, and useful resources in simple Markdown.";
   }
   if (/ai crawler ip accessibility|ai crawler accessibility/.test(text)) {
+    if (/http 429|429/.test(evidenceText)) {
+      return "The crawler request is being rate-limited. Allowlist trusted AI crawler user-agents in Cloudflare/Hostinger/bot-protection rules, reduce challenge/rate-limit sensitivity for public pages, then rerun the audit.";
+    }
     return "Do not block trusted AI crawlers from public pages. Check robots.txt, firewall, CDN, and bot-protection settings.";
   }
   if (/indexnow/.test(text)) {
@@ -508,12 +515,15 @@ function fixForIssue(name: string, categoryName: string) {
 function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
   const checkItems = checks
     .filter((check) => !check.skipped && check.passed === false)
-    .map((check) => ({
-      name: check.name || "Unnamed issue",
-      meta: check.warning ? "Warning" : check.severity,
-      fix: check.recommendation || fixForIssue(check.name || "this check", check.category || category.categoryName),
-      evidence: evidenceText(check.evidence)
-    }));
+    .map((check) => {
+      const evidence = evidenceText(check.evidence);
+      return {
+        name: check.name || "Unnamed issue",
+        meta: check.warning ? "Warning" : check.severity,
+        fix: check.recommendation || fixForIssue(check.name || "this check", check.category || category.categoryName, evidence),
+        evidence
+      };
+    });
   const detailItems = checks.length ? [] : ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
       name: detail.name || "Unnamed issue",
       meta: detail.severity,
@@ -563,7 +573,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   const skippedItems = skippedItemsFor(category, checks);
   const passedCount = category.passedChecks ?? passed.length;
   const skippedCount = category.skippedChecks ?? skippedItems.length;
-  const issueCountLabel = category.failedChecks;
+  const issueCountLabel = issues.length;
 
   return (
     <details className={`${styles.card} ${styles.auditRow}`}>
@@ -597,7 +607,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                     <span>
                       <strong>{issue.name}</strong>
                       {issue.fix ? <small><i>How to fix</i>{issue.fix}</small> : null}
-                      {issue.evidence ? <small className={styles.evidenceText}><i>Evidence</i>{issue.evidence}</small> : null}
+                      {issue.evidence ? <small className={styles.evidenceText}><i>What we checked</i>{issue.evidence}</small> : null}
                     </span>
                     {issue.meta ? <em>{issue.meta}</em> : null}
                   </li>

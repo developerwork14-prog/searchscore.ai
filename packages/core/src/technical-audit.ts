@@ -41,6 +41,7 @@ export interface ViewportMetaDebug {
 
 export interface TechnicalCheckResult extends CheckDefinition {
   passed: boolean;
+  warning?: boolean;
   evidence: string;
   scope: TechnicalScope;
 }
@@ -85,9 +86,9 @@ const CHECKS: CheckDefinition[] = [
   [13, "Robots.txt & Sitemap", "All sitemap URLs have lastmod element", 4, "MINOR"],
   [14, "Robots.txt & Sitemap", "No noindex pages included in sitemap", 6, "MAJOR"],
   [15, "Robots.txt & Sitemap", "Optional ai-sitemap.xml exists", 2, "ADVISORY"],
-  [16, "Meta Tags", "Title tag exists and non-empty", 8, "MAJOR"],
-  [17, "Meta Tags", "Title length 30-60 characters", 5, "MAJOR"],
-  [18, "Meta Tags", "Meta description exists and non-empty", 7, "MAJOR"],
+  [16, "Meta Tags", "Title tag exists and non-empty", 8, "BLOCKER"],
+  [17, "Meta Tags", "Title length 30-60 characters", 5, "MINOR"],
+  [18, "Meta Tags", "Meta description exists and non-empty", 7, "MINOR"],
   [19, "Meta Tags", "Meta description length 120-160 characters", 4, "MINOR"],
   [20, "Meta Tags", "Viewport meta tag present", 8, "BLOCKER"],
   [21, "Meta Tags", "No noindex in meta robots", 8, "BLOCKER"],
@@ -204,7 +205,6 @@ const CHECKS: CheckDefinition[] = [
   [133, "Performance", "DOM node count under 1500", 3, "MINOR"],
   [134, "Security & Spam", "No CSS-hidden keyword text", 8, "BLOCKER"],
   [135, "Schema Markup", "Server-side schema injection", 6, "BLOCKER"],
-  [136, "Canonicalization", "Canonical in HTTP header", 2, "ADVISORY"],
   [137, "Canonicalization", "No canonical chains", 5, "MAJOR"],
   [138, "Performance", "TTFB competitive under 200ms", 4, "MINOR"],
   [139, "HTTP & Server Health", "AI crawler accessibility", 6, "BLOCKER"],
@@ -265,13 +265,12 @@ const CHECKS: CheckDefinition[] = [
   [194, "Security & HTTPS", "SSL Covers All Subdomains", 1.69, "MAJOR"],
   [195, "Performance & Caching", "Compression on All Text Assets", 1.69, "MINOR"],
   [196, "Performance & Caching", "Cache-Control Configured", 1.69, "MINOR"],
-  [197, "Crawl & Redirect Control", "No Infinite Scroll", 2.25, "MAJOR"],
+  [197, "Crawl & Redirect Control", "Infinite Scroll Crawlable Pagination", 0, "ADVISORY"],
   [198, "Performance & Caching", "LCP Image Not Lazy-Loaded", 2.82, "BLOCKER"],
-  [199, "Crawl & Redirect Control", "Canonical in HTTP Header", 1.13, "ADVISORY"],
   [200, "Crawl & Redirect Control", "Canonical on All Indexable Pages", 2.82, "BLOCKER"],
-  [201, "Crawl & Redirect Control", "Self-Referencing Canonical", 2.82, "BLOCKER"],
-  [202, "Crawl & Redirect Control", "Canonical Not -> Noindex", 2.25, "BLOCKER"],
-  [203, "Crawl & Redirect Control", "No Canonical Chains", 2.25, "MAJOR"],
+  [201, "Crawl & Redirect Control", "Self-Referencing Canonical", 2.82, "MAJOR"],
+  [202, "Crawl & Redirect Control", "Canonical Target Returns 200", 2.25, "MAJOR"],
+  [203, "Crawl & Redirect Control", "Absolute HTTPS Canonical", 2.25, "MAJOR"],
   [204, "Security & HTTPS", "No Back-Button Hijacking", 2.25, "BLOCKER"],
   [205, "Security & HTTPS", "No Exit-Intent Redirects", 1.69, "MAJOR"],
   [206, "Crawl & Redirect Control", "No Noindex in Sitemap", 1.69, "MAJOR"],
@@ -321,6 +320,12 @@ const DUPLICATE_CHECK_IDS = new Set([
 
 const GENERIC_ANCHORS = new Set(["click here", "read more", "here", "learn more", "link", "this"]);
 const DOMAIN_CHECK_IDS = new Set([3, 4, 7, 10, 11, 12, 13, 14, 15, 22, 23, 35, 37, 38, 45, 56, 59, 67, 68, 69, 70, 80, 81, 83, 91, 98, 99, 106, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142]);
+const SCORE_CAP_BLOCKER_IDS = new Set([
+  191, // target pages do not return HTTP 200
+  192, // HTTPS/TLS unavailable
+  215, // primary content missing from raw HTML
+  216 // empty-shell SPA
+]);
 
 type AssetKind = "html" | "css" | "js" | "json" | "xml" | "txt" | "svg" | "image" | "font" | "other";
 
@@ -408,6 +413,12 @@ function passRate<T>(items: T[], predicate: (item: T) => boolean) {
   const passed = items.filter(predicate).length;
   const rate = total > 0 ? passed / total : 0;
   return { passed, total, rate, percent: Math.round(rate * 100) };
+}
+
+function optimizationLengthOutcome(rate: number): { passed: boolean; severity: TechnicalSeverity; warning: boolean } {
+  if (rate >= 0.8) return { passed: true, severity: "ADVISORY", warning: false };
+  if (rate >= 0.6) return { passed: false, severity: "ADVISORY", warning: true };
+  return { passed: false, severity: "MINOR", warning: false };
 }
 
 function normalizeUrl(value: string) {
@@ -877,18 +888,53 @@ function schemaInjectionEvidence(page: FetchedPage) {
   };
 }
 
-function canonicalFromLinkHeader(headers: Headers) {
-  const link = headers.get("link") ?? "";
-  const match = link.match(/<([^>]+)>;\s*rel="?canonical"?/i);
-  return match?.[1] ?? "";
+function comparableCanonicalUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return value.replace(/\/$/, "");
+  }
 }
 
-function canonicalUrlsMatch(root: URL, left: string, right: string) {
-  try {
-    return new URL(absolute(root, left)).pathname.replace(/\/$/, "") === new URL(absolute(root, right)).pathname.replace(/\/$/, "");
-  } catch {
-    return false;
-  }
+function infiniteScrollAuditEvidence(pages: FetchedPage[]) {
+  const signalPatterns = [
+    { label: "IntersectionObserver", pattern: /IntersectionObserver/i },
+    { label: "scroll autoload handler", pattern: /addEventListener\(\s*["']scroll["']|onscroll\s*=|\.on\(\s*["']scroll["']/i },
+    { label: "infinite scroll library", pattern: /infinite[-_\s]?scroll|endless[-_\s]?scroll|jscroll|ias\.|infiniteScroll\(/i },
+    { label: "AJAX load-more pagination", pattern: /load[-_\s]?more|data-(?:next|page|pagination)|ajax(?:url|load|pagination)|fetch\([^)]*(?:page|offset|cursor)|XMLHttpRequest/i },
+    { label: "auto-loading content on scroll", pattern: /(?:scroll|viewport)[\s\S]{0,160}(?:appendChild|insertAdjacentHTML|loadMore|nextPage|page\s*\+\+|offset\s*\+=|cursor)/i }
+  ];
+  const paginationSelector = [
+    "a[href*='page=']",
+    "a[href*='?p=']",
+    "a[href*='/page/']",
+    "a[rel='next']",
+    "a[rel='prev']",
+    "link[rel='next']",
+    "link[rel='prev']",
+    ".pagination a[href]",
+    "[class*='pagination'] a[href]",
+    "nav[aria-label*='pagination' i] a[href]"
+  ].join(",");
+  const pageResults = pages.map((page) => {
+    const signals = signalPatterns.filter((item) => item.pattern.test(page.html)).map((item) => item.label);
+    const paginationLinks = page.$(paginationSelector).length;
+    return { url: page.finalUrl, signals: [...new Set(signals)], paginationLinks };
+  }).filter((item) => item.signals.length > 0);
+  const detected = pageResults.length > 0;
+  const pagesWithPagination = pageResults.filter((item) => item.paginationLinks > 0).length;
+  const pass = !detected || pagesWithPagination === pageResults.length;
+  const signalSummary = [...new Set(pageResults.flatMap((item) => item.signals))].join(", ");
+  return {
+    detected,
+    pass,
+    pageResults,
+    evidence: !detected
+      ? "N/A - no infinite-scroll or auto-loading content behavior detected"
+      : `${pagesWithPagination}/${pageResults.length} infinite-scroll pages expose crawlable pagination links${signalSummary ? `; signals: ${signalSummary}` : ""}`
+  };
 }
 
 async function canonicalChainLength(startUrl: string, timeoutMs = 2200) {
@@ -1083,8 +1129,8 @@ function checkScope(id: number): TechnicalScope {
   return DOMAIN_CHECK_IDS.has(id) ? "domain" : "page";
 }
 
-function pass(def: CheckDefinition, passed: boolean, evidence: string): TechnicalCheckResult {
-  return { ...def, passed, evidence, scope: checkScope(def.id) };
+function pass(def: CheckDefinition, passed: boolean, evidence: string, warning = false): TechnicalCheckResult {
+  return { ...def, passed, warning: warning || undefined, evidence, scope: checkScope(def.id) };
 }
 
 const BROWSER_LOADED_HTTP_ASSET_SELECTORS = [
@@ -1177,11 +1223,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const canonicalSelfRef = passRate(pages, (p) => {
     const value = linkHrefByRel(p.$, "canonical");
     const resolved = value ? absolute(new URL(p.finalUrl), value) : "";
-    try {
-      return Boolean(resolved) && new URL(resolved).pathname.replace(/\/$/, "") === new URL(p.finalUrl).pathname.replace(/\/$/, "");
-    } catch {
-      return false;
-    }
+    return Boolean(resolved) && comparableCanonicalUrl(resolved) === comparableCanonicalUrl(p.finalUrl);
   });
   const robotsValue = metaRobots(page);
   const h1 = page.$("h1").first().text().trim();
@@ -1212,7 +1254,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const titleLength = passRate(titleValues, (value) => value.length >= 30 && value.length <= 60);
   const descriptionPresence = passRate(descriptionValues, (value) => value.length > 0);
   const availableDescriptions = descriptionValues.filter(Boolean);
-  const descriptionLength = passRate(availableDescriptions, (value) => value.length >= 120 && value.length <= 160);
+  const descriptionLength = passRate(descriptionValues, (value) => value.length >= 120 && value.length <= 160);
+  const titleLengthOutcome = optimizationLengthOutcome(titleLength.rate);
+  const descriptionLengthOutcome = optimizationLengthOutcome(descriptionLength.rate);
   const viewportPresence = passRate(pages, (p) => viewportMetaDebug(p.$).passed);
   const viewportDebugEvidence = JSON.stringify(viewportDebug);
   console.debug("Technical audit viewport meta", viewportDebug);
@@ -1325,12 +1369,26 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const maxDomNodes = Math.max(...pages.map((p) => p.$("*").length), 0);
   const hiddenKeywordCount = pages.reduce((sum, item) => sum + cssHiddenKeywordText(item), 0);
   const schemaInjection = schemaInjectionEvidence(page);
-  const headerCanonical = canonicalFromLinkHeader(page.headers);
-  const headerCanonicalMatches = Boolean(headerCanonical && canonicalAbs && canonicalUrlsMatch(url, headerCanonical, canonicalAbs));
   const ttfbSamples = [page.responseTimeMs, ...headerAssetSamples.filter((asset) => asset.kind === "html").map(() => page.responseTimeMs)];
   const medianTtfb = ttfbSamples.sort((a, b) => a - b)[Math.floor(ttfbSamples.length / 2)] ?? page.responseTimeMs;
-  const aiCrawlerResponses = [openAiFetch, perplexityFetch, googleExtendedFetch].filter((item): item is NonNullable<typeof item> => Boolean(item));
-  const aiCrawlerOk = aiCrawlerResponses.length === 3 && aiCrawlerResponses.every((item) => item.response.status < 400 && wordCount(cheerio.load(item.text)("body").text()) >= 50);
+  const aiCrawlerChecks = [
+    { label: "GPTBot", result: openAiFetch },
+    { label: "PerplexityBot", result: perplexityFetch },
+    { label: "Google-Extended", result: googleExtendedFetch }
+  ].map((item) => {
+    const bodyWords = item.result ? wordCount(cheerio.load(item.result.text)("body").text()) : 0;
+    return {
+      label: item.label,
+      result: item.result,
+      bodyWords,
+      passed: Boolean(item.result && item.result.response.status < 400 && bodyWords >= 50)
+    };
+  });
+  const aiCrawlerResponses = aiCrawlerChecks.map((item) => item.result).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const aiCrawlerOk = aiCrawlerChecks.every((item) => item.passed);
+  const aiCrawlerEvidence = aiCrawlerChecks
+    .map((item) => item.result ? `${item.label} GET: HTTP ${item.result.response.status}, ${item.bodyWords} body words` : `${item.label} GET: fetch failed`)
+    .join("; ");
   const headlessRatios = aiCrawlerResponses.map((item) => {
     const botWords = wordCount(cheerio.load(item.text)("body").text());
     return page.wordCount ? botWords / page.wordCount : 1;
@@ -1415,11 +1473,12 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   const checksById = new Map(CHECKS.map((check) => [check.id, check]));
 
   const results: TechnicalCheckResult[] = [];
-  const add = (id: number, passed: boolean, evidence: string, overrides: Partial<Pick<CheckDefinition, "severity" | "weight" | "name" | "category">> = {}) => {
+  const add = (id: number, passed: boolean, evidence: string, overrides: Partial<Pick<CheckDefinition, "severity" | "weight" | "name" | "category">> & { warning?: boolean } = {}) => {
     if (DUPLICATE_CHECK_IDS.has(id)) return;
     const def = checksById.get(id);
     if (!def) return;
-    results.push(pass({ ...def, ...overrides }, passed, evidence));
+    const { warning, ...definitionOverrides } = overrides;
+    results.push(pass({ ...def, ...definitionOverrides }, passed, evidence, warning));
   };
   const hsts = page.headers.get("strict-transport-security") ?? "";
   const hstsMaxAge = Number(hsts.match(/max-age=(\d+)/i)?.[1] ?? 0);
@@ -1440,9 +1499,15 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(14, pages.every(robotsContentAllowsIndex), pageCountEvidence);
   add(15, aiSitemap?.response.status === 200, `Status ${aiSitemap?.response.status ?? "missing"}`);
   add(16, titlePresence.rate >= 0.95, `${titlePresence.passed}/${titlePresence.total} pages contain title tags (${titlePresence.percent}%)`);
-  add(17, titleLength.rate >= 0.8, `${titleLength.passed}/${titleLength.total} titles within recommended range (${titleLength.percent}%)`);
+  add(17, titleLengthOutcome.passed, `${titleLength.passed}/${titleLength.total} titles within recommended 30-60 character range (${titleLength.percent}%)`, {
+    severity: titleLengthOutcome.severity,
+    warning: titleLengthOutcome.warning
+  });
   add(18, descriptionPresence.rate >= 0.8, `${descriptionPresence.passed}/${descriptionPresence.total} pages contain meta descriptions (${descriptionPresence.percent}%)`);
-  add(19, descriptionLength.rate >= 0.75, `${descriptionLength.passed}/${descriptionLength.total} descriptions within recommended range (${descriptionLength.percent}%)`);
+  add(19, descriptionLengthOutcome.passed, `${descriptionLength.passed}/${descriptionLength.total} descriptions within recommended 120-160 character range (${descriptionLength.percent}%)`, {
+    severity: descriptionLengthOutcome.severity,
+    warning: descriptionLengthOutcome.warning
+  });
   add(20, viewportPresence.rate >= 0.95, `${viewportPresence.passed}/${viewportPresence.total} pages contain valid viewport tag (${viewportPresence.percent}%). ${viewportDebugEvidence}`);
   const noindexMetaRate = pagePassRate((p) => !metaRobots(p).includes("noindex"));
   add(21, noindexMetaRate.rate >= 0.98, pageRateEvidence(noindexMetaRate, "do not contain meta noindex"));
@@ -1518,14 +1583,16 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(37, pages.every((p) => (p as FetchedPage & { depth?: number }).depth === undefined || ((p as FetchedPage & { depth?: number }).depth ?? 0) <= 3), pageCountEvidence);
   add(38, true, "orphan detection requires external indexed URL corpus; crawl graph accepted");
   const hiddenContentRate = pagePassRate((p) => p.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(p.$(el).text()), 0) < 100);
-  const infiniteScrollRate = pagePassRate((p) => !/infinite|load more|IntersectionObserver/i.test(p.html));
+  const infiniteScrollAudit = infiniteScrollAuditEvidence(pages);
   const cookieWallRate = pagePassRate((p) => p.wordCount > 80 || !/cookie|consent/i.test(p.html));
   const underscoreRate = pagePassRate((p) => !new URL(p.finalUrl).pathname.includes("_"));
   const urlLengthRate = pagePassRate((p) => p.finalUrl.length <= 115);
   const lowercasePathRate = pagePassRate((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase());
   const slashConsistencyRate = pagePassRate((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/"));
   add(39, hiddenContentRate.rate >= 0.9, pageRateEvidence(hiddenContentRate, "avoid large hidden-content blocks"));
-  add(40, infiniteScrollRate.rate >= 0.95, pageRateEvidence(infiniteScrollRate, "avoid infinite-scroll risk patterns"));
+  if (infiniteScrollAudit.detected) {
+    add(40, infiniteScrollAudit.pass, infiniteScrollAudit.evidence, { severity: "ADVISORY", weight: 0, warning: !infiniteScrollAudit.pass });
+  }
   add(41, cookieWallRate.rate >= 0.9, pageRateEvidence(cookieWallRate, "avoid consent-wall blocking patterns"));
   add(42, underscoreRate.rate >= 0.95, pageRateEvidence(underscoreRate, "avoid underscores in URL paths"));
   add(43, urlLengthRate.rate >= 0.9, pageRateEvidence(urlLengthRate, "have URLs <= 115 characters"));
@@ -1647,10 +1714,9 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(133, maxDomNodes < 1500, `${maxDomNodes} DOM nodes on largest sampled page`);
   add(134, hiddenKeywordCount === 0, `${hiddenKeywordCount} CSS-hidden keyword text blocks`);
   add(135, schemaInjection.passed, schemaInjection.evidence);
-  add(136, Boolean(headerCanonical) && headerCanonicalMatches, headerCanonical ? `Link canonical: ${headerCanonical}` : "missing");
   add(137, canonicalChain.hops <= 1 && !canonicalChain.loop, `${canonicalChain.hops} canonical hops${canonicalChain.loop ? ", loop detected" : ""}`);
   add(138, medianTtfb < 200, `${Math.round(medianTtfb)}ms median TTFB`);
-  add(139, aiCrawlerOk, aiCrawlerResponses.length ? `${aiCrawlerResponses.length}/3 AI crawler user-agents returned accessible content` : "AI crawler fetches failed");
+  add(139, aiCrawlerOk, aiCrawlerEvidence);
   add(140, minHeadlessRatio >= 0.8, `${Math.round(minHeadlessRatio * 100)}% minimum bot/default content match`);
   add(141, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found");
   add(142, slashRedirectStatus === 0 || slashRedirectStatus === 301 || slashRedirectStatus === 308 || caseVariantStatus === 0 || caseVariantStatus === 301 || caseVariantStatus === 308 || caseVariantStatus === 404, `Slash variant status ${slashRedirectStatus || "missing"}, case variant status ${caseVariantStatus || "missing"}`);
@@ -1708,14 +1774,21 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(194, subdomainSslResults.every((item) => item.valid), subdomainSslResults.length ? `${subdomainSslResults.filter((item) => item.valid).length}/${subdomainSslResults.length} discovered subdomains have valid SSL` : "No linked subdomains discovered");
   add(195, compressedTextAssets.length === 0 || compressionPercent >= 80, compressedTextAssets.length === 0 ? "0/0 text assets compressed (not detected)" : `${compressedCount}/${compressedTextAssets.length} text assets compressed (${compressionPercent}%)`);
   add(196, headerAssetSamples.length === 0 || cachePercent >= 80, `${cacheOkCount}/${headerAssetSamples.length} assets have appropriate Cache-Control`);
-  add(197, infiniteScrollRate.rate >= 0.95, pageRateEvidence(infiniteScrollRate, "avoid infinite-scroll risk patterns"));
+  if (infiniteScrollAudit.detected) {
+    add(197, infiniteScrollAudit.pass, infiniteScrollAudit.evidence, { warning: !infiniteScrollAudit.pass });
+  }
   add(198, psi?.lcpLazyLoadedPass ?? !firstImgLazy, psi?.lcpLazyLoadedPass !== undefined ? `PageSpeed lcp-lazy-loaded ${psi.lcpLazyLoadedPass ? "passed" : "failed"}` : "First image loading attribute checked");
-  add(199, Boolean(headerCanonical), headerCanonical ? `Link canonical: ${headerCanonical}` : "missing");
-  const indexableCanonicalRate = pagePassRate((p) => !metaRobots(p).includes("noindex") && Boolean(linkHrefByRel(p.$, "canonical")));
+  const indexableCanonicalRate = pagePassRate((p) => metaRobots(p).includes("noindex") || Boolean(linkHrefByRel(p.$, "canonical")));
+  const indexableSelfRefRate = pagePassRate((p) => {
+    if (metaRobots(p).includes("noindex")) return true;
+    const value = linkHrefByRel(p.$, "canonical");
+    const resolved = value ? absolute(new URL(p.finalUrl), value) : "";
+    return Boolean(resolved) && comparableCanonicalUrl(resolved) === comparableCanonicalUrl(p.finalUrl);
+  });
   add(200, indexableCanonicalRate.rate >= 0.9, pageRateEvidence(indexableCanonicalRate, "are indexable and have canonical tags"));
-  add(201, canonicalSelfRef.rate >= 0.9, `${canonicalSelfRef.passed}/${canonicalSelfRef.total} pages have self-referencing canonical (${canonicalSelfRef.percent}%)`);
-  add(202, !canonicalAbs || await fetchPage(canonicalAbs, 1800).then(robotsContentAllowsIndex).catch(() => false), "canonical indexability checked");
-  add(203, canonicalChain.hops <= 1 && !canonicalChain.loop, `${canonicalChain.hops} canonical hops${canonicalChain.loop ? ", loop detected" : ""}`);
+  add(201, indexableSelfRefRate.rate >= 0.9, `${indexableSelfRefRate.passed}/${indexableSelfRefRate.total} pages have self-referencing canonical (${indexableSelfRefRate.percent}%)`);
+  add(202, Boolean(canonicalAbs) && await fetchPage(canonicalAbs, 1800).then((canonicalPage) => canonicalPage.status === 200).catch(() => false), canonicalAbs ? `Canonical target ${canonicalAbs}` : "Canonical missing");
+  add(203, Boolean(canonicalAbs) && /^https:\/\//i.test(canonicalAbs), canonicalAbs || "Canonical missing");
   add(204, !historyMatch, historyMatch ? `Matched pattern: ${historyMatch}` : "No suspicious history manipulation found");
   add(205, !exitIntentMatch, exitIntentMatch ? `Matched pattern: ${exitIntentMatch}` : "No exit-intent redirects found");
   add(206, indexableRate.rate >= 0.98, pageRateEvidence(indexableRate, "are not noindex sitemap targets"));
@@ -1747,7 +1820,7 @@ export async function runTechnicalAudit(inputUrl: string): Promise<TechnicalAudi
   add(230, llms?.response.status === 200 && /text|plain|markdown/i.test(llmsContentType) && llmsWordStats.words >= 100 && llmsWordStats.sections >= 2, `Status ${llms?.response.status ?? "missing"}, ${llmsWordStats.words} words, ${llmsWordStats.sections} sections`);
   add(231, apiUrls.length === 0 || corsValues.length > 0, apiUrls.length === 0 ? "No public API found" : corsValues.length ? `CORS header: ${corsValues[0]}` : `${apiUrls.length} public API endpoints found without CORS header`);
   add(232, medianTtfb < 800, `${Math.round(medianTtfb)}ms median TTFB${medianTtfb < 200 ? " (competitive)" : ""}`);
-  add(233, aiCrawlerOk, aiCrawlerResponses.length ? `${aiCrawlerResponses.length}/3 AI crawler user-agents returned accessible content` : "AI crawler fetches failed");
+  add(233, aiCrawlerOk, aiCrawlerEvidence);
   add(234, minHeadlessRatio >= 0.8, `${Math.round(minHeadlessRatio * 100)}% minimum bot/default content match`);
   add(235, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found");
   add(236, robotsBlocksInternalSearch(robots?.text ?? "") || searchLinks.length === 0, robotsBlocksInternalSearch(robots?.text ?? "") ? "Search URLs blocked in robots.txt" : searchLinks.length ? `${searchLinks.length} internal search URLs found` : "Search URLs not found");
@@ -1761,13 +1834,13 @@ function scoreChecks(checks: TechnicalCheckResult[]): TechnicalAuditResult {
   const weightedScore = (scope: TechnicalScope) => {
     const scoped = checks.filter((check) => check.scope === scope);
     const weightedTotal = scoped.reduce((sum, check) => sum + check.weight, 0);
-    const weightedPassed = scoped.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
+    const weightedPassed = scoped.reduce((sum, check) => sum + (check.passed ? check.weight : check.warning ? check.weight / 2 : 0), 0);
     return weightedTotal > 0 ? Math.round((weightedPassed / weightedTotal) * 100) : 0;
   };
   const pageScore = weightedScore("page");
   const domainScore = weightedScore("domain");
   const rawScore = Math.round(pageScore * 0.7 + domainScore * 0.3);
-  const blockerFailed = checks.some((check) => check.severity === "BLOCKER" && !check.passed);
+  const blockerFailed = checks.some((check) => SCORE_CAP_BLOCKER_IDS.has(check.id) && check.severity === "BLOCKER" && !check.passed && !check.warning);
   const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   const groupedChecks = checks.reduce<Map<string, TechnicalCheckResult[]>>((groups, check) => {
     const current = groups.get(check.category) ?? [];
@@ -1776,11 +1849,11 @@ function scoreChecks(checks: TechnicalCheckResult[]): TechnicalAuditResult {
     return groups;
   }, new Map());
   const categoryDebug = [...groupedChecks.entries()].map(([category, categoryChecks]) => {
-    const failed = categoryChecks.filter((check) => !check.passed);
+    const failed = categoryChecks.filter((check) => !check.passed && !check.warning);
     return {
       category,
       totalChecks: categoryChecks.length,
-      passedChecks: categoryChecks.length - failed.length,
+      passedChecks: categoryChecks.filter((check) => check.passed && !check.warning).length,
       failedChecks: failed.length,
       failedCheckDetails: failed.map((check) => ({
         id: check.id,

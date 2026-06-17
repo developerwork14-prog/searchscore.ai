@@ -83,8 +83,8 @@ function findLink($: cheerio.CheerioAPI, base: URL, pattern: RegExp) {
 
 function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): EeatCheckResult {
   const skipped = Boolean(state.skipped);
-  const warning = !skipped && Boolean(state.warning);
   const passed = skipped ? true : Boolean(state.passed);
+  const warning = !skipped && !passed && Boolean(state.warning);
   return {
     ...def,
     passed,
@@ -147,6 +147,21 @@ function addressFound(text: string) {
   return /\b(street|st\.|road|rd\.|avenue|ave\.|lane|ln\.|suite|floor|building|city|state|zip|postal|india|usa|uk)\b/i.test(text) && /\d{2,}/.test(text);
 }
 
+function localTrustApplicable(text: string) {
+  return /\b(local|near me|visit us|office|clinic|store|restaurant|service area|directions|hours|appointment)\b/i.test(text);
+}
+
+function authoritativeOutboundLinks(links: string[]) {
+  return links.filter((href) => {
+    try {
+      const host = new URL(href).hostname;
+      return /\.(?:edu|gov)(?:\.|$)/i.test(host) || /\b(?:wikipedia|wikidata|who\.int|nih\.gov|cdc\.gov|researchgate|pubmed|schema\.org)\b/i.test(host);
+    } catch {
+      return false;
+    }
+  });
+}
+
 export async function runEeatAudit(inputUrl: string, html?: string): Promise<EeatAuditResult> {
   const normalized = normalizeUrl(inputUrl);
   const base = new URL(normalized);
@@ -185,7 +200,10 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
   const teamText = team$("body").text().replace(/\s+/g, " ").trim();
   const caseText = cheerio.load(pageFor("caseStudy"))("body").text().replace(/\s+/g, " ").trim();
   const outboundLinks = $("a[href^='http']").toArray().map((el) => $(el).attr("href") ?? "").filter((href) => !sameOrigin(base, href));
+  const authorityLinks = authoritativeOutboundLinks(outboundLinks);
   const sourceCitations = $("article a[href^='http'],main a[href^='http'],cite,blockquote,sup a[href]").length;
+  const localIntent = localTrustApplicable(homepage + " " + contactText);
+  const hasContactLink = Boolean(links.contact || contactText);
   const results: EeatCheckResult[] = [];
   const add = (id: number, state: Parameters<typeof result>[1]) => {
     const def = CHECKS.find((check) => check.id === id);
@@ -200,21 +218,21 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
   add(6, { passed: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length >= 3, skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { contentLinks: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length } });
   add(21, { passed: /\b\d+\+?\s+(years?|yrs?)\b|\b(since|experience)\s+\d{4}\b/i.test(bioText), skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { bioUrl: bioLink?.href ?? "" } });
 
-  add(7, { passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100, warning: !pageFor("editorial"), evidence: { editorialUrl: links.editorial?.href ?? "" } });
-  add(8, { passed: addressFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
-  add(9, { passed: phoneFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
-  add(10, { passed: emailFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
+  add(7, { passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100, skipped: !articleApplicable, warning: articleApplicable && !pageFor("editorial"), evidence: { editorialUrl: links.editorial?.href ?? "" } });
+  add(8, { passed: addressFound(contactText), skipped: !localIntent, warning: localIntent && hasContactLink, evidence: { contactUrl: links.contact?.href ?? "", localIntent } });
+  add(9, { passed: phoneFound(contactText), skipped: !localIntent && emailFound(contactText), warning: hasContactLink, evidence: { contactUrl: links.contact?.href ?? "", localIntent } });
+  add(10, { passed: emailFound(contactText), warning: hasContactLink || phoneFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
   add(11, { skipped: true, evidence: { reason: "Form functionality cannot be verified with 100% accuracy without submitting a form." } });
   add(12, { passed: wordCount(privacyText) >= 300, warning: wordCount(privacyText) >= 120, evidence: { privacyUrl: links.privacy?.href ?? "", words: wordCount(privacyText) } });
   add(13, { passed: Boolean(pageFor("terms")) && wordCount(termsText) >= 100, warning: Boolean(pageFor("terms")), evidence: { termsUrl: links.terms?.href ?? "", words: wordCount(termsText) } });
   add(15, { passed: wordCount(aboutText) >= 300, warning: wordCount(aboutText) >= 120, evidence: { aboutUrl: links.about?.href ?? "", words: wordCount(aboutText) } });
   add(20, { passed: Boolean(pageFor("team")) && (team$("img").length >= 2 || team$("a[href*='linkedin.com']").length >= 2 || (teamText.match(/\b(CEO|Founder|Director|Manager|Lead|Head of)\b/g) ?? []).length >= 2), skipped: !pageFor("team"), warning: Boolean(pageFor("team")), evidence: { teamUrl: links.team?.href ?? "" } });
 
-  add(14, { passed: /trusted by|clients|customers|partners|featured in/i.test(homepage) && $("img[alt]").length >= 2, evidence: { logoImages: $("img[alt]").length } });
-  add(16, { passed: outboundLinks.some((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)), warning: outboundLinks.length > 0, evidence: { eduGovLinks: outboundLinks.filter((href) => /\.(edu|gov)(?:\/|$)/i.test(new URL(href).hostname)).slice(0, 10) } });
+  add(14, { passed: /trusted by|clients|customers|partners|featured in/i.test(homepage) && $("img[alt]").length >= 2, skipped: !/clients|customers|partners|featured in|trusted by|case stud/i.test(homepage), warning: /trusted by|clients|customers|partners|featured in/i.test(homepage), evidence: { logoImages: $("img[alt]").length } });
+  add(16, { passed: authorityLinks.length > 0, skipped: !articleApplicable && outboundLinks.length === 0, warning: outboundLinks.length > 0, evidence: { authorityLinks: authorityLinks.slice(0, 10), outboundLinks: outboundLinks.length } });
   add(17, { passed: articleApplicable && sourceCitations > 0, skipped: !articleApplicable, warning: articleApplicable, evidence: { sourceCitations, articleDetected: articleApplicable } });
   add(18, { skipped: true, evidence: { reason: "Verifiable claim ratio requires claim extraction and source validation; static HTML alone cannot verify it exactly." } });
-  add(19, { passed: Boolean(pageFor("caseStudy")) && /\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText), evidence: { caseStudyUrl: links.caseStudy?.href ?? "" } });
+  add(19, { passed: Boolean(pageFor("caseStudy")) && /\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText), skipped: !/client|customer|case stud|portfolio|results|success/i.test(homepage), warning: Boolean(pageFor("caseStudy")), evidence: { caseStudyUrl: links.caseStudy?.href ?? "" } });
 
   const categories = summarize(results);
   const scorable = results.filter((check) => !check.skipped);

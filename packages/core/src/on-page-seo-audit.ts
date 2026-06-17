@@ -65,15 +65,16 @@ function compact(value: string) {
   return normalizeText(value).replace(/\s+/g, " ");
 }
 
-function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; evidence?: Record<string, unknown> }): OnPageSeoCheckResult {
+function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): OnPageSeoCheckResult {
   const skipped = Boolean(state.skipped);
   const passed = skipped ? true : Boolean(state.passed);
+  const warning = !skipped && !passed && Boolean(state.warning);
   return {
     ...def,
     passed,
     skipped,
-    warning: false,
-    score: skipped ? 0 : passed ? def.weight : 0,
+    warning,
+    score: skipped ? 0 : passed ? def.weight : warning ? def.weight / 2 : 0,
     evidence: state.evidence ?? {}
   };
 }
@@ -82,18 +83,19 @@ function summarize(checks: OnPageSeoCheckResult[]): OnPageSeoCategorySummary[] {
   return CATEGORY_ORDER.map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
     const scorable = categoryChecks.filter((check) => !check.skipped);
-    const failed = scorable.filter((check) => !check.passed);
+    const failed = scorable.filter((check) => !check.passed && !check.warning);
+    const warningChecks = scorable.filter((check) => check.warning).length;
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
     const score = scorable.length
       ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.weight, 0)) * 100)
       : 100;
-    const status: TechnicalCategoryStatus = scorable.length === 0 ? "Skipped" : failed.length === 0 ? "Passed" : failed.length <= 1 ? "Minor Attention" : "Needs Attention";
+    const status: TechnicalCategoryStatus = scorable.length === 0 ? "Skipped" : failed.length === 0 && warningChecks === 0 ? "Passed" : failed.length <= 1 ? "Minor Attention" : "Needs Attention";
     return {
       categoryName,
       totalChecks: categoryChecks.length,
-      passedChecks: scorable.filter((check) => check.passed).length,
+      passedChecks: scorable.filter((check) => check.passed && !check.warning).length,
       failedChecks: failed.length,
-      warningChecks: 0,
+      warningChecks,
       skippedChecks,
       score,
       status
@@ -235,11 +237,13 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
 
   add(1, { passed: hierarchy.levels.length > 0 && hierarchy.skips.length === 0, evidence: { headingLevels: hierarchy.levels, skips: hierarchy.skips } });
   add(2, {
-    passed: boldPhrases.length > 0 && boldDensity >= 0.5 && boldDensity <= maxBoldDensity && boldQualityRatio >= 0.6,
+    passed: boldPhrases.length === 0 || (boldDensity <= maxBoldDensity && boldQualityRatio >= 0.6),
+    warning: boldPhrases.length > 0 && (boldDensity > maxBoldDensity || boldQualityRatio < 0.6),
     evidence: { boldPhrases: boldPhrases.length, boldDensity: Number(boldDensity.toFixed(2)), maxBoldDensity, qualityRatio: Number(boldQualityRatio.toFixed(2)), sample: boldPhrases.slice(0, 8) }
   });
   add(3, {
     passed: !hasComparisonIntent($, body) || comparisonTables.length > 0,
+    warning: hasComparisonIntent($, body) && tables.length === 0,
     evidence: { comparisonIntent: hasComparisonIntent($, body), tables: tables.length, comparisonTables: comparisonTables.length }
   });
   add(4, {
@@ -258,7 +262,8 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
     evidence: { dfnCount, definitionPatternDetected: hasDefinitionPattern(body) }
   });
   add(7, {
-    passed: dateTextCount === 0 || timeDatetimeCount >= dateTextCount,
+    passed: dateTextCount === 0 || timeDatetimeCount >= Math.ceil(dateTextCount * 0.5),
+    warning: dateTextCount > 0 && timeDatetimeCount > 0 && timeDatetimeCount < dateTextCount,
     evidence: { dateTextCount, timeDatetimeCount }
   });
   add(8, {
@@ -268,10 +273,13 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
   });
   add(9, {
     passed: seeAlsoLinks.length > 0,
+    skipped: totalWords < 300,
+    warning: seeAlsoLinks.length === 0 && $("a[href]").length > 0,
     evidence: { seeAlsoLinks: seeAlsoLinks.length }
   });
   add(10, {
-    passed: paragraphLinks.length >= 2,
+    passed: totalWords < 300 ? paragraphLinks.length >= 1 : paragraphLinks.length >= 2,
+    warning: totalWords >= 300 && paragraphLinks.length === 1,
     evidence: { contextualInternalLinks: paragraphLinks.length, sampleUrls: paragraphLinks.slice(0, 8) }
   });
   add(11, {
@@ -284,6 +292,7 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
   });
   add(13, {
     passed: h1Text.length >= 20 && h1Text.length <= 70,
+    warning: h1Text.length >= 10 && h1Text.length <= 90,
     evidence: { h1: h1Text, length: h1Text.length }
   });
 

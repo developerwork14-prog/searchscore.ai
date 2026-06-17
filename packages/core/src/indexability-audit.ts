@@ -15,6 +15,7 @@ export interface IndexabilityCheckDefinition {
 export interface IndexabilityCheckResult extends IndexabilityCheckDefinition {
   passed: boolean;
   skipped: boolean;
+  warning?: boolean;
   score: number;
   evidence: Record<string, unknown>;
 }
@@ -48,7 +49,6 @@ const CHECKS: IndexabilityCheckDefinition[] = [
   { id: 8, category: "Canonicalization", name: "Canonical Absolute HTTPS", severity: "High", maxScore: 8 },
   { id: 9, category: "Canonicalization", name: "Canonical Target Returns 200", severity: "Critical", maxScore: 10 },
   { id: 10, category: "Canonicalization", name: "No Canonical Chains", severity: "High", maxScore: 8 },
-  { id: 11, category: "Canonicalization", name: "No HTTP Header Canonical Conflict", severity: "High", maxScore: 8 },
   { id: 12, category: "Snippet Controls", name: "No nosnippet on Key Pages", severity: "Critical", maxScore: 10 },
   { id: 13, category: "Snippet Controls", name: "No max-snippet:0 / Low", severity: "Critical", maxScore: 10 },
   { id: 14, category: "Snippet Controls", name: "No data-nosnippet Key Content", severity: "High", maxScore: 8 },
@@ -63,7 +63,7 @@ const CHECKS: IndexabilityCheckDefinition[] = [
   { id: 23, category: "Access & Gating", name: "No Back-Button Hijack", severity: "Critical", maxScore: 10 },
   { id: 24, category: "Rendering & Content Access", name: "CSS Hidden <100 Words", severity: "High", maxScore: 8 },
   { id: 25, category: "Rendering & Content Access", name: "No Soft-404s", severity: "High", maxScore: 8 },
-  { id: 26, category: "Rendering & Content Access", name: "No Infinite Scroll Dependency", severity: "High", maxScore: 8 }
+  { id: 26, category: "Rendering & Content Access", name: "Infinite Scroll Crawlable Pagination", severity: "Low", maxScore: 4 }
 ];
 
 const CATEGORY_ORDER = [
@@ -144,11 +144,9 @@ function noindexFoundIn(html: string, response?: Response | null) {
 function canonicalHref(html: string, baseUrl: string, response?: Response | null) {
   const $ = cheerio.load(html);
   const htmlCanonical = $("link[rel='canonical' i]").first().attr("href") ?? "";
-  const headerCanonical = response?.headers.get("link")?.match(/<([^>]+)>;\s*rel=["']canonical["']/i)?.[1] ?? "";
-  const value = htmlCanonical || headerCanonical;
-  if (!value) return "";
+  if (!htmlCanonical) return "";
   try {
-    return new URL(value, baseUrl).toString();
+    return new URL(htmlCanonical, baseUrl).toString();
   } catch {
     return "";
   }
@@ -234,18 +232,21 @@ function gatingEvidence($: cheerio.CheerioAPI, bodyText: string) {
   const gatePattern = /\b(login|sign in|subscribe|paywall|members only|create an account|restricted access)\b/i;
   const formCount = $("input[type='password'],form[action*='login' i],form[action*='signin' i]").length;
   const words = wordCount(bodyText);
-  return { pass: !(gatePattern.test(bodyText) && words < 250) && formCount === 0, words, formCount, gateTextDetected: gatePattern.test(bodyText) };
+  const gateTextDetected = gatePattern.test(bodyText);
+  const hardGate = formCount > 0 && words < 250;
+  return { pass: !hardGate && !(gateTextDetected && words < 120), warning: !hardGate && gateTextDetected && words < 250, words, formCount, gateTextDetected };
 }
 
 function consentEvidence($: cheerio.CheerioAPI, bodyText: string) {
   const overlays = $("[class*='cookie' i],[class*='consent' i],[id*='cookie' i],[id*='consent' i],[class*='gdpr' i]").length;
-  return { pass: overlays === 0 || wordCount(bodyText) >= 100, overlays, rawWordCount: wordCount(bodyText) };
+  const rawWordCount = wordCount(bodyText);
+  return { pass: overlays === 0 || rawWordCount >= 100, warning: overlays > 0 && rawWordCount >= 50 && rawWordCount < 100, overlays, rawWordCount };
 }
 
 function backButtonHijackEvidence(html: string) {
   const scriptsFound = (html.match(/history\.(?:pushState|replaceState)|onpopstate/gi) ?? []);
   const loopSignals = (html.match(/setInterval\s*\([^)]*history\.|while\s*\([^)]*\)\s*{[^}]*history\./gi) ?? []);
-  return { pass: scriptsFound.length === 0 || loopSignals.length === 0, scriptsFound: [...new Set(scriptsFound)], loopSignals };
+  return { pass: scriptsFound.length === 0 || loopSignals.length === 0, warning: scriptsFound.length > 0 && loopSignals.length === 0, scriptsFound: [...new Set(scriptsFound)], loopSignals };
 }
 
 function hiddenContentEvidence($: cheerio.CheerioAPI) {
@@ -255,7 +256,7 @@ function hiddenContentEvidence($: cheerio.CheerioAPI) {
     if ($(el).closest(excluded).length) return;
     hiddenWords += wordCount($(el).text());
   });
-  return { pass: hiddenWords < 100, hiddenWords, threshold: 100 };
+  return { pass: hiddenWords < 100, warning: hiddenWords >= 100 && hiddenWords < 200, hiddenWords, threshold: 100 };
 }
 
 async function soft404Evidence(url: URL) {
@@ -265,13 +266,23 @@ async function soft404Evidence(url: URL) {
     const result = await fetchText(target, 5000).catch(() => null);
     return { url: target, status: result?.response.status ?? 0, words: wordCount(cheerio.load(result?.text ?? "")("body").text()) };
   }));
-  return { pass: results.every((result) => result.status === 404 || result.status === 410), results };
+  const pass = results.every((result) => result.status === 404 || result.status === 410);
+  const warning = !pass && results.every((result) => result.status === 0 || result.status >= 400 || result.words < 300);
+  return { pass, warning, results };
 }
 
 function infiniteScrollEvidence(html: string, $: cheerio.CheerioAPI, pagination: { skipped?: boolean; pass?: boolean }) {
-  const hasInfiniteSignal = /infinite[-_\s]?scroll|IntersectionObserver|loadMore|load-more/i.test(html);
-  const hasPagination = !pagination.skipped || $("a[href*='page='],a[href*='/page/']").length > 0;
-  return { pass: !hasInfiniteSignal || hasPagination, infiniteScrollDetected: hasInfiniteSignal, paginationDetected: hasPagination };
+  const signalPatterns = [
+    /IntersectionObserver/i,
+    /infinite[-_\s]?scroll|endless[-_\s]?scroll|jscroll|ias\.|infiniteScroll\(/i,
+    /load[-_\s]?more|ajax(?:url|load|pagination)|fetch\([^)]*(?:page|offset|cursor)|XMLHttpRequest/i,
+    /addEventListener\(\s*["']scroll["']|onscroll\s*=|\.on\(\s*["']scroll["']/i,
+    /(?:scroll|viewport)[\s\S]{0,160}(?:appendChild|insertAdjacentHTML|loadMore|nextPage|page\s*\+\+|offset\s*\+=|cursor)/i
+  ];
+  const hasInfiniteSignal = signalPatterns.some((pattern) => pattern.test(html));
+  if (!hasInfiniteSignal) return { skipped: true, reason: "No infinite-scroll or auto-loading content behavior detected" };
+  const hasPagination = !pagination.skipped || $("a[href*='page='],a[href*='?p='],a[href*='/page/'],a[rel='next' i],a[rel='prev' i],link[rel='next' i],link[rel='prev' i],[class*='pagination' i] a[href]").length > 0;
+  return { pass: hasPagination, infiniteScrollDetected: hasInfiniteSignal, paginationDetected: hasPagination };
 }
 
 async function searchIndexEvidence(engine: "google" | "bing", hostname: string) {
@@ -294,22 +305,26 @@ function categorySummaries(checks: IndexabilityCheckResult[]): IndexabilityCateg
   return CATEGORY_ORDER.map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
     const scorable = categoryChecks.filter((check) => !check.skipped);
-    const failed = scorable.filter((check) => !check.passed);
+    const failed = scorable.filter((check) => !check.passed && !check.warning);
+    const warnings = scorable.filter((check) => check.warning);
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
     const score = scorable.length ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.maxScore, 0)) * 100) : 0;
-    const status: IndexabilityStatus = scorable.length === 0 && skippedChecks > 0
-      ? "Skipped"
-      : failed.length === 0
-        ? "Passed"
-        : failed.some((check) => check.severity === "Critical" || check.severity === "High")
-          ? "Needs Attention"
-          : "Minor Attention";
+    let status: IndexabilityStatus = "Passed";
+    if (scorable.length === 0 && skippedChecks > 0) {
+      status = "Skipped";
+    } else if (failed.length === 0 && warnings.length > 0) {
+      status = "Minor Attention";
+    } else if (failed.some((check) => check.severity === "Critical" || check.severity === "High")) {
+      status = "Needs Attention";
+    } else if (failed.length > 0) {
+      status = "Minor Attention";
+    }
     return {
       categoryName,
       totalChecks: categoryChecks.length,
-      passedChecks: scorable.length - failed.length,
+      passedChecks: scorable.filter((check) => check.passed && !check.warning).length,
       failedChecks: failed.length,
-      warningChecks: failed.filter((check) => check.severity === "Low").length,
+      warningChecks: warnings.length,
       skippedChecks,
       score,
       status
@@ -322,7 +337,8 @@ function resultFor(id: number, evidence: Record<string, unknown>): IndexabilityC
   if (!definition) throw new Error(`Unknown indexability check ${id}`);
   const skipped = Boolean(evidence.skipped);
   const passed = skipped ? true : Boolean(evidence.pass);
-  return { ...definition, passed, skipped, score: skipped ? 0 : passed ? definition.maxScore : 0, evidence };
+  const warning = !skipped && !passed && Boolean(evidence.warning);
+  return { ...definition, passed, skipped, warning: warning || undefined, score: skipped ? 0 : passed ? definition.maxScore : warning ? definition.maxScore / 2 : 0, evidence };
 }
 
 export async function runIndexabilityAudit(inputUrl: string, html?: string): Promise<IndexabilityAuditResult> {
@@ -365,7 +381,6 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
     resultFor(8, { pass: /^https:\/\//i.test(canonicalUrl), canonicalUrl }),
     resultFor(9, { pass: canonicalTarget?.response.status === 200, canonicalUrl, status: canonicalTarget?.response.status ?? 0 }),
     resultFor(10, { pass: !canonicalUrl || !secondCanonicalUrl || comparableUrl(secondCanonicalUrl) === comparableUrl(canonicalUrl), chain: [normalizedUrl, canonicalUrl, secondCanonicalUrl].filter(Boolean), maxDepth: 1 }),
-    resultFor(11, { pass: !serverPage.response?.headers.get("link") || !canonicalUrl || comparableUrl(canonicalUrl) === comparableUrl(canonicalHref(pageHtml, normalizedUrl)), headerCanonical: serverPage.response?.headers.get("link") ?? "" }),
     resultFor(12, { pass: !/nosnippet/i.test(robotsDirectives(pageHtml, serverPage.response)), directives: robotsDirectives(pageHtml, serverPage.response) }),
     resultFor(13, { pass: maxSnippetValue(pageHtml, serverPage.response) === null || maxSnippetValue(pageHtml, serverPage.response) === -1 || (maxSnippetValue(pageHtml, serverPage.response) ?? 0) >= 50, value: maxSnippetValue(pageHtml, serverPage.response), lowThreshold: 50 }),
     resultFor(14, dataNosnippetEvidence($)),

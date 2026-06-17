@@ -470,9 +470,9 @@ function failedIssueCount(audit: TechnicalAuditResult, ids: number[]) {
   return audit.checks.filter((check) => idSet.has(check.id) && !check.passed).length;
 }
 
-function categoryStatus(failedChecks: number): TechnicalCategoryStatus {
-  if (failedChecks === 0) return "Passed";
-  if (failedChecks <= 2) return "Minor Attention";
+function categoryStatusWithWarnings(failedChecks: number, warningChecks: number): TechnicalCategoryStatus {
+  if (failedChecks === 0 && warningChecks === 0) return "Passed";
+  if (failedChecks === 0 || failedChecks <= 2) return "Minor Attention";
   return "Needs Attention";
 }
 
@@ -532,18 +532,18 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     .map((categoryName) => {
       const checks = categories.get(categoryName) ?? [];
       const totalWeight = checks.reduce((sum, check) => sum + check.weight, 0);
-      const passedWeight = checks.reduce((sum, check) => sum + (check.passed ? check.weight : 0), 0);
-      const failedChecks = checks.filter((check) => !check.passed).length;
-      const warningChecks = checks.filter((check) => !check.passed && ["MINOR", "ADVISORY"].includes(check.severity)).length;
+      const passedWeight = checks.reduce((sum, check) => sum + (check.passed ? check.weight : check.warning ? check.weight / 2 : 0), 0);
+      const failedChecks = checks.filter((check) => !check.passed && !check.warning).length;
+      const warningChecks = checks.filter((check) => check.warning).length;
 
       return {
         categoryName,
         totalChecks: checks.length,
-        passedChecks: checks.length - failedChecks,
+        passedChecks: checks.filter((check) => check.passed && !check.warning).length,
         failedChecks,
         warningChecks,
         score: totalWeight ? clamp((passedWeight / totalWeight) * 100) : 0,
-        status: categoryStatus(failedChecks)
+        status: categoryStatusWithWarnings(failedChecks, warningChecks)
       };
     });
 }

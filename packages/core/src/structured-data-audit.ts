@@ -166,8 +166,8 @@ function absoluteHttpsUrls(record: Record<string, unknown>) {
 
 function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): StructuredDataCheckResult {
   const skipped = Boolean(state.skipped);
-  const warning = !skipped && Boolean(state.warning);
   const passed = skipped ? true : Boolean(state.passed);
+  const warning = !skipped && !passed && Boolean(state.warning);
   return {
     ...def,
     passed,
@@ -227,6 +227,12 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   const productApplicable = Boolean(product || /\b(price|add to cart|sku|in stock|out of stock)\b/i.test(lowerBody));
   const videoApplicable = Boolean($("video,iframe[src*='youtube'],iframe[src*='vimeo']").length);
   const imageApplicable = Boolean($("img").length);
+  const speakableApplicable = Boolean(article && /NewsArticle/i.test(typesOf(article).join(" "))) || /\bspeakable\b/i.test(body);
+  const definedTermApplicable = /\b(glossary|terms? dictionary|definitions?)\b/i.test(body) || $("dfn").length >= 2;
+  const datasetApplicable = /\b(dataset|data catalog|download data|research data|study data)\b/i.test(body) || $("a[href$='.csv'],a[href$='.json'],a[href$='.xlsx']").length > 0;
+  const profilePageApplicable = Boolean(person) && /\b(profile|bio|author|team|leadership)\b/i.test(url.pathname + " " + body);
+  const eventApplicable = /\b(webinar|event|conference|workshop|register now|tickets?)\b/i.test(body);
+  const softwareApplicable = /\b(software|app|application|platform|tool|saas)\b/i.test(body);
   const ids = records.map((record) => textValue(record["@id"])).filter(Boolean);
   const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
   const allUrls = records.flatMap(absoluteHttpsUrls);
@@ -236,64 +242,64 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
     if (def) results.push(result(def, state));
   };
 
-  add(1, { passed: Boolean(org), evidence: { organizationFound: Boolean(org), typesFound: records.flatMap(typesOf) } });
-  add(2, { passed: Boolean(textValue(org?.name)), evidence: { name: textValue(org?.name) } });
-  add(3, { passed: textValue(org?.url).startsWith("https://"), evidence: { url: textValue(org?.url) } });
-  add(4, { passed: Boolean(textValue(org?.logo)), evidence: { logo: textValue(org?.logo) } });
-  add(5, { passed: Boolean(textValue(org?.telephone)), skipped: !localApplicable, warning: localApplicable && Boolean(org) && !textValue(org?.telephone), evidence: { telephone: textValue(org?.telephone), skippedReason: localApplicable ? "" : "No local/service intent detected" } });
-  add(6, { passed: Boolean(objectValue(org?.address)["@type"] || textValue(org?.address)), skipped: !localApplicable, warning: localApplicable && Boolean(org) && !objectValue(org?.address)["@type"] && !textValue(org?.address), evidence: { address: org?.address ?? null } });
-  add(7, { passed: sameAs.length >= 2, warning: sameAs.length > 0 && sameAs.length < 2, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs, note: "2+ official profiles is production-ready; 4+ is ideal for stronger entity disambiguation." } });
-  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), warning: sameAs.length > 0 && !sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)) } });
-  add(9, { passed: sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), warning: !sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), evidence: { sameAsUrls: sameAs } });
-  add(10, { passed: knowsAbout.length >= 5, warning: knowsAbout.length > 0 && knowsAbout.length < 5, evidence: { knowsAboutCount: knowsAbout.length } });
-  add(11, { passed: textValue(org?.["@id"]).startsWith("https://"), warning: Boolean(org) && !textValue(org?.["@id"]).startsWith("https://"), evidence: { id: textValue(org?.["@id"]) } });
+  add(1, { passed: Boolean(org), warning: records.length > 0, evidence: { organizationFound: Boolean(org), typesFound: records.flatMap(typesOf) } });
+  add(2, { passed: Boolean(textValue(org?.name)), skipped: !org, evidence: { name: textValue(org?.name) } });
+  add(3, { passed: textValue(org?.url).startsWith("https://"), skipped: !org, warning: Boolean(textValue(org?.url)), evidence: { url: textValue(org?.url) } });
+  add(4, { passed: Boolean(textValue(org?.logo)), skipped: !org, warning: Boolean(org), evidence: { logo: textValue(org?.logo) } });
+  add(5, { passed: Boolean(textValue(org?.telephone)), skipped: !localApplicable || !org, warning: localApplicable && Boolean(org) && !textValue(org?.telephone), evidence: { telephone: textValue(org?.telephone), skippedReason: localApplicable ? "" : "No local/service intent detected" } });
+  add(6, { passed: Boolean(objectValue(org?.address)["@type"] || textValue(org?.address)), skipped: !localApplicable || !org, warning: localApplicable && Boolean(org) && !objectValue(org?.address)["@type"] && !textValue(org?.address), evidence: { address: org?.address ?? null } });
+  add(7, { passed: sameAs.length >= 2, skipped: !org, warning: sameAs.length > 0 && sameAs.length < 2, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs, note: "2+ official profiles is production-ready; 4+ is ideal for stronger entity disambiguation." } });
+  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), skipped: !org || sameAs.length === 0, warning: sameAs.length > 0 && !sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)) } });
+  add(9, { passed: sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), skipped: !org || sameAs.length === 0, warning: sameAs.length > 0 && !sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), evidence: { sameAsUrls: sameAs } });
+  add(10, { passed: knowsAbout.length >= 3, skipped: !org, warning: knowsAbout.length > 0 && knowsAbout.length < 3, evidence: { knowsAboutCount: knowsAbout.length } });
+  add(11, { passed: textValue(org?.["@id"]).startsWith("https://"), skipped: !org, warning: Boolean(org) && !textValue(org?.["@id"]).startsWith("https://"), evidence: { id: textValue(org?.["@id"]) } });
   add(12, { passed: /^\d{4}(-\d{2}-\d{2})?$/.test(textValue(org?.foundingDate)), skipped: !hasDom($, /\b(founded|since|established)\b/i), evidence: { foundingDate: textValue(org?.foundingDate) } });
 
-  add(13, { passed: Boolean(objectValue(local?.geo).latitude && objectValue(local?.geo).longitude), skipped: !localApplicable, evidence: { geo: local?.geo ?? null } });
-  add(14, { passed: Boolean(local?.areaServed), skipped: !localApplicable, evidence: { areaServed: local?.areaServed ?? null } });
-  add(15, { passed: Boolean(local?.openingHours || local?.openingHoursSpecification), skipped: !localApplicable, evidence: { openingHours: local?.openingHours ?? local?.openingHoursSpecification ?? null } });
-  add(16, { passed: Boolean(local && typesOf(local).some((type) => type !== "LocalBusiness")), skipped: !localApplicable, evidence: { types: local ? typesOf(local) : [] } });
-  add(54, { passed: Boolean(local?.priceRange), skipped: !localApplicable, evidence: { priceRange: local?.priceRange ?? "" } });
+  add(13, { passed: Boolean(objectValue(local?.geo).latitude && objectValue(local?.geo).longitude), skipped: !localApplicable || !local, warning: Boolean(local), evidence: { geo: local?.geo ?? null } });
+  add(14, { passed: Boolean(local?.areaServed), skipped: !localApplicable || !local, warning: Boolean(local), evidence: { areaServed: local?.areaServed ?? null } });
+  add(15, { passed: Boolean(local?.openingHours || local?.openingHoursSpecification), skipped: !localApplicable || !local, warning: Boolean(local), evidence: { openingHours: local?.openingHours ?? local?.openingHoursSpecification ?? null } });
+  add(16, { passed: Boolean(local && typesOf(local).some((type) => type !== "LocalBusiness")), skipped: !localApplicable || !local, warning: Boolean(local), evidence: { types: local ? typesOf(local) : [] } });
+  add(54, { passed: Boolean(local?.priceRange), skipped: !localApplicable || !local, warning: Boolean(local), evidence: { priceRange: local?.priceRange ?? "" } });
 
-  add(17, { passed: Boolean(article?.headline), skipped: !articleApplicable, evidence: { headline: article?.headline ?? "" } });
-  add(18, { passed: Boolean(article?.author), skipped: !articleApplicable, evidence: { author: article?.author ?? null } });
-  add(19, { passed: /^\d{4}-\d{2}-\d{2}/.test(textValue(article?.datePublished)), skipped: !articleApplicable, evidence: { datePublished: article?.datePublished ?? "" } });
-  add(20, { passed: Boolean(article?.dateModified && normalizedText(body).includes(normalizedText(textValue(article.dateModified)).slice(0, 10))), skipped: !articleApplicable, warning: Boolean(article?.dateModified), evidence: { dateModified: article?.dateModified ?? "" } });
-  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable, warning: Boolean(article), evidence: { about: article?.about ?? null } });
-  add(22, { passed: Boolean(article?.image), skipped: !articleApplicable, warning: Boolean(article), evidence: { image: article?.image ?? null } });
-  add(23, { passed: Boolean(article?.publisher), skipped: !articleApplicable, evidence: { publisher: article?.publisher ?? null } });
+  add(17, { passed: Boolean(article?.headline), skipped: !articleApplicable, warning: articleApplicable, evidence: { headline: article?.headline ?? "" } });
+  add(18, { passed: Boolean(article?.author), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { author: article?.author ?? null } });
+  add(19, { passed: /^\d{4}-\d{2}-\d{2}/.test(textValue(article?.datePublished)), skipped: !articleApplicable || !article, warning: Boolean(article?.datePublished), evidence: { datePublished: article?.datePublished ?? "" } });
+  add(20, { passed: Boolean(article?.dateModified && normalizedText(body).includes(normalizedText(textValue(article.dateModified)).slice(0, 10))), skipped: !articleApplicable || !article, warning: Boolean(article?.dateModified), evidence: { dateModified: article?.dateModified ?? "" } });
+  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { about: article?.about ?? null } });
+  add(22, { passed: Boolean(article?.image), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { image: article?.image ?? null } });
+  add(23, { passed: Boolean(article?.publisher), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { publisher: article?.publisher ?? null } });
 
-  add(24, { passed: Boolean(person), skipped: !personApplicable, evidence: { personFound: Boolean(person) } });
-  add(25, { passed: Boolean(person?.name && person?.jobTitle && person?.url), skipped: !personApplicable, evidence: { name: person?.name ?? "", jobTitle: person?.jobTitle ?? "", url: person?.url ?? "" } });
-  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable, warning: Boolean(person), evidence: { sameAs: person?.sameAs ?? [] } });
-  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable, warning: Boolean(person), evidence: { knowsAbout: person?.knowsAbout ?? [] } });
+  add(24, { passed: Boolean(person), skipped: !personApplicable, warning: personApplicable, evidence: { personFound: Boolean(person) } });
+  add(25, { passed: Boolean(person?.name && person?.jobTitle && person?.url), skipped: !personApplicable || !person, warning: Boolean(person?.name || person?.jobTitle || person?.url), evidence: { name: person?.name ?? "", jobTitle: person?.jobTitle ?? "", url: person?.url ?? "" } });
+  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable || !person, warning: Boolean(person), evidence: { sameAs: person?.sameAs ?? [] } });
+  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable || !person, warning: Boolean(person), evidence: { knowsAbout: person?.knowsAbout ?? [] } });
 
   const faqItems = asArray(faq?.mainEntity as unknown[] | undefined);
-  add(28, { passed: Boolean(faq), skipped: !faqApplicable, evidence: { faqFound: Boolean(faq) } });
-  add(29, { passed: faqItems.length >= 3, skipped: !faqApplicable, evidence: { itemCount: faqItems.length } });
-  add(30, { passed: faqItems.length > 0 && faqItems.every((item) => normalizedText(body).includes(normalizedText(textValue(item)).slice(0, 40))), skipped: !faqApplicable, evidence: { itemCount: faqItems.length } });
-  add(31, { passed: Boolean(howTo), skipped: !howToApplicable, evidence: { howToFound: Boolean(howTo) } });
-  add(53, { passed: asArray(howTo?.step as unknown[] | undefined).length > 0, skipped: !howToApplicable, evidence: { steps: asArray(howTo?.step as unknown[] | undefined).length } });
-  add(55, { passed: Boolean(howTo?.totalTime || howTo?.estimatedCost), skipped: !howToApplicable, warning: Boolean(howTo), evidence: { totalTime: howTo?.totalTime ?? "", estimatedCost: howTo?.estimatedCost ?? "" } });
+  add(28, { passed: Boolean(faq), skipped: !faqApplicable, warning: faqApplicable, evidence: { faqFound: Boolean(faq) } });
+  add(29, { passed: faqItems.length >= 2, skipped: !faqApplicable || !faq, warning: faqItems.length === 1, evidence: { itemCount: faqItems.length } });
+  add(30, { passed: faqItems.length > 0 && faqItems.every((item) => normalizedText(body).includes(normalizedText(textValue(item)).slice(0, 40))), skipped: !faqApplicable || !faq, warning: faqItems.length > 0, evidence: { itemCount: faqItems.length } });
+  add(31, { passed: Boolean(howTo), skipped: !howToApplicable, warning: howToApplicable, evidence: { howToFound: Boolean(howTo) } });
+  add(53, { passed: asArray(howTo?.step as unknown[] | undefined).length > 0, skipped: !howToApplicable || !howTo, warning: Boolean(howTo), evidence: { steps: asArray(howTo?.step as unknown[] | undefined).length } });
+  add(55, { passed: Boolean(howTo?.totalTime || howTo?.estimatedCost), skipped: !howToApplicable || !howTo, warning: Boolean(howTo), evidence: { totalTime: howTo?.totalTime ?? "", estimatedCost: howTo?.estimatedCost ?? "" } });
 
   const offers = objectValue(product?.offers);
-  add(32, { passed: Boolean(product?.name && product?.brand && product?.description), skipped: !productApplicable, evidence: { name: product?.name ?? "", brand: product?.brand ?? "", description: Boolean(product?.description) } });
-  add(33, { passed: Boolean(offers.price && offers.availability), skipped: !productApplicable, evidence: { offers } });
-  add(34, { passed: Boolean(product?.aggregateRating), skipped: !productApplicable, warning: Boolean(product), evidence: { aggregateRating: product?.aggregateRating ?? null } });
-  add(35, { passed: Boolean(product?.gtin || product?.gtin13 || product?.mpn || product?.sku), skipped: !productApplicable, warning: Boolean(product), evidence: { gtin: product?.gtin ?? product?.gtin13 ?? "", mpn: product?.mpn ?? "", sku: product?.sku ?? "" } });
+  add(32, { passed: Boolean(product?.name && product?.description), skipped: !productApplicable || !product, warning: Boolean(product?.name || product?.brand || product?.description), evidence: { name: product?.name ?? "", brand: product?.brand ?? "", description: Boolean(product?.description) } });
+  add(33, { passed: Boolean(offers.price && offers.availability), skipped: !productApplicable || !product, warning: Boolean(offers.price || offers.availability), evidence: { offers } });
+  add(34, { passed: Boolean(product?.aggregateRating), skipped: !productApplicable || !product, warning: Boolean(product), evidence: { aggregateRating: product?.aggregateRating ?? null } });
+  add(35, { passed: Boolean(product?.gtin || product?.gtin13 || product?.mpn || product?.sku), skipped: !productApplicable || !product, warning: Boolean(product), evidence: { gtin: product?.gtin ?? product?.gtin13 ?? "", mpn: product?.mpn ?? "", sku: product?.sku ?? "" } });
 
   add(36, { passed: Boolean(breadcrumb), skipped: url.pathname === "/", evidence: { breadcrumbFound: Boolean(breadcrumb) } });
   add(37, { passed: Boolean(breadcrumb?.itemListElement), skipped: !breadcrumb, evidence: { itemListElement: breadcrumb?.itemListElement ?? null } });
-  add(38, { passed: Boolean(website), evidence: { websiteFound: Boolean(website) } });
+  add(38, { passed: Boolean(website), skipped: url.pathname !== "/", warning: url.pathname === "/", evidence: { websiteFound: Boolean(website) } });
   add(39, { passed: records.some((record) => Boolean(record["@id"])) && records.length > 1, warning: records.length > 1, evidence: { records: records.length, ids: ids.length } });
-  add(40, { passed: findByType(records, (type) => type === "ImageObject").length > 0, skipped: !imageApplicable, evidence: { images: $("img").length } });
+  add(40, { passed: findByType(records, (type) => type === "ImageObject").length > 0, skipped: !imageApplicable || $("img").length < 3, warning: $("img").length >= 3, evidence: { images: $("img").length } });
   add(41, { passed: findByType(records, (type) => type === "VideoObject").length > 0, skipped: !videoApplicable, evidence: { videos: $("video,iframe[src*='youtube'],iframe[src*='vimeo']").length } });
 
   add(42, { passed: errors.length === 0, skipped: $("script[type='application/ld+json']").length === 0, evidence: { parseErrors: errors } });
-  add(43, { passed: $("script[type='application/ld+json']").length > 0, warning: $("[itemscope],[typeof],[property]").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, microdataRdfaSignals: $("[itemscope],[typeof],[property]").length } });
+  add(43, { passed: $("script[type='application/ld+json']").length > 0, skipped: records.length === 0 && $("[itemscope],[typeof],[property]").length === 0, warning: $("[itemscope],[typeof],[property]").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, microdataRdfaSignals: $("[itemscope],[typeof],[property]").length } });
   add(44, { passed: allUrls.every((item) => item.invalid.length === 0), evidence: { invalidHttpUrls: allUrls.flatMap((item) => item.invalid).slice(0, 10) } });
   add(51, { passed: duplicateIds.length === 0, evidence: { duplicateIds: [...new Set(duplicateIds)] } });
-  add(52, { passed: $("script[type='application/ld+json']").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length } });
+  add(52, { passed: $("script[type='application/ld+json']").length > 0, warning: records.length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length } });
   add(56, { passed: records.some((record) => Boolean(record["@context"])), warning: records.length > 0, evidence: { contexts: records.map((record) => record["@context"]).filter(Boolean) } });
 
   add(45, { passed: Boolean(!offers.price || normalizedText(body).includes(normalizedText(String(offers.price)))), skipped: !productApplicable || !offers.price, evidence: { price: offers.price ?? "" } });
@@ -303,12 +309,12 @@ export async function runStructuredDataAudit(inputUrl: string, html?: string): P
   add(49, { passed: faqItems.length > 0 && faqItems.every((item) => normalizedText(body).includes(normalizedText(textValue(item)).slice(0, 40))), skipped: !faqApplicable, evidence: { itemCount: faqItems.length } });
   add(50, { passed: Boolean(!offers.availability || normalizedText(body).includes(normalizedText(String(offers.availability)).replace("https schema org ", ""))), skipped: !productApplicable || !offers.availability, evidence: { availability: offers.availability ?? "" } });
 
-  add(57, { passed: findByType(records, (type) => type === "SpeakableSpecification").length > 0, skipped: !hasDom($, /\b(news|article|speakable)\b/i), evidence: {} });
-  add(58, { passed: findByType(records, (type) => type === "DefinedTerm").length > 0, skipped: !hasDom($, /\b(glossary|definition|term)\b/i), evidence: {} });
-  add(59, { passed: findByType(records, (type) => type === "Dataset").length > 0, skipped: !hasDom($, /\b(dataset|research|study|download data)\b/i), evidence: {} });
-  add(60, { passed: findByType(records, (type) => type === "ProfilePage").length > 0, skipped: !personApplicable, evidence: {} });
-  add(61, { passed: findByType(records, (type) => type === "Event").length > 0, skipped: !hasDom($, /\b(webinar|event|conference|register)\b/i), evidence: {} });
-  add(62, { passed: findByType(records, (type) => type === "SoftwareApplication" || type === "SoftwareApp").length > 0, skipped: !hasDom($, /\b(tool|software|app|platform)\b/i), evidence: {} });
+  add(57, { passed: findByType(records, (type) => type === "SpeakableSpecification").length > 0, skipped: !speakableApplicable, warning: speakableApplicable, evidence: { speakableApplicable } });
+  add(58, { passed: findByType(records, (type) => type === "DefinedTerm").length > 0, skipped: !definedTermApplicable, warning: definedTermApplicable, evidence: { definedTermApplicable } });
+  add(59, { passed: findByType(records, (type) => type === "Dataset").length > 0, skipped: !datasetApplicable, warning: datasetApplicable, evidence: { datasetApplicable } });
+  add(60, { passed: findByType(records, (type) => type === "ProfilePage").length > 0, skipped: !profilePageApplicable, warning: profilePageApplicable, evidence: { profilePageApplicable } });
+  add(61, { passed: findByType(records, (type) => type === "Event").length > 0, skipped: !eventApplicable, warning: eventApplicable, evidence: { eventApplicable } });
+  add(62, { passed: findByType(records, (type) => type === "SoftwareApplication" || type === "SoftwareApp").length > 0, skipped: !softwareApplicable, warning: softwareApplicable, evidence: { softwareApplicable } });
 
   const categories = summarize(results);
   const scorable = results.filter((check) => !check.skipped);

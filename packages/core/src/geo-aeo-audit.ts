@@ -176,6 +176,15 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   "AI Discovery Files": 5
 };
 
+const SCORE_CAP_BLOCKER_IDS = new Set([
+  32, // raw HTML does not expose meaningful content
+  38, // OAI-SearchBot blocked
+  39, // ChatGPT-User blocked
+  41, // OAI agents challenged by WAF
+  65, // extraction snippets disabled
+  66 // OAI-SearchBot does not receive rendered content
+]);
+
 const FETCH_TEXT_LIMIT_BYTES = 2 * 1024 * 1024;
 
 const CITATION_RECOMMENDATIONS: Record<number, string> = {
@@ -1790,7 +1799,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     }));
   const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
   const rawScore = weightedCategoryScore(categories);
-  const blockerFailed = result.some((check) => check.severity === "BLOCKER" && !check.passed && !check.skipped);
+  const blockerFailed = result.some((check) => SCORE_CAP_BLOCKER_IDS.has(check.id) && check.severity === "BLOCKER" && !check.passed && !check.skipped);
   const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
   const grade = gradeFor(score);
 
