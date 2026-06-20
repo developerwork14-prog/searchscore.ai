@@ -19,7 +19,7 @@ import {
   TrustSignalsAuditResult,
   VisibilityLevel
 } from "./types.js";
-import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult, TechnicalSeverity } from "./technical-audit.js";
+import { runTechnicalAudit, TechnicalAuditResult, TechnicalCheckResult } from "./technical-audit.js";
 import { runEeatAudit } from "./eeat-audit.js";
 import { runGeoAeoAudit } from "./geo-aeo-audit.js";
 import { runImageSeoAudit } from "./image-seo-audit.js";
@@ -28,6 +28,8 @@ import { runOnPageSeoAudit } from "./on-page-seo-audit.js";
 import { runStructuredDataAudit } from "./structured-data-audit.js";
 import { runTrustSignalsAudit } from "./trust-signals-audit.js";
 import { classifyBusiness } from "./lib/business-classification.js";
+import { crawlSite } from "./site-crawler.js";
+import { scoreParameterOutcomes } from "./audit-outcome.js";
 
 function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(value)));
@@ -76,19 +78,22 @@ function marketPosition(score: number, categoryVisibility: number, authority: nu
   return "Early-stage AI visibility with limited supporting evidence";
 }
 
-async function withAuditTimeout<T>(promise: Promise<T>, ms: number, fallback: T, label: string): Promise<T> {
+async function withAuditTimeout<T>(promise: Promise<T>, ms: number, fallback: T | (() => T | Promise<T>), label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  const resolveFallback = () => typeof fallback === "function"
+    ? (fallback as () => T | Promise<T>)()
+    : fallback;
   try {
     const timeoutPromise = new Promise<T>((resolve) => {
       timeout = setTimeout(() => {
-        console.warn(`${label} timed out after ${ms}ms; using fallback result`);
-        resolve(fallback);
+        console.warn(`${label} timed out after ${ms}ms; using reduced-scope fallback`);
+        Promise.resolve(resolveFallback()).then(resolve);
       }, ms);
     });
     return await Promise.race([
-      promise.catch((error) => {
-        console.warn(`${label} failed; using fallback result`, error);
-        return fallback;
+      promise.catch(async (error) => {
+        console.warn(`${label} failed; using reduced-scope fallback`, error);
+        return resolveFallback();
       }),
       timeoutPromise
     ]);
@@ -294,163 +299,34 @@ function fallbackTrustSignalsAudit(reason: string): TrustSignalsAuditResult {
   };
 }
 
-function priorityFromSeverity(severities: TechnicalSeverity[]): RecommendationPriority {
-  if (severities.includes("BLOCKER") || severities.includes("MAJOR")) return "High Priority";
-  if (severities.includes("MINOR")) return "Medium Priority";
-  return "Low Priority";
-}
-
 function severityRank(priority: RecommendationPriority) {
   return priority === "High Priority" ? 0 : priority === "Medium Priority" ? 1 : 2;
 }
 
-function evidenceFor(checks: TechnicalCheckResult[]) {
-  return checks.map((check) => `${check.name}: ${check.evidence}`).join("; ");
-}
-
-function makeRecommendation(
-  failedChecks: TechnicalCheckResult[],
-  checkIds: number[],
-  recommendation: string,
-  expectedAiVisibilityImpact: string,
-  priority?: RecommendationPriority
-): Recommendation | null {
-  const matched = failedChecks.filter((check) => checkIds.includes(check.id));
-  if (!matched.length) return null;
-
-  return {
-    priority: priority ?? priorityFromSeverity(matched.map((check) => check.severity)),
-    recommendation,
-    reason: evidenceFor(matched),
-    expectedAiVisibilityImpact
-  };
+function findingPriority(check: TechnicalCheckResult): RecommendationPriority {
+  try {
+    const evidence = JSON.parse(check.evidence) as Record<string, unknown>;
+    const pagesChecked = Number(evidence.pagesChecked);
+    const pagesFailed = Number(evidence.pagesFailed);
+    if (check.scope === "domain" || (pagesChecked > 0 && pagesFailed === pagesChecked)) {
+      return "High Priority";
+    }
+    if (pagesFailed > 1) return "Medium Priority";
+  } catch {
+    if (check.scope === "domain") return "High Priority";
+  }
+  return "Low Priority";
 }
 
 function generateAuditRecommendations(audit: TechnicalAuditResult): Recommendation[] {
-  const failedChecks = audit.checks.filter((check) => !check.passed);
-  const recommendations = [
-    makeRecommendation(
-      failedChecks,
-      [85],
-      "Implement FAQPage schema for visible FAQ sections",
-      "Helps AI engines extract concise question-answer pairs from the page and use them in answer-style results."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [80, 81],
-      "Implement Organization schema with sameAs entity links",
-      "Strengthens brand entity recognition by connecting the website to official social, directory, and profile URLs."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [77, 78, 79, 91],
-      "Fix JSON-LD schema coverage and validation errors",
-      "Improves machine-readable context so AI systems can parse the brand, services, and page purpose with less ambiguity."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [82],
-      "Add WebSite schema with SearchAction",
-      "Gives crawlers a clearer site-level entity and search pattern, improving structured understanding of the domain."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [87],
-      "Add LocalBusiness or ProfessionalService schema on service pages",
-      "Clarifies location, service area, and service type for local and service-intent AI recommendations."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [89],
-      "Add Product schema on product or pricing pages",
-      "Makes product names, offers, and pricing easier for AI systems to interpret in commercial prompts."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [114],
-      "Create an llms.txt file at the site root",
-      "Provides AI crawlers with a concise map of important pages, brand context, and preferred content sources.",
-      "Medium Priority"
-    ),
-    makeRecommendation(
-      failedChecks,
-      [107],
-      "Expand page content depth around the detected business category",
-      "Gives AI systems more topical evidence to understand services, eligibility, benefits, and decision criteria."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [96, 97, 35],
-      "Optimize internal linking with descriptive anchors",
-      "Improves crawl paths and helps AI systems connect service pages, category pages, proof pages, and conversion pages."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [113],
-      "Add visible review or testimonial signals",
-      "Adds trust evidence that AI systems can use when evaluating brand credibility and customer proof."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [10, 11, 12, 13],
-      "Fix robots.txt and sitemap discovery",
-      "Helps search and AI crawlers discover priority URLs reliably and understand which pages should be indexed."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [16, 17, 18, 19],
-      "Rewrite title and meta description to match the page intent",
-      "Improves the page summary signals that AI and search systems use to classify relevance."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [24, 25, 26],
-      "Correct heading structure on the page",
-      "Makes the page hierarchy easier for crawlers and AI systems to parse into topics and subtopics."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [27, 28, 29],
-      "Fix canonical tags",
-      "Reduces duplicate or conflicting URL signals so crawlers can consolidate authority to the correct page."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [61, 62, 103],
-      "Add descriptive alt text for meaningful images",
-      "Exposes visual proof, charts, services, and product context to crawlers that cannot rely on image pixels alone."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [46, 49, 53, 56, 59, 72, 73],
-      "Improve mobile performance and render-blocking resources",
-      "Improves crawl efficiency and user experience signals that can affect AI and search visibility."
-    ),
-    makeRecommendation(
-      failedChecks,
-      [67, 68, 69, 70],
-      "Strengthen trust pages and contact information",
-      "Improves credibility signals by making ownership, contact details, policies, and brand background easier to verify."
-    )
-  ].filter((item): item is Recommendation => Boolean(item));
-
-  const coveredIds = new Set(recommendations.flatMap((recommendation) =>
-    failedChecks
-      .filter((check) => recommendation.reason.includes(check.name))
-      .map((check) => check.id)
-  ));
-  const uncovered = failedChecks
-    .filter((check) => !coveredIds.has(check.id) && check.severity !== "ADVISORY")
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, Math.max(0, 6 - recommendations.length))
+  return audit.checks
+    .filter((check) => !check.passed && !check.warning)
     .map((check): Recommendation => ({
-      priority: priorityFromSeverity([check.severity]),
-      recommendation: `Fix ${check.name.toLowerCase()}`,
+      priority: findingPriority(check),
+      recommendation: `Resolve the failed "${check.name}" parameter and verify it against the affected-page evidence`,
       reason: `${check.category}: ${check.evidence}`,
-      expectedAiVisibilityImpact: `Improves ${check.category.toLowerCase()} signals by resolving the failed "${check.name}" audit check.`
-    }));
-
-  return [...recommendations, ...uncovered]
+      expectedAiVisibilityImpact: `Removes a measured ${check.category.toLowerCase()} failure and increases the percentage of audited parameters that pass.`
+    }))
     .sort((a, b) => severityRank(a.priority) - severityRank(b.priority))
     .slice(0, 12);
 }
@@ -531,8 +407,6 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     .filter((categoryName) => categories.has(categoryName))
     .map((categoryName) => {
       const checks = categories.get(categoryName) ?? [];
-      const totalWeight = checks.reduce((sum, check) => sum + check.weight, 0);
-      const passedWeight = checks.reduce((sum, check) => sum + (check.passed ? check.weight : check.warning ? check.weight / 2 : 0), 0);
       const failedChecks = checks.filter((check) => !check.passed && !check.warning).length;
       const warningChecks = checks.filter((check) => check.warning).length;
 
@@ -542,7 +416,7 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
         passedChecks: checks.filter((check) => check.passed && !check.warning).length,
         failedChecks,
         warningChecks,
-        score: totalWeight ? clamp((passedWeight / totalWeight) * 100) : 0,
+        score: scoreParameterOutcomes(checks, 0),
         status: categoryStatusWithWarnings(failedChecks, warningChecks)
       };
     });
@@ -640,39 +514,48 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
   const normalizedUrl = input.websiteUrl.startsWith("http") ? input.websiteUrl : `https://${input.websiteUrl}`;
   const seed = stableHash(`${input.brandName}:${normalizedUrl}:${input.businessEmail}`);
   const htmlContentPromise = fetchHomepageHtml(normalizedUrl);
-  const technicalAuditPromise = withAuditTimeout(
-    runTechnicalAudit(normalizedUrl),
-    90000,
+  const siteCrawlPromise = crawlSite(normalizedUrl, {
+    maxPages: 200,
+    maxDepth: 5,
+    timeoutMs: 4000,
+    overallTimeoutMs: 90000,
+    concurrency: 10,
+    maxSitemapFiles: 100,
+    followInternalLinks: true
+  });
+  const technicalAuditPromise = siteCrawlPromise.then((crawl) => withAuditTimeout(
+    runTechnicalAudit(normalizedUrl, crawl),
+    120000,
     fallbackTechnicalAudit("Technical audit timed out"),
     "Technical audit"
-  );
+  ));
   const geoAeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runGeoAeoAudit(normalizedUrl, html),
-    32000,
+    45000,
     fallbackGeoAeoAudit("GEO / AEO audit timed out"),
     "GEO / AEO audit"
   ));
   const indexabilityAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runIndexabilityAudit(normalizedUrl, html),
-    18000,
+    45000,
     fallbackIndexabilityAudit("Indexability audit timed out"),
     "Indexability audit"
   ));
   const structuredDataAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runStructuredDataAudit(normalizedUrl, html),
-    12000,
+    30000,
     fallbackStructuredDataAudit("Structured data audit timed out"),
     "Structured data audit"
   ));
-  const onPageSeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
-    runOnPageSeoAudit(normalizedUrl, html),
-    12000,
+  const onPageSeoAuditPromise = Promise.all([htmlContentPromise, siteCrawlPromise]).then(([html, crawl]) => withAuditTimeout(
+    runOnPageSeoAudit(normalizedUrl, html, crawl),
+    30000,
     fallbackOnPageSeoAudit("On-Page SEO audit timed out"),
     "On-Page SEO audit"
   ));
-  const imageSeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
-    runImageSeoAudit(normalizedUrl, html),
-    12000,
+  const imageSeoAuditPromise = Promise.all([htmlContentPromise, siteCrawlPromise]).then(([html, crawl]) => withAuditTimeout(
+    runImageSeoAudit(normalizedUrl, html, crawl),
+    30000,
     fallbackImageSeoAudit("Image SEO audit timed out"),
     "Image SEO audit"
   ));
@@ -710,7 +593,15 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     aiSearchVisibility: scoreFromSeed(seed, 16, 12, 70)
   };
 
-  const visibilityScore = calculateScore(technicalAudit.score, geoAeoAudit.score);
+  const technicalAvailable = technicalAudit.checks.length > 0;
+  const geoAvailable = geoAeoAudit.checks.length > 0;
+  const visibilityScore = technicalAvailable && geoAvailable
+    ? calculateScore(technicalAudit.score, geoAeoAudit.score)
+    : technicalAvailable
+      ? technicalAudit.score
+      : geoAvailable
+        ? geoAeoAudit.score
+        : 0;
   const categoryVisibility = clamp((pillars.aiSearchVisibility * 0.6) + (pillars.geoReadiness * 0.2) + (pillars.aeoReadiness * 0.2));
   const breakdown = {
     aiDecisionCoverage: pillars.aiSearchVisibility,

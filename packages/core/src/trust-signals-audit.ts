@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { scoreParameterOutcomes, statusForParameterOutcomes } from "./audit-outcome.js";
 import {
   TechnicalCategoryStatus,
   TrustSignalsAuditResult,
@@ -252,7 +253,7 @@ function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boole
     passed,
     skipped,
     warning,
-    score: skipped ? 0 : passed ? def.weight : warning ? def.weight / 2 : 0,
+    score: skipped ? 0 : passed ? 1 : 0,
     evidence: state.evidence ?? {}
   };
 }
@@ -264,8 +265,8 @@ function summarize(checks: TrustSignalsCheckResult[]): TrustSignalsCategorySumma
     const failed = scorable.filter((check) => !check.passed && !check.warning);
     const warningChecks = scorable.filter((check) => check.warning).length;
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
-    const score = scorable.length ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.weight, 0)) * 100) : 100;
-    const status: TechnicalCategoryStatus = scorable.length === 0 ? "Skipped" : failed.length === 0 && warningChecks === 0 ? "Passed" : failed.length === 0 ? "Minor Attention" : "Needs Attention";
+    const score = scoreParameterOutcomes(categoryChecks);
+    const status: TechnicalCategoryStatus = statusForParameterOutcomes(categoryChecks);
     return {
       categoryName,
       totalChecks: categoryChecks.length,
@@ -439,6 +440,6 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
 
   const categories = summarize(checks);
   const scorable = checks.filter((check) => !check.skipped);
-  const score = scorable.length ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.weight, 0)) * 100) : 100;
+  const score = scoreParameterOutcomes(checks);
   return { score, checkedAt: new Date().toISOString(), categories, checks };
 }

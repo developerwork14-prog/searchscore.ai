@@ -22,10 +22,58 @@ type CategoryLike = {
   skippedChecks?: number;
 };
 type AuditTabId = "technical" | "crawlability" | "structuredData" | "onPageSeo" | "imageSeo" | "eeat" | "trustSignals" | "geo" | "citation" | "gemini" | "indexability";
-type TabInfo = { label: string; categories: CategoryLike[]; checks: CheckLike[]; score: number; issues: number; checkedAt?: string };
+type ActiveSectionId = "overview" | AuditTabId;
+type TabInfo = { label: string; categories: CategoryLike[]; checks: CheckLike[]; score: number; issues: number; available: boolean; checkedAt?: string };
 type IssueImpactCounts = { high: number; medium: number; low: number };
 type IssueTrendPoint = IssueImpactCounts & { label: string };
-type CheckLike = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string; evidence?: unknown; recommendation?: string };
+type RecommendationDetails = {
+  issue?: string;
+  issueSummary?: string;
+  severity?: string;
+  priority?: string;
+  priorityScore?: number;
+  impactLevel?: "Low" | "Medium" | "High";
+  scaleLevel?: "Low" | "Medium" | "High";
+  effortLevel?: "Low" | "Medium" | "High";
+  affectedRate?: number;
+  affectedPages?: string[];
+  affectedAssets?: string[];
+  uniqueAssetsAffected?: number;
+  rootCause?: string[];
+  likelyTemplates?: string[];
+  estimatedFixScope?: {
+    level?: "Asset-level fix" | "Template-level fix" | "Infrastructure-level fix" | "Schema generator fix" | "Manual review";
+    description?: string;
+  };
+  overallAiVisibilityImpact?: {
+    level?: "Low" | "Moderate" | "High";
+    explanation?: string;
+  };
+  whatIsWrong?: string;
+  whyItMatters?: string;
+  businessImpact?: string;
+  aiVisibilityImpact?: string;
+  recommendedFix?: string[];
+  validationSummary?: {
+    pagesCrawled?: number | null;
+    pagesAnalyzed?: number | null;
+    pagesAffected?: number;
+    uniqueAssetsAffected?: number;
+    affectedRate?: number;
+    mostCommonIssue?: string;
+    expectedOutcome?: string;
+  };
+  detectionConfidence?: { score?: number; reason?: string };
+  topFixCandidates?: string[];
+  technicalEvidence?: Record<string, unknown>;
+  whatWeChecked?: string[];
+  rawEvidence?: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
+  howToFix?: string;
+  bestPracticeExample?: string;
+  developerNotes?: string;
+};
+type CheckLike = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string; scope?: string; evidence?: unknown; recommendation?: string | RecommendationDetails; recommendationDetails?: RecommendationDetails };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { name?: string; severity?: string; evidence?: string; recommendation?: string }[];
   skippedCheckDetails?: { name?: string; reason?: string }[];
@@ -59,7 +107,15 @@ function scoreFromCategories(categories: CategoryLike[], fallback = 0) {
 }
 
 function issueCount(categories: CategoryLike[]) {
-  return categories.reduce((sum, category) => sum + category.failedChecks, 0);
+  return categories.reduce((sum, category) => sum + category.failedChecks + (category.warningChecks ?? 0), 0);
+}
+
+function checksRepresentFailedAudit(checks: readonly CheckLike[] | undefined) {
+  if (!checks?.length) return false;
+  return checks.every((check) => {
+    const evidence = evidenceText(check.evidence).toLowerCase();
+    return evidence.includes("fetch failed:") || evidence.includes("audit unavailable") || evidence.includes("audit timed out");
+  });
 }
 
 function mergeIssueCounts(...counts: IssueImpactCounts[]) {
@@ -73,17 +129,30 @@ function mergeIssueCounts(...counts: IssueImpactCounts[]) {
   );
 }
 
-function impactForSeverity(severity = ""): keyof IssueImpactCounts {
-  if (/blocker|critical|high|major/i.test(severity)) return "high";
-  if (/medium|minor/i.test(severity)) return "medium";
-  return "low";
+function impactForFinding(check: Pick<CheckLike, "warning" | "scope" | "evidence">): keyof IssueImpactCounts {
+  if (check.warning) return "low";
+  const evidence = evidenceObject(check.evidence);
+  const pagesChecked = Number(evidence?.pagesChecked);
+  const pagesFailed = Number(evidence?.pagesFailed);
+  if (check.scope === "domain") return "high";
+  if (Number.isFinite(pagesChecked) && Number.isFinite(pagesFailed)) {
+    if (pagesChecked > 0 && pagesFailed === pagesChecked) return "high";
+    if (pagesFailed > 1) return "medium";
+    return "low";
+  }
+  return "medium";
 }
 
 function issuesFromChecks(checks: readonly CheckLike[] | undefined, categories: readonly CategoryLike[] = []) {
+  if (checksRepresentFailedAudit(checks)) return { high: 0, medium: 0, low: 0 };
   if (checks?.length) {
     return checks.reduce<IssueImpactCounts>((counts, check) => {
       if (check.passed || check.skipped) return counts;
-      counts[impactForSeverity(check.severity)] += 1;
+      if (check.warning) {
+        counts.low += 1;
+        return counts;
+      }
+      counts[impactForFinding(check)] += 1;
       return counts;
     }, { high: 0, medium: 0, low: 0 });
   }
@@ -94,9 +163,7 @@ function issuesFromChecks(checks: readonly CheckLike[] | undefined, categories: 
 function issuesFromGeoCategories(categories: readonly GeoIssueCategory[]) {
   return categories.reduce<IssueImpactCounts>((counts, category) => {
     if (category.failedCheckDetails?.length) {
-      for (const detail of category.failedCheckDetails) {
-        counts[impactForSeverity(detail.severity)] += 1;
-      }
+      counts.medium += category.failedCheckDetails.length;
       return counts;
     }
 
@@ -173,7 +240,8 @@ function formatAuditDate(value?: string) {
 }
 
 function tabMeta(label: string, categories: CategoryLike[], checks: CheckLike[] = [], score?: number, checkedAt?: string): TabInfo {
-  return { label, categories, checks, score: clampScore(score), issues: issueCount(categories), checkedAt };
+  const available = categories.some((category) => category.totalChecks > 0) && !checksRepresentFailedAudit(checks);
+  return { label, categories, checks, score: clampScore(score), issues: available ? issueCount(categories) : 0, available, checkedAt };
 }
 
 function statusLabel(score: number) {
@@ -329,20 +397,223 @@ function MiniGauge({ name, sub, score, platform }: { name: string; sub: string; 
   );
 }
 
-type DetailItem = { name: string; meta?: string; fix?: string; evidence?: string };
+type DetailItem = {
+  name: string;
+  meta?: string;
+  severity?: string;
+  priority?: string;
+  priorityScore?: number;
+  impactLevel?: string;
+  scaleLevel?: string;
+  effortLevel?: string;
+  affectedRate?: number;
+  pagesAffected?: number;
+  pagesAnalyzed?: number;
+  uniqueAssetsAffected?: number;
+  rootCause?: string[];
+  likelyTemplates?: string[];
+  estimatedFixScope?: RecommendationDetails["estimatedFixScope"];
+  overallAiVisibilityImpact?: RecommendationDetails["overallAiVisibilityImpact"];
+  summary?: string;
+  issue?: string;
+  whyItMatters?: string;
+  businessImpact?: string;
+  aiVisibilityImpact?: string;
+  fixes?: string[];
+  bestPracticeExample?: string;
+  developerNotes?: string;
+  evidence?: string;
+  evidenceLines?: string[];
+  topFixCandidates?: string[];
+  pages?: string[];
+  images?: string[];
+  confidence?: { score: number; reason: string };
+  representativeImage?: {
+    fileName: string;
+    issue: string;
+    suggestedAlt: string;
+  };
+};
 
 function checksForCategory(tab: TabInfo, category: CategoryLike) {
   return tab.checks.filter((check) => check.category === category.categoryName);
 }
 
+function boundedSummaryLine(value: string) {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length <= 150 ? cleaned : `${cleaned.slice(0, 149).trimEnd()}…`;
+}
+
+function fallbackValidationSummary(value: unknown) {
+  const evidence = evidenceObject(value);
+  const pagesCrawled = Number(evidence?.pagesCrawled);
+  const pagesChecked = Number(evidence?.pagesChecked);
+  const pagesFailed = Number(evidence?.pagesFailed);
+  const rate = Number.isFinite(pagesChecked) && pagesChecked > 0 && Number.isFinite(pagesFailed)
+    ? Math.round((pagesFailed / pagesChecked) * 1000) / 10
+    : 0;
+  return [
+    `Pages crawled: ${Number.isFinite(pagesCrawled) ? pagesCrawled : "Unavailable"}`,
+    `Pages analyzed: ${Number.isFinite(pagesChecked) ? pagesChecked : "Unavailable"}`,
+    `Pages affected: ${Number.isFinite(pagesFailed) ? pagesFailed : "Unavailable"}`,
+    `Affected rate: ${rate}% (${Number.isFinite(pagesFailed) ? pagesFailed : "Unavailable"} of ${Number.isFinite(pagesChecked) ? pagesChecked : "Unavailable"} pages)`,
+    "Most common issue: Detailed pattern data is retained in technical evidence.",
+    "Expected outcome: The affected parameter passes consistently across analyzed pages."
+  ].map(boundedSummaryLine);
+}
+
+function sentenceSteps(value: string) {
+  return value.split(/(?<=[.!?])\s+/).map((step) => step.trim()).filter(Boolean).slice(0, 3);
+}
+
+function genericBusinessImpact(name: string) {
+  const text = name.toLowerCase();
+  if (/crawl|robots|sitemap|index|canonical|redirect/.test(text)) return "The issue can restrict crawlability or indexation, suppress rankings, and reduce qualified organic traffic.";
+  if (/speed|lcp|inp|performance|image/.test(text)) return "The issue can weaken user experience, engagement, conversion rates, and search visibility.";
+  if (/trust|review|author|contact|schema|structured/.test(text)) return "The issue can reduce search-engine confidence, user trust, rich-result eligibility, and conversion performance.";
+  return "The issue can weaken rankings, traffic quality, user experience, and the likelihood that visitors complete a valuable action.";
+}
+
+function genericAiImpact(name: string) {
+  const text = name.toLowerCase();
+  if (/crawl|robots|index|noindex|javascript|render/.test(text)) return "ChatGPT, Gemini, and Google AI Overviews may be unable to retrieve or reliably interpret the affected content.";
+  if (/schema|entity|author|trust|citation|breadcrumb|heading|content/.test(text)) return "AI answer engines may have lower confidence in the page’s entities, structure, or claims, reducing its likelihood of being summarized or cited.";
+  return "AI answer engines may interpret the page with less confidence, which can reduce inclusion, summarization, and citation potential.";
+}
+
+function priorityFromCheck(check: CheckLike) {
+  if (check.warning) return "Low";
+  const severity = (check.severity ?? "").toLowerCase();
+  if (severity === "critical" || severity === "high" || impactForFinding(check) === "high") return "High";
+  if (severity === "low") return "Low";
+  return "Medium";
+}
+
+function affectedRateFromEvidence(value: unknown) {
+  const evidence = evidenceObject(value);
+  const analyzed = Number(evidence?.pagesChecked);
+  const affected = Number(evidence?.pagesFailed);
+  return Number.isFinite(analyzed) && analyzed > 0 && Number.isFinite(affected)
+    ? Math.round((affected / analyzed) * 1000) / 10
+    : 0;
+}
+
+function pageCountsFromEvidence(value: unknown) {
+  const evidence = evidenceObject(value);
+  const pagesAnalyzed = Number(evidence?.pagesChecked);
+  const pagesAffected = Number(evidence?.pagesFailed);
+  return {
+    pagesAnalyzed: Number.isFinite(pagesAnalyzed) ? pagesAnalyzed : undefined,
+    pagesAffected: Number.isFinite(pagesAffected) ? pagesAffected : undefined
+  };
+}
+
+function imageFileName(value: string) {
+  try {
+    return decodeURIComponent(new URL(value, "https://example.com").pathname.split("/").filter(Boolean).at(-1) || "Image");
+  } catch {
+    return value.split(/[?#]/)[0].split("/").filter(Boolean).at(-1) || "Image";
+  }
+}
+
+function representativeImageFromEvidence(value: unknown): DetailItem["representativeImage"] {
+  const visit = (input: unknown, depth = 0): DetailItem["representativeImage"] => {
+    if (!input || depth > 5) return undefined;
+    if (typeof input === "string") {
+      try {
+        return visit(JSON.parse(input), depth + 1);
+      } catch {
+        return undefined;
+      }
+    }
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        const found = visit(item, depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (typeof input !== "object") return undefined;
+    const record = input as Record<string, unknown>;
+    const imageUrl = typeof record.imageUrl === "string" ? record.imageUrl : "";
+    const suggestedAlt = typeof record.suggestedAlt === "string" ? record.suggestedAlt.trim() : "";
+    const issue = typeof record.issue === "string"
+      ? record.issue
+      : record.alt === ""
+        ? "Missing or empty alt text"
+        : "";
+    const wordCount = suggestedAlt.split(/\s+/).filter(Boolean).length;
+    if (imageUrl && issue && wordCount >= 5 && wordCount <= 15) {
+      return { fileName: imageFileName(imageUrl), issue, suggestedAlt };
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child, depth + 1);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(value);
+}
+
 function evidenceText(value: unknown) {
   if (!value) return "";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const summary = (parsed as Record<string, unknown>).summary;
+          if (typeof summary === "string" && summary.trim()) return summary;
+          const record = parsed as Record<string, unknown>;
+          if (Number.isFinite(Number(record.pagesCrawled)) && Number.isFinite(Number(record.pagesChecked))) {
+            return evidenceText(parsed);
+          }
+        }
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const summary = record.summary;
+    if (typeof summary === "string" && summary.trim()) return summary;
+    const pagesCrawled = Number(record.pagesCrawled);
+    const pagesChecked = Number(record.pagesChecked);
+    const pagesPassed = Number(record.pagesPassed);
+    const pagesFailed = Number(record.pagesFailed);
+    const passRate = Number(record.passRate);
+    if ([pagesCrawled, pagesChecked, pagesPassed, pagesFailed, passRate].every(Number.isFinite)) {
+      const scope = record.scope === "domain-level"
+        ? "Domain-level check"
+        : record.scope === "homepage-only"
+          ? "Homepage-only check"
+          : "Page-level site-wide check";
+      return `${scope}. Crawled ${pagesCrawled} pages; checked ${pagesChecked}; ${pagesPassed} passed and ${pagesFailed} failed (${passRate}% pass rate).`;
+    }
+  }
   try {
     return JSON.stringify(value);
   } catch {
     return "";
+  }
+}
+
+function evidenceObject(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -354,6 +625,77 @@ function skippedReasonText(check: CheckLike) {
     if (typeof reason === "string" && reason.trim()) return reason;
   }
   return evidenceText(evidence);
+}
+
+function pushUniqueUrl(urls: string[], value: unknown) {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return;
+  const normalized = trimmed.replace(/[),.;\]]+$/, "");
+  if (!urls.includes(normalized)) urls.push(normalized);
+}
+
+function urlsFromEvidenceKeys(value: unknown, keys: string[]) {
+  const urls: string[] = [];
+  const wanted = new Set(keys);
+  const visit = (input: unknown, depth = 0) => {
+    if (urls.length >= 6 || depth > 4 || input == null) return;
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+        try {
+          visit(JSON.parse(trimmed), depth + 1);
+          return;
+        } catch {
+          // Fall through to URL extraction for plain evidence strings.
+        }
+      }
+      for (const match of input.matchAll(/https?:\/\/[^\s"',<>)\]]+/gi)) pushUniqueUrl(urls, match[0]);
+      return;
+    }
+    if (Array.isArray(input)) {
+      for (const item of input) visit(item, depth + 1);
+      return;
+    }
+    if (typeof input === "object") {
+      const record = input as Record<string, unknown>;
+      for (const [key, child] of Object.entries(record)) {
+        if (wanted.has(key)) visit(child, depth + 1);
+        else if (Array.isArray(child)) child.forEach((item) => {
+          if (item && typeof item === "object") visit(item, depth + 1);
+        });
+      }
+    }
+  };
+
+  visit(value);
+  return urls.slice(0, 6);
+}
+
+function affectedPagesFromEvidence(value: unknown) {
+  const structured: string[] = [];
+  const parsed = (() => {
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  })();
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const affected = (parsed as Record<string, unknown>).affectedPages;
+    if (Array.isArray(affected)) {
+      affected.forEach((item) => {
+        if (item && typeof item === "object") pushUniqueUrl(structured, (item as Record<string, unknown>).url);
+        else pushUniqueUrl(structured, item);
+      });
+    }
+  }
+  return structured.length ? structured.slice(0, 6) : urlsFromEvidenceKeys(value, ["page", "pageUrl", "pageUrls", "sampleUrl", "sampleUrls", "affectedPages", "affectedUrls", "failedUrls", "noindexedUrls", "sourcePage"]);
+}
+
+function affectedImagesFromEvidence(value: unknown) {
+  return urlsFromEvidenceKeys(value, ["image", "imageUrl", "imageUrls", "src", "missingAlt", "missingAltImages", "sampleImages", "nonDescriptive", "unstableUrls"]);
 }
 
 function fixForIssue(name: string, categoryName: string, evidence = "") {
@@ -517,25 +859,81 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
     .filter((check) => !check.skipped && check.passed === false)
     .map((check) => {
       const evidence = evidenceText(check.evidence);
+      const recommendationDetails = typeof check.recommendation === "object"
+        ? check.recommendation
+        : check.recommendationDetails;
+      const legacyRecommendation = typeof check.recommendation === "string"
+        ? check.recommendation
+        : undefined;
+      const fallbackFix = legacyRecommendation || fixForIssue(check.name || "this check", check.category || category.categoryName, evidence);
+      const pages = recommendationDetails?.affectedPages?.length ? recommendationDetails.affectedPages : affectedPagesFromEvidence(check.evidence ?? evidence);
+      const images = recommendationDetails?.affectedAssets?.length
+        ? recommendationDetails.affectedAssets
+        : affectedImagesFromEvidence(check.evidence ?? evidence);
+      const confidence = recommendationDetails?.detectionConfidence?.score !== undefined
+        && recommendationDetails.detectionConfidence.reason
+        ? { score: recommendationDetails.detectionConfidence.score, reason: recommendationDetails.detectionConfidence.reason }
+        : undefined;
+      const pageCounts = pageCountsFromEvidence(check.evidence);
       return {
         name: check.name || "Unnamed issue",
-        meta: check.warning ? "Warning" : check.severity,
-        fix: check.recommendation || fixForIssue(check.name || "this check", check.category || category.categoryName, evidence),
-        evidence
+        meta: check.warning ? "Warning" : "Issue",
+        severity: recommendationDetails?.severity || check.severity || (check.warning ? "Low" : "Medium"),
+        priority: recommendationDetails?.priority || priorityFromCheck(check),
+        priorityScore: recommendationDetails?.priorityScore,
+        impactLevel: recommendationDetails?.impactLevel,
+        scaleLevel: recommendationDetails?.scaleLevel,
+        effortLevel: recommendationDetails?.effortLevel,
+        affectedRate: recommendationDetails?.affectedRate ?? affectedRateFromEvidence(check.evidence),
+        pagesAffected: recommendationDetails?.validationSummary?.pagesAffected ?? pageCounts.pagesAffected,
+        pagesAnalyzed: recommendationDetails?.validationSummary?.pagesAnalyzed ?? pageCounts.pagesAnalyzed,
+        uniqueAssetsAffected: recommendationDetails?.uniqueAssetsAffected,
+        rootCause: recommendationDetails?.rootCause,
+        likelyTemplates: recommendationDetails?.likelyTemplates,
+        estimatedFixScope: recommendationDetails?.estimatedFixScope,
+        overallAiVisibilityImpact: recommendationDetails?.overallAiVisibilityImpact,
+        summary: recommendationDetails?.issueSummary || `${check.name || "The audited parameter"} requires corrective action.`,
+        issue: recommendationDetails?.whatIsWrong || recommendationDetails?.issue || `The ${check.name || "audited parameter"} check failed on one or more analyzed pages.`,
+        whyItMatters: recommendationDetails?.whyItMatters,
+        businessImpact: recommendationDetails?.businessImpact || genericBusinessImpact(check.name || ""),
+        aiVisibilityImpact: recommendationDetails?.aiVisibilityImpact || genericAiImpact(check.name || ""),
+        fixes: recommendationDetails?.recommendedFix?.slice(0, 3) || sentenceSteps(recommendationDetails?.howToFix || fallbackFix),
+        bestPracticeExample: recommendationDetails?.bestPracticeExample,
+        developerNotes: recommendationDetails?.developerNotes,
+        evidence: undefined,
+        evidenceLines: (recommendationDetails?.whatWeChecked?.length
+          ? recommendationDetails.whatWeChecked
+          : fallbackValidationSummary(check.evidence)).slice(0, 7).map(boundedSummaryLine),
+        topFixCandidates: (recommendationDetails?.topFixCandidates?.length ? recommendationDetails.topFixCandidates : pages).slice(0, 3),
+        pages,
+        images,
+        confidence,
+        representativeImage: representativeImageFromEvidence(check.evidence)
       };
     });
   const detailItems = checks.length ? [] : ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
       name: detail.name || "Unnamed issue",
-      meta: detail.severity,
-      fix: detail.recommendation,
-      evidence: detail.evidence
+      meta: "Issue",
+      severity: detail.severity || "Medium",
+      priority: detail.severity === "High" || detail.severity === "Critical" ? "High" : "Medium",
+      affectedRate: 0,
+      summary: `${detail.name || "The audited parameter"} requires corrective action.`,
+      issue: detail.name || "The audited parameter failed.",
+      businessImpact: genericBusinessImpact(detail.name || ""),
+      aiVisibilityImpact: genericAiImpact(detail.name || ""),
+      fixes: detail.recommendation ? sentenceSteps(detail.recommendation) : [],
+      evidence: undefined,
+      evidenceLines: fallbackValidationSummary(detail.evidence),
+      topFixCandidates: affectedPagesFromEvidence(detail.evidence).slice(0, 3),
+      pages: affectedPagesFromEvidence(detail.evidence),
+      images: affectedImagesFromEvidence(detail.evidence)
     }));
 
   const seen = new Map<string, DetailItem>();
   for (const item of [...detailItems, ...checkItems]) {
     const key = `${item.name}-${item.meta ?? ""}`;
     const existing = seen.get(key);
-    if (!existing || (!existing.fix && item.fix)) seen.set(key, item);
+    if (!existing || (!existing.fixes?.length && item.fixes?.length)) seen.set(key, item);
   }
   return [...seen.values()];
 }
@@ -543,7 +941,7 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
 function passedItemsFor(checks: CheckLike[]): DetailItem[] {
   return checks
     .filter((check) => !check.skipped && check.passed && !check.warning)
-    .map((check) => ({ name: check.name || "Unnamed passed check", meta: check.severity }));
+    .map((check) => ({ name: check.name || "Unnamed passed check", meta: "Passed" }));
 }
 
 function skippedItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
@@ -605,9 +1003,93 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                   <li key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
                     <b>!</b>
                     <span>
-                      <strong>{issue.name}</strong>
-                      {issue.fix ? <small><i>How to fix</i>{issue.fix}</small> : null}
-                      {issue.evidence ? <small className={styles.evidenceText}><i>What we checked</i>{issue.evidence}</small> : null}
+                      <strong><i className={styles.fieldLabel}>Issue Summary</i>{issue.summary || issue.name}</strong>
+                      <small className={styles.findingMeta}>
+                        <span><i>Severity</i>{issue.severity ?? "Medium"}</span>
+                        <span><i>Priority Score</i>{issue.priorityScore !== undefined ? `${issue.priorityScore}/100` : issue.priority ?? "Medium"}</span>
+                        <span>
+                          <i>Affected Rate</i>
+                          {issue.affectedRate ?? 0}%
+                          {issue.pagesAffected !== undefined && issue.pagesAnalyzed !== undefined
+                            ? <small>{issue.pagesAffected} of {issue.pagesAnalyzed} pages</small>
+                            : null}
+                        </span>
+                        {issue.uniqueAssetsAffected !== undefined ? <span><i>Unique Assets</i>{issue.uniqueAssetsAffected}</span> : null}
+                      </small>
+                      {issue.issue ? <small><i>What is wrong</i>{issue.issue}</small> : null}
+                      {issue.pages?.length ? (
+                        <small className={styles.affectedPages}>
+                          <i>Affected Pages</i>
+                          {issue.pages.slice(0, 3).map((page) => <a key={page} href={page} target="_blank" rel="noreferrer">{page}</a>)}
+                        </small>
+                      ) : null}
+                      {issue.images?.length ? (
+                        <small className={styles.affectedPages}>
+                          <i>Affected Assets</i>
+                          {issue.images.slice(0, 5).map((image) => <span key={image}>{imageFileName(image)}</span>)}
+                        </small>
+                      ) : null}
+                      {issue.impactLevel && issue.scaleLevel && issue.effortLevel ? (
+                        <small><i>Prioritization</i>Impact: {issue.impactLevel} · Scale: {issue.scaleLevel} · Effort: {issue.effortLevel}</small>
+                      ) : null}
+                      {issue.rootCause?.length ? (
+                        <small className={styles.evidenceText}><i>Root Cause</i><ul>{issue.rootCause.map((cause) => <li key={cause}>{cause}</li>)}</ul></small>
+                      ) : null}
+                      {issue.likelyTemplates?.length ? (
+                        <small className={styles.evidenceText}><i>Likely Templates</i><ul>{issue.likelyTemplates.map((template) => <li key={template}>{template}</li>)}</ul></small>
+                      ) : null}
+                      {issue.estimatedFixScope?.level && issue.estimatedFixScope.description ? (
+                        <small><i>Estimated Fix Scope</i><strong>{issue.estimatedFixScope.level}</strong>{issue.estimatedFixScope.description}</small>
+                      ) : null}
+                      <small><i>Why it matters</i>{issue.whyItMatters || issue.businessImpact}</small>
+                      {issue.businessImpact ? <small><i>Business Impact</i>{issue.businessImpact}</small> : null}
+                      {issue.overallAiVisibilityImpact ? (
+                        <small className={styles.platformImpact}>
+                          <i>Overall AI Visibility Impact</i>
+                          <strong>{issue.overallAiVisibilityImpact.level}</strong>
+                          {issue.overallAiVisibilityImpact.explanation ? <em>{issue.overallAiVisibilityImpact.explanation}</em> : null}
+                        </small>
+                      ) : issue.aiVisibilityImpact ? <small><i>Overall AI Visibility Impact</i>{issue.aiVisibilityImpact}</small> : null}
+                      {issue.fixes?.length ? (
+                        <small className={styles.actionSteps}>
+                          <i>Recommended Fix</i>
+                          <ol>{issue.fixes.map((step) => <li key={step}>{step}</li>)}</ol>
+                        </small>
+                      ) : null}
+                      {issue.developerNotes ? <small><i>Implementation Guide</i>{issue.developerNotes}</small> : null}
+                      {issue.evidenceLines?.length ? (
+                        <small className={styles.evidenceText}>
+                          <i>Validation Summary</i>
+                          <ul>{issue.evidenceLines.map((line) => <li key={line}>{line}</li>)}</ul>
+                        </small>
+                      ) : issue.evidence ? <small className={styles.evidenceText}><i>Validation Summary</i>{issue.evidence}</small> : null}
+                      {issue.representativeImage ? (
+                        <small className={styles.representativeExample}>
+                          <i>Representative example</i>
+                          <dl>
+                            <div><dt>Image</dt><dd>{issue.representativeImage.fileName}</dd></div>
+                            <div><dt>Issue</dt><dd>{issue.representativeImage.issue}</dd></div>
+                            <div><dt>Suggested alt</dt><dd>“{issue.representativeImage.suggestedAlt}”</dd></div>
+                          </dl>
+                        </small>
+                      ) : null}
+                      {issue.confidence ? <small><i>Detection Confidence</i>{issue.confidence.score}% — {issue.confidence.reason}</small> : null}
+                      {issue.topFixCandidates?.length ? (
+                        <small className={styles.affectedPages}>
+                          <i>Top Fix Candidates</i>
+                          {issue.topFixCandidates.map((candidate) => /^https?:\/\//i.test(candidate)
+                            ? <a key={candidate} href={candidate} target="_blank" rel="noreferrer">{candidate}</a>
+                            : <span key={candidate}>{candidate}</span>)}
+                        </small>
+                      ) : null}
+                      {(issue.pages?.length || issue.images?.length || issue.bestPracticeExample) ? (
+                        <details className={styles.technicalEvidence}>
+                          <summary>Technical evidence and implementation notes</summary>
+                          {issue.pages?.length ? <small className={styles.affectedPages}><i>Affected Pages</i>{issue.pages.map((page) => <a key={page} href={page} target="_blank" rel="noreferrer">{page}</a>)}</small> : null}
+                          {issue.images?.length ? <small className={styles.affectedPages}><i>Affected Assets</i>{issue.images.map((image) => /^https?:\/\//i.test(image) ? <a key={image} href={image} target="_blank" rel="noreferrer">{imageFileName(image)}</a> : <span key={image}>{image}</span>)}</small> : null}
+                          {issue.bestPracticeExample ? <small><i>Best-practice example</i><code>{issue.bestPracticeExample}</code></small> : null}
+                        </details>
+                      ) : null}
                     </span>
                     {issue.meta ? <em>{issue.meta}</em> : null}
                   </li>
@@ -655,12 +1137,83 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   );
 }
 
+function AuditDetailPanel({ tab }: { tab: TabInfo }) {
+  if (!tab.available) {
+    return (
+      <section className={styles.auditPanel}>
+        <div className={styles.auditHero}>
+          <div>
+            <p>Audit workspace</p>
+            <h2>{tab.label}</h2>
+            <span>This audit did not complete. Its unavailable result is excluded from scoring.</span>
+          </div>
+          <div className={styles.auditHeroScore}>
+            <strong>N/A</strong>
+            <span>Audit unavailable</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  const failedCategories = tab.categories.filter((category) => category.status !== "Skipped" && (category.failedChecks > 0 || (category.warningChecks ?? 0) > 0));
+  const skippedCategories = tab.categories.filter((category) => category.status === "Skipped" || category.skippedChecks === category.totalChecks);
+  const passedCategories = tab.categories.filter((category) => category.status !== "Skipped" && category.failedChecks === 0 && (category.warningChecks ?? 0) === 0);
+  const highPriorityIssues = tab.checks.filter((check) => !check.passed && !check.skipped && impactForFinding(check) === "high").length;
+
+  return (
+    <section className={styles.auditPanel}>
+      <div className={styles.auditHero}>
+        <div>
+          <p>Audit workspace</p>
+          <h2>{tab.label}</h2>
+          <span>Review the parameters, affected page evidence, and recommended fixes for this audit area.</span>
+        </div>
+        <div className={styles.auditHeroScore}>
+          <strong>{tab.score}%</strong>
+          <span>{tab.issues} open issues</span>
+        </div>
+      </div>
+
+      <div className={styles.auditSummaryGrid}>
+        <article className={styles.card}>
+          <span>Needs work</span>
+          <strong>{failedCategories.length}</strong>
+          <p>Categories with actionable issues.</p>
+        </article>
+        <article className={styles.card}>
+          <span>High priority</span>
+          <strong>{highPriorityIssues}</strong>
+          <p>Issues affecting the whole domain or every checked page.</p>
+        </article>
+        <article className={styles.card}>
+          <span>Healthy</span>
+          <strong>{passedCategories.length}</strong>
+          <p>Categories passing current checks.</p>
+        </article>
+        <article className={styles.card}>
+          <span>Not applicable</span>
+          <strong>{skippedCategories.length}</strong>
+          <p>Skipped because this page/site type does not match.</p>
+        </article>
+      </div>
+
+      <div className={styles.sectionHead}>
+        <h2>{tab.label} parameters</h2>
+        <p>{tab.categories.length} check groups · last checked {formatAuditDate(tab.checkedAt)}</p>
+      </div>
+      <div className={styles.auditList}>
+        {tab.categories.length ? tab.categories.map((category) => <AuditRow key={category.categoryName} category={category} tab={tab} />) : <article className={`${styles.card} ${styles.auditEmpty}`}><h3>No categories available</h3><p>This audit section did not return category data.</p></article>}
+      </div>
+    </section>
+  );
+}
+
 export default function ReportPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [report, setReport] = useState<StructuredAiVisibilityReport | null>(null);
   const [error, setError] = useState("");
-  const [active, setActive] = useState<AuditTabId>("technical");
+  const [active, setActive] = useState<ActiveSectionId>("overview");
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
   const [insightsStatus, setInsightsStatus] = useState<"idle" | "submitting" | "subscribed">("idle");
   const [insightsError, setInsightsError] = useState("");
@@ -691,11 +1244,10 @@ export default function ReportPage() {
       gemini: tabMeta("Gemini Citation", gemini, geoChecks, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
       indexability: tabMeta("Indexability", report.indexability_audit?.categories ?? [], report.indexability_audit?.checks ?? [], report.indexability_audit?.score, report.indexability_audit?.checked_at)
     };
-    const scores = [
-      tabs.onPageSeo.score, tabs.imageSeo.score, tabs.eeat.score, tabs.trustSignals.score, tabs.geo.score,
-      tabs.citation.score, tabs.gemini.score, tabs.indexability.score, tabs.structuredData.score, tabs.technical.score
-    ];
-    const aiVisibilityScore = clampScore(report.overall_score || scores.reduce((sum, score) => sum + score, 0) / scores.length);
+    const primaryTabs = [tabs.technical, tabs.structuredData, tabs.onPageSeo, tabs.imageSeo, tabs.eeat, tabs.trustSignals, tabs.geo, tabs.indexability];
+    const availableScores = primaryTabs.filter((tab) => tab.available).map((tab) => tab.score);
+    const fallbackVisibilityScore = availableScores.length ? availableScores.reduce((sum, score) => sum + score, 0) / availableScores.length : 0;
+    const aiVisibilityScore = clampScore(tabs.technical.available && tabs.geo.available && report.overall_score ? report.overall_score : fallbackVisibilityScore);
     const issueCounts = mergeIssueCounts(
       issuesFromChecks(report.technical_audit?.checks, technical),
       issuesFromGeoCategories(geoAll as GeoIssueCategory[]),
@@ -709,12 +1261,12 @@ export default function ReportPage() {
     const tabList = Object.values(tabs);
     const openIssues = issueCounts.high + issueCounts.medium + issueCounts.low;
     const priority = tabList
-      .filter((tab) => tab.categories.length > 0)
+      .filter((tab) => tab.available && tab.categories.length > 0)
       .sort((a, b) => a.score - b.score || b.issues - a.issues)[0] ?? tabs.technical;
     const nextPriority = tabList
-      .filter((tab) => tab.label !== priority.label && tab.categories.length > 0)
+      .filter((tab) => tab.available && tab.label !== priority.label && tab.categories.length > 0)
       .sort((a, b) => a.score - b.score || b.issues - a.issues)[0];
-    const auditScores = tabList.map((tab) => tab.score);
+    const auditScores = tabList.filter((tab) => tab.available).map((tab) => tab.score);
     const issueTrend = buildIssueTrend(issueCounts, aiVisibilityScore);
     const lastAuditedAt = report.created_at ?? tabList.map((tab) => tab.checkedAt).find(Boolean);
     return { tabs, aiVisibilityScore, issueCounts, issueTrend, openIssues, priority, nextPriority, auditScores, lastAuditedAt };
@@ -729,15 +1281,17 @@ export default function ReportPage() {
   }
 
   const { tabs, aiVisibilityScore, issueCounts, issueTrend, openIssues, priority, nextPriority, auditScores, lastAuditedAt } = derived;
-  const activeTab = tabs[active];
+  const auditNav = Object.keys(tabs) as AuditTabId[];
+  const activeAuditTab = active === "overview" ? null : tabs[active];
   const priorityIssues = priorityIssueGroups(priority);
   const pdfExportUrl = `${API_BASE}/api/reports/${params.id}/export/pdf`;
   const reviewPriority = () => {
-    setActive((Object.keys(tabs) as AuditTabId[]).find((tab) => tabs[tab].label === priority.label) ?? "technical");
-    requestAnimationFrame(() => document.getElementById("audit-categories")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    setActive(auditNav.find((tab) => tabs[tab].label === priority.label) ?? "technical");
+    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
   };
   const goToFullReport = () => {
-    document.getElementById("full-report")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setActive("overview");
+    requestAnimationFrame(() => document.getElementById("full-report")?.scrollIntoView({ behavior: "smooth", block: "center" }));
   };
   const subscribeToInsights = async () => {
     if (insightsStatus !== "idle") return;
@@ -793,6 +1347,24 @@ export default function ReportPage() {
           <div><a href={report.url} target="_blank">{report.url}</a><span>·</span><span className={styles.liveDot} />Last audited: {formatAuditDate(lastAuditedAt)}</div>
         </section>
 
+        <div className={styles.dashboardShell}>
+          <aside className={styles.sideNav} aria-label="Report sections">
+            <button type="button" className={active === "overview" ? styles.navActive : ""} onClick={() => setActive("overview")}>
+              <span>Overview</span>
+              <b>{aiVisibilityScore}%</b>
+            </button>
+            {auditNav.map((tab) => (
+              <button key={tab} type="button" className={active === tab ? styles.navActive : ""} onClick={() => setActive(tab)}>
+                <span>{tabs[tab].label}</span>
+                <small>{tabs[tab].issues} issues</small>
+                <b>{tabs[tab].available ? `${tabs[tab].score}%` : "N/A"}</b>
+              </button>
+            ))}
+          </aside>
+
+          <div className={styles.dashboardMain}>
+            {active === "overview" ? (
+              <>
         <section className={styles.kpiGrid}>
           {kpis.map((kpi) => (
             <article className={`${styles.card} ${styles.kpi}`} key={kpi.label}>
@@ -871,16 +1443,6 @@ export default function ReportPage() {
           </div>
         </section>
 
-        <section id="audit-categories">
-          <div className={styles.sectionHead}><h2>Audit Categories</h2><p>{activeTab.categories.length} check groups in {activeTab.label}</p></div>
-          <div className={styles.tabs}>
-            {(Object.keys(tabs) as AuditTabId[]).map((tab) => <button key={tab} type="button" className={tab === active ? styles.activeTab : ""} onClick={() => setActive(tab)}>{tabs[tab].label}</button>)}
-          </div>
-          <div className={styles.auditList}>
-            {activeTab.categories.length ? activeTab.categories.map((category) => <AuditRow key={category.categoryName} category={category} tab={activeTab} />) : <article className={`${styles.card} ${styles.auditEmpty}`}><h3>No categories available</h3><p>This audit section did not return category data.</p></article>}
-          </div>
-        </section>
-
         <section className={styles.insightsBanner}>
           <p>Want expert insights on your AI visibility? Get tailored recommendations every two weeks.</p>
           <button type="button" onClick={subscribeToInsights} disabled={insightsStatus !== "idle"}>
@@ -917,12 +1479,18 @@ export default function ReportPage() {
           <em>⚡ Limited onboarding slots available</em>
           <button className={styles.blackButton} type="button" onClick={() => setIsCallModalOpen(true)}>Get My AI Visibility Strategy</button>
         </section>
+              </>
+            ) : activeAuditTab ? (
+              <AuditDetailPanel tab={activeAuditTab} />
+            ) : null}
 
         <footer className={styles.footer}>
           <p>Run another audit - generate a fresh visibility report.</p>
           <button className={styles.secondary} onClick={() => router.push("/")}>Generate New Report</button>
         </footer>
         <p className={styles.copyright}>© 2026 GLOMAUDIT Pvt. Ltd. All Rights Reserved.</p>
+          </div>
+        </div>
       </div>
       <CallbackModal isOpen={isCallModalOpen} onClose={() => setIsCallModalOpen(false)} />
     </main>

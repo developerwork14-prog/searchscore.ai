@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/viewport-meta.test.mjs && node test/sitemap-crawler.test.mjs && node test/security-https.test.mjs && node test/trust-signals.test.mjs"
+    "test": "npm run build && node test/audit-outcome.test.mjs && node test/on-page-seo.test.mjs && node test/image-seo.test.mjs && node test/viewport-meta.test.mjs && node test/sitemap-crawler.test.mjs && node test/security-https.test.mjs && node test/trust-signals.test.mjs"
   },
   "dependencies": {
     "cheerio": "^1.2.0"

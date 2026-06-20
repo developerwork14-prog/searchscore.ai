@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { scoreParameterOutcomes, statusForParameterOutcomes } from "./audit-outcome.js";
 import { fetchSitemapUrls } from "./site-crawler.js";
 
 export type IndexabilitySeverity = "Critical" | "High" | "Medium" | "Low";
@@ -308,17 +309,8 @@ function categorySummaries(checks: IndexabilityCheckResult[]): IndexabilityCateg
     const failed = scorable.filter((check) => !check.passed && !check.warning);
     const warnings = scorable.filter((check) => check.warning);
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
-    const score = scorable.length ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.maxScore, 0)) * 100) : 0;
-    let status: IndexabilityStatus = "Passed";
-    if (scorable.length === 0 && skippedChecks > 0) {
-      status = "Skipped";
-    } else if (failed.length === 0 && warnings.length > 0) {
-      status = "Minor Attention";
-    } else if (failed.some((check) => check.severity === "Critical" || check.severity === "High")) {
-      status = "Needs Attention";
-    } else if (failed.length > 0) {
-      status = "Minor Attention";
-    }
+    const score = scoreParameterOutcomes(categoryChecks, 0);
+    const status: IndexabilityStatus = statusForParameterOutcomes(categoryChecks);
     return {
       categoryName,
       totalChecks: categoryChecks.length,
@@ -338,7 +330,7 @@ function resultFor(id: number, evidence: Record<string, unknown>): IndexabilityC
   const skipped = Boolean(evidence.skipped);
   const passed = skipped ? true : Boolean(evidence.pass);
   const warning = !skipped && !passed && Boolean(evidence.warning);
-  return { ...definition, passed, skipped, warning: warning || undefined, score: skipped ? 0 : passed ? definition.maxScore : warning ? definition.maxScore / 2 : 0, evidence };
+  return { ...definition, passed, skipped, warning: warning || undefined, score: skipped ? 0 : passed ? 1 : 0, evidence };
 }
 
 export async function runIndexabilityAudit(inputUrl: string, html?: string): Promise<IndexabilityAuditResult> {
@@ -399,6 +391,6 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
   ];
   const categories = categorySummaries(checks);
   const scorable = checks.filter((check) => !check.skipped);
-  const score = scorable.length ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.maxScore, 0)) * 100) : 0;
+  const score = scoreParameterOutcomes(checks, 0);
   return { score, checkedAt: new Date().toISOString(), categories, checks };
 }

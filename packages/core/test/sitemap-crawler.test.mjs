@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { fetchSitemapUrls } from "../dist/site-crawler.js";
+import { crawlSite, fetchSitemapUrls } from "../dist/site-crawler.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -53,6 +53,20 @@ try {
   const limited = await fetchSitemapUrls("https://example.com", 1000, 1);
   assert.deepEqual(limited.urls, []);
   assert.equal(limited.summary.sitemapsFound, 1);
+
+  globalThis.fetch = async (_url, init = {}) => new Promise((_, reject) => {
+    init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  });
+  const started = Date.now();
+  const bounded = await crawlSite("https://slow.example.com", {
+    maxPages: 200,
+    timeoutMs: 1000,
+    overallTimeoutMs: 40,
+    maxSitemapFiles: 100,
+    followInternalLinks: true
+  });
+  assert.ok(Date.now() - started < 500);
+  assert.equal(bounded.pages.length, 0);
 
   console.log("sitemap crawler tests passed");
 } finally {

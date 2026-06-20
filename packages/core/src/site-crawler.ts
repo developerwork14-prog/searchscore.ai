@@ -49,6 +49,7 @@ interface CrawlOptions {
   maxPages?: number;
   maxDepth?: number;
   timeoutMs?: number;
+  overallTimeoutMs?: number;
   concurrency?: number;
   maxSitemapFiles?: number;
   followInternalLinks?: boolean;
@@ -222,13 +223,15 @@ async function urlsFromSitemapFile(
   sitemapUrl: string,
   timeoutMs: number,
   state: { remaining: number; found: number; failed: number; discovered: number; seenSitemaps: Set<string> },
-  depth = 0
+  depth = 0,
+  deadlineAt = Number.POSITIVE_INFINITY
 ): Promise<string[]> {
   const normalizedSitemapUrl = canonicalize(sitemapUrl);
-  if (state.remaining <= 0 || depth > 6 || !normalizedSitemapUrl || state.seenSitemaps.has(normalizedSitemapUrl)) return [];
+  if (Date.now() >= deadlineAt || state.remaining <= 0 || depth > 6 || !normalizedSitemapUrl || state.seenSitemaps.has(normalizedSitemapUrl)) return [];
   state.seenSitemaps.add(normalizedSitemapUrl);
   state.remaining -= 1;
-  const fetched = await fetchSitemapText(sitemapUrl, timeoutMs);
+  const remainingMs = Math.max(1, deadlineAt - Date.now());
+  const fetched = await fetchSitemapText(sitemapUrl, Math.min(timeoutMs, remainingMs));
   if (!fetched.ok || !fetched.text || isLikelyHtml(fetched.text)) {
     state.failed += 1;
     return [];
@@ -249,16 +252,23 @@ async function urlsFromSitemapFile(
   state.discovered += locs.length;
   const urls: string[] = [];
   for (const child of locs) {
-    const nested = await urlsFromSitemapFile(child, timeoutMs, state, depth + 1);
+    if (Date.now() >= deadlineAt) break;
+    const nested = await urlsFromSitemapFile(child, timeoutMs, state, depth + 1, deadlineAt);
     urls.push(...nested);
     if (state.remaining <= 0) break;
   }
   return urls;
 }
 
-export async function fetchSitemapUrls(origin: string, timeoutMs: number, maxSitemapFiles: number): Promise<SitemapFetchResult> {
+export async function fetchSitemapUrls(
+  origin: string,
+  timeoutMs: number,
+  maxSitemapFiles: number,
+  deadlineAt = Number.POSITIVE_INFINITY
+): Promise<SitemapFetchResult> {
   const root = new URL(origin);
-  const robots = await fetchText(`${origin}/robots.txt`, timeoutMs).catch(() => null);
+  const robotsTimeout = Math.min(timeoutMs, Math.max(1, deadlineAt - Date.now()));
+  const robots = await fetchText(`${origin}/robots.txt`, robotsTimeout).catch(() => null);
   const robotsSitemaps = [...(robots?.text.matchAll(/^sitemap:\s*(.+)$/gim) ?? [])]
     .map((match) => resolveLoc(origin, match[1].trim()))
     .filter(Boolean);
@@ -275,20 +285,40 @@ export async function fetchSitemapUrls(origin: string, timeoutMs: number, maxSit
     `${origin}/post_tag-sitemap.xml`,
     `${origin}/author-sitemap.xml`
   ];
-  const candidates = [...robotsSitemaps, ...commonSitemapCandidates];
   const state = { remaining: maxSitemapFiles, found: 0, failed: 0, discovered: 0, seenSitemaps: new Set<string>() };
   let discoveryMethod = "none";
   let urls: string[] = [];
 
-  for (const candidate of [...new Set(candidates)]) {
-    urls = await urlsFromSitemapFile(candidate, timeoutMs, state);
+  for (const candidate of [...new Set(robotsSitemaps)]) {
+    if (Date.now() >= deadlineAt) break;
+    urls = await urlsFromSitemapFile(candidate, timeoutMs, state, 0, deadlineAt);
     if (urls.length) {
-      discoveryMethod = robotsSitemaps.includes(candidate)
-        ? "robots.txt"
-        : new URL(candidate).pathname.replace(/^\//, "") || candidate;
+      discoveryMethod = "robots.txt";
       break;
     }
     if (state.remaining <= 0) break;
+  }
+
+  if (!urls.length && state.remaining > 0 && Date.now() < deadlineAt) {
+    const candidates = [...new Set(commonSitemapCandidates)]
+      .filter((candidate) => !robotsSitemaps.includes(candidate));
+    const probes = await Promise.all(candidates.map(async (candidate) => ({
+      candidate,
+      fetched: await fetchSitemapText(candidate, Math.min(timeoutMs, Math.max(1, deadlineAt - Date.now())))
+    })));
+    const discovered = probes.find(({ fetched }) =>
+      fetched.ok
+      && Boolean(fetched.text)
+      && !isLikelyHtml(fetched.text)
+      && /<(?:[\w.-]+:)?(?:sitemapindex|urlset)\b/i.test(fetched.text)
+    );
+
+    if (discovered) {
+      urls = await urlsFromSitemapFile(discovered.candidate, timeoutMs, state, 0, deadlineAt);
+      if (urls.length) {
+        discoveryMethod = new URL(discovered.candidate).pathname.replace(/^\//, "") || discovered.candidate;
+      }
+    }
   }
 
   const deduped = [...new Set(urls)].filter(Boolean).filter((href) => !isMediaUrl(href));
@@ -317,6 +347,7 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
   const maxPages = options.maxPages ?? 1000;
   const maxDepth = options.maxDepth ?? 5;
   const timeoutMs = options.timeoutMs ?? 7000;
+  const deadlineAt = Date.now() + (options.overallTimeoutMs ?? Number.POSITIVE_INFINITY);
   const concurrency = options.concurrency ?? 6;
   const maxSitemapFiles = options.maxSitemapFiles ?? 250;
   const followInternalLinks = options.followInternalLinks ?? true;
@@ -325,7 +356,7 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
   const seen = new Set<string>();
   const pages: CrawledPage[] = [];
   let attemptedUrls = 0;
-  const sitemapResult = await fetchSitemapUrls(origin, timeoutMs, maxSitemapFiles);
+  const sitemapResult = await fetchSitemapUrls(origin, timeoutMs, maxSitemapFiles, deadlineAt);
   const sitemap = sitemapResult.urls.filter((href) => sameOrigin(root, href));
   const queue: Array<{ url: string; depth: number; source: CrawledPage["source"] }> = [
     { url: canonicalize(root.toString()), depth: 0, source: "homepage" },
@@ -333,7 +364,7 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
   ];
   const initialTargetUrls = queue.length;
 
-  while (queue.length && pages.length < maxPages) {
+  while (queue.length && pages.length < maxPages && Date.now() < deadlineAt) {
     const batch: Array<{ url: string; depth: number; source: CrawledPage["source"] }> = [];
 
     while (queue.length && batch.length < concurrency && pages.length + batch.length < maxPages) {
@@ -348,8 +379,9 @@ export async function crawlSite(inputUrl: string, options: CrawlOptions = {}): P
     if (!batch.length) continue;
 
     attemptedUrls += batch.length;
+    const requestTimeoutMs = Math.min(timeoutMs, Math.max(1, deadlineAt - Date.now()));
     const fetchedPages = await Promise.all(
-      batch.map((next) => fetchPage(next.url, next.depth, next.source, timeoutMs))
+      batch.map((next) => fetchPage(next.url, next.depth, next.source, requestTimeoutMs))
     );
 
     for (const page of fetchedPages) {

@@ -101,7 +101,7 @@ export interface TechnicalCategorySummary {
   status: TechnicalCategoryStatus;
 }
 
-export type PublicTechnicalSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
+export type PublicTechnicalSeverity = "PASS" | "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
 export type PublicTechnicalScope = "page" | "domain";
 
 export interface PublicTechnicalCheck {
@@ -239,6 +239,56 @@ export interface StructuredDataAuditResult {
 
 export type OnPageSeoSeverity = "Critical" | "High" | "Medium" | "Low";
 
+export interface SeoIssueRecommendation {
+  issue: string;
+  issueSummary: string;
+  severity: string;
+  priority: string;
+  priorityScore?: number;
+  impactLevel?: "Low" | "Medium" | "High";
+  scaleLevel?: "Low" | "Medium" | "High";
+  effortLevel?: "Low" | "Medium" | "High";
+  affectedRate: number;
+  affectedPages: string[];
+  affectedAssets?: string[];
+  uniqueAssetsAffected?: number;
+  rootCause?: string[];
+  likelyTemplates?: string[];
+  estimatedFixScope?: {
+    level: "Asset-level fix" | "Template-level fix" | "Infrastructure-level fix" | "Schema generator fix" | "Manual review";
+    description: string;
+  };
+  overallAiVisibilityImpact?: {
+    level: "Low" | "Moderate" | "High";
+    explanation: string;
+  };
+  whatIsWrong: string;
+  whyItMatters: string;
+  businessImpact: string;
+  aiVisibilityImpact: string;
+  recommendedFix: string[];
+  validationSummary: {
+    pagesCrawled: number | null;
+    pagesAnalyzed: number | null;
+    pagesAffected: number;
+    uniqueAssetsAffected?: number;
+    affectedRate: number;
+    mostCommonIssue: string;
+    expectedOutcome: string;
+  };
+  detectionConfidence?: {
+    score: number;
+    reason: string;
+  };
+  topFixCandidates: string[];
+  technicalEvidence: Record<string, unknown>;
+  whatWeChecked: string[];
+  rawEvidence: Record<string, unknown>;
+  howToFix: string;
+  bestPracticeExample: string;
+  developerNotes: string;
+}
+
 export interface OnPageSeoCheckResult {
   id: number;
   category: string;
@@ -250,6 +300,7 @@ export interface OnPageSeoCheckResult {
   warning: boolean;
   score: number;
   evidence: Record<string, unknown>;
+  recommendation: SeoIssueRecommendation;
 }
 
 export interface OnPageSeoCategorySummary {
@@ -276,6 +327,7 @@ export interface ImageSeoCheckResult {
   id: number;
   category: string;
   name: string;
+  recommendation?: SeoIssueRecommendation;
   severity: ImageSeoSeverity;
   weight: number;
   passed: boolean;

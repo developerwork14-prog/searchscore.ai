@@ -6,6 +6,11 @@ import {
   OnPageSeoSeverity,
   TechnicalCategoryStatus
 } from "./types.js";
+import { isLikelyDecorativeImage, suggestedAltFromPageContext } from "./image-alt-utils.js";
+import type { CrawledPage, SiteCrawlResult } from "./site-crawler.js";
+import { scoreParameterOutcomes, statusForParameterOutcomes } from "./audit-outcome.js";
+import { aggregatePages, outcomeForEvidence } from "./site-audit-evidence.js";
+import { onPageSeoRecommendation } from "./on-page-seo-recommendations.js";
 
 interface CheckDefinition {
   id: number;
@@ -28,7 +33,8 @@ const CHECKS: CheckDefinition[] = [
   [10, "Internal Linking", "Contextual Internal Links", 2.72, "Medium"],
   [11, "Image & Media Optimisation", "Alt Text Non-Empty", 2.72, "High"],
   [12, "Headings & Titles", "Heading Capitalization Consistent", 1.63, "Low"],
-  [13, "Headings & Titles", "H1 Length 20-70 Characters", 2.17, "Medium"]
+  [13, "Headings & Titles", "H1 Length 20-70 Characters", 2.17, "Medium"],
+  [14, "Headings & Titles", "Empty Heading Tags", 2.17, "Medium"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const CATEGORY_ORDER = [...new Set(CHECKS.map((check) => check.category))];
@@ -57,6 +63,20 @@ function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+function isChallengeOrErrorHtml(html: string, status = 200) {
+  if (status < 200 || status >= 300) return true;
+  const $ = cheerio.load(html);
+  const text = $("body").text().replace(/\s+/g, " ").trim();
+  if (!text) return true;
+  const title = $("title").text().trim();
+  const signalText = `${title} ${text.slice(0, 2500)}`;
+  return /captcha|verify you are human|checking your browser|access denied|request blocked|security challenge|cloudflare ray id|temporarily unavailable|service unavailable/i.test(signalText);
+}
+
+function isAuditablePage(page: CrawledPage) {
+  return !isChallengeOrErrorHtml(page.html, page.status);
+}
+
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/&nbsp;/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
@@ -69,13 +89,15 @@ function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boole
   const skipped = Boolean(state.skipped);
   const passed = skipped ? true : Boolean(state.passed);
   const warning = !skipped && !passed && Boolean(state.warning);
+  const evidence = state.evidence ?? {};
   return {
     ...def,
     passed,
     skipped,
     warning,
-    score: skipped ? 0 : passed ? def.weight : warning ? def.weight / 2 : 0,
-    evidence: state.evidence ?? {}
+    score: skipped ? 0 : passed ? 1 : 0,
+    evidence,
+    recommendation: onPageSeoRecommendation(def.name, def.severity, evidence)
   };
 }
 
@@ -86,10 +108,8 @@ function summarize(checks: OnPageSeoCheckResult[]): OnPageSeoCategorySummary[] {
     const failed = scorable.filter((check) => !check.passed && !check.warning);
     const warningChecks = scorable.filter((check) => check.warning).length;
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
-    const score = scorable.length
-      ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.weight, 0)) * 100)
-      : 100;
-    const status: TechnicalCategoryStatus = scorable.length === 0 ? "Skipped" : failed.length === 0 && warningChecks === 0 ? "Passed" : failed.length <= 1 ? "Minor Attention" : "Needs Attention";
+    const score = scoreParameterOutcomes(categoryChecks);
+    const status: TechnicalCategoryStatus = statusForParameterOutcomes(categoryChecks);
     return {
       categoryName,
       totalChecks: categoryChecks.length,
@@ -103,13 +123,61 @@ function summarize(checks: OnPageSeoCheckResult[]): OnPageSeoCategorySummary[] {
   });
 }
 
-function headingHierarchy($: cheerio.CheerioAPI) {
-  const levels = $("h1,h2,h3,h4,h5,h6").toArray().map((el) => Number(el.tagName.slice(1)));
+function primaryContent($: cheerio.CheerioAPI) {
+  const source = $("main").first().length
+    ? $("main").first()
+    : $("[role='main']").first().length
+      ? $("[role='main']").first()
+      : $("#main,#content,.main-content,.page-content").first().length
+        ? $("#main,#content,.main-content,.page-content").first()
+        : $("article").first().length
+          ? $("article").first()
+          : $("body").first();
+  const scoped = cheerio.load(source.toString());
+  scoped("[aria-expanded='false'][aria-controls]").each((_, trigger) => {
+    const controls = scoped(trigger).attr("aria-controls")?.trim().split(/\s+/).filter(Boolean) ?? [];
+    controls.forEach((id) => scoped(`#${id.replace(/([ #;?%&,.+*~':"!^$[\]()=>|/@])/g, "\\$1")}`).remove());
+  });
+  scoped(
+    "footer,[role='contentinfo'],nav,[role='navigation'],aside,[role='complementary'],"
+    + "[role='dialog'],[role='alertdialog'],dialog,[hidden],[inert],[aria-hidden='true'],"
+    + "[style*='display:none' i],[style*='display: none' i],[style*='visibility:hidden' i],"
+    + "[style*='visibility: hidden' i],details:not([open]),"
+    + ".hidden,.modal,.sidebar,.accordion-collapse:not(.show),.collapse:not(.show)"
+  ).remove();
+  return scoped;
+}
+
+function headingAnalysis($: cheerio.CheerioAPI) {
+  const scoped = primaryContent($);
+  const allHeadingElements = scoped("h1,h2,h3,h4,h5,h6").toArray();
+  const emptyHeadings = allHeadingElements
+    .filter((el) => !scoped(el).text().replace(/\s+/g, " ").trim())
+    .map((el) => ({
+      level: el.tagName.toUpperCase(),
+      html: scoped(el).toString()
+    }));
+  const headingElements = allHeadingElements.filter((el) => scoped(el).text().replace(/\s+/g, " ").trim());
+  const levels = headingElements.map((el) => Number(el.tagName.slice(1)));
+  const headingSequence = levels.map((level) => `H${level}`);
+  const headingTexts = headingElements.map((el, index) => ({
+    level: headingSequence[index],
+    text: scoped(el).text().replace(/\s+/g, " ").trim()
+  }));
   const skips: Array<{ from: number; to: number; index: number }> = [];
   for (let index = 1; index < levels.length; index += 1) {
     if (levels[index] - levels[index - 1] > 1) skips.push({ from: levels[index - 1], to: levels[index], index });
   }
-  return { levels, skips };
+  const problems = skips.map((skip) => `Skipped H${skip.from + 1} between H${skip.from} and H${skip.to}`);
+  return {
+    levels,
+    headingSequence,
+    headingTexts,
+    headings: headingTexts.map((heading) => heading.text),
+    emptyHeadings,
+    skips,
+    problems
+  };
 }
 
 function headingCase(value: string) {
@@ -121,6 +189,17 @@ function headingCase(value: string) {
   if (sentence) return "sentence";
   if (value === value.toUpperCase() && /[A-Z]/.test(value)) return "upper";
   return "mixed";
+}
+
+function headingsByCase(headings: string[]) {
+  return headings.reduce<Record<"titleCase" | "sentenceCase" | "allCaps" | "mixed", string[]>>((groups, heading) => {
+    const style = headingCase(heading);
+    if (style === "title") groups.titleCase.push(heading);
+    else if (style === "sentence") groups.sentenceCase.push(heading);
+    else if (style === "upper") groups.allCaps.push(heading);
+    else if (style === "mixed") groups.mixed.push(heading);
+    return groups;
+  }, { titleCase: [], sentenceCase: [], allCaps: [], mixed: [] });
 }
 
 function parseJsonLd($: cheerio.CheerioAPI): Record<string, unknown>[] {
@@ -175,15 +254,170 @@ function isSeeAlsoLinkText(value: string) {
   return /\b(see also|related|learn more|next|recommended|further reading|resources)\b/i.test(value);
 }
 
-export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promise<OnPageSeoAuditResult> {
+function absoluteUrl(root: URL, value: string) {
+  try {
+    return new URL(value, root).toString();
+  } catch {
+    return value || "";
+  }
+}
+
+function evaluateOnPageCheck(page: CrawledPage, id: number) {
+  const $ = page.$;
+  const body = $("body").text().replace(/\s+/g, " ").trim();
+  const totalWords = wordCount(body);
+  const hierarchy = headingAnalysis($);
+  const headings = hierarchy.headings;
+  const boldPhrases = $("strong,b").toArray().map((el) => $(el).text().replace(/\s+/g, " ").trim()).filter(Boolean);
+  const boldWords = boldPhrases.reduce((sum, phrase) => sum + wordCount(phrase), 0);
+  const boldDensity = totalWords ? (boldWords / totalWords) * 100 : 0;
+  const maxBoldDensity = totalWords < 250 ? 15 : 8;
+  const qualityBold = boldPhrases.filter((phrase) => {
+    const words = phrase.split(/\s+/).filter(Boolean);
+    return words.length <= 6 && (/[A-Z][a-z]+/.test(phrase) || /\b[A-Z]{2,}\b/.test(phrase) || /\b(?:service|product|platform|brand|company|software|audit|seo|ai)\b/i.test(phrase));
+  }).length;
+  const tables = $("table").toArray();
+  const comparisonTables = tables.filter((table) => /\b(compare|comparison|feature|price|plan|versus|vs|pros|cons)\b/i.test($(table).text()));
+  const records = parseJsonLd($);
+  const schemaBreadcrumbs = breadcrumbSchemaNames(records);
+  const domBreadcrumbs = domBreadcrumbNames($);
+  const paragraphLinks = $("main p a[href],article p a[href],body p a[href]").toArray().filter((el) => {
+    try {
+      return new URL($(el).attr("href") ?? "", page.finalUrl).hostname.replace(/^www\./, "") === new URL(page.finalUrl).hostname.replace(/^www\./, "");
+    } catch {
+      return false;
+    }
+  });
+  const allImages = $("img").toArray();
+  const meaningfulImages = allImages.filter((img) => !isLikelyDecorativeImage($, img));
+  const missingAlt = meaningfulImages.filter((img) => !($(img).attr("alt") ?? "").trim());
+  const headingCases = headings.map(headingCase).filter((item) => item !== "unknown");
+  const capitalizationConflicts = headingsByCase(headings);
+  const dominantCase = headingCases.reduce((best, current) => headingCases.filter((item) => item === current).length > headingCases.filter((item) => item === best).length ? current : best, headingCases[0] ?? "unknown");
+  const dateTextCount = (body.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b/g) ?? []).length;
+  const blockquotes = $("blockquote").toArray();
+  const applicable = (() => {
+    if (id === 4) return tables.length > 0;
+    if (id === 5) return blockquotes.length > 0 || /[“”"']/.test(body);
+    if (id === 6) return hasDefinitionPattern(body);
+    if (id === 8) return schemaBreadcrumbs.length > 0 || domBreadcrumbs.length > 0;
+    if (id === 9) return totalWords >= 300;
+    return true;
+  })();
+  if (!applicable) return { applicable: false, passed: true };
+
+  switch (id) {
+    case 1: return {
+      applicable,
+      passed: hierarchy.skips.length === 0,
+      evidence: {
+        url: page.finalUrl,
+        headingSequence: hierarchy.headingSequence,
+        headings: hierarchy.headingTexts,
+        problem: hierarchy.problems.join("; ") || (hierarchy.levels.length ? "No skipped heading levels detected" : "No headings extracted")
+      }
+    };
+    case 2: return { applicable, passed: boldPhrases.length === 0 || (boldDensity <= maxBoldDensity && (qualityBold / Math.max(boldPhrases.length, 1)) >= 0.6), evidence: { boldDensity: Number(boldDensity.toFixed(2)), boldPhrases: boldPhrases.length } };
+    case 3: return { applicable, passed: !hasComparisonIntent($, body) || comparisonTables.length > 0, evidence: { comparisonIntent: hasComparisonIntent($, body), tables: tables.length } };
+    case 4: return { applicable, passed: tables.every((table) => $(table).find("caption").first().text().trim().length > 0), evidence: { tables: tables.length, captions: $("table caption").length } };
+    case 5: return { applicable, passed: blockquotes.length > 0 && blockquotes.every((quote) => $(quote).find("cite").length > 0 || $(quote).next("cite").length > 0), evidence: { blockquotes: blockquotes.length } };
+    case 6: return { applicable, passed: $("dfn").filter((_, el) => $(el).text().trim().length > 0).length > 0, evidence: { definitions: $("dfn").length } };
+    case 7: return { applicable, passed: dateTextCount === 0 || $("time[datetime]").length >= Math.ceil(dateTextCount * 0.5), evidence: { dateTextCount, timeDatetimeCount: $("time[datetime]").length } };
+    case 8: {
+      const normalizedSchema = schemaBreadcrumbs.map(compact);
+      const normalizedDom = domBreadcrumbs.map(compact);
+      const exactMatch = normalizedSchema.length === normalizedDom.length
+        && normalizedSchema.every((name, index) => name === normalizedDom[index]);
+      const breadcrumbIssue = domBreadcrumbs.length === 0
+        ? "Visible Breadcrumb Missing"
+        : "Breadcrumb Schema-DOM Mismatch";
+      return {
+        applicable,
+        passed: domBreadcrumbs.length > 0 && schemaBreadcrumbs.length > 0 && exactMatch,
+        evidence: {
+          url: page.finalUrl,
+          issue: breadcrumbIssue,
+          visibleBreadcrumb: domBreadcrumbs,
+          schemaBreadcrumb: schemaBreadcrumbs
+        }
+      };
+    }
+    case 9: return { applicable, passed: $("a[href]").toArray().some((link) => isSeeAlsoLinkText($(link).text()) || isSeeAlsoLinkText($(link).parent().text())), evidence: { totalWords } };
+    case 10: return { applicable, passed: totalWords < 300 ? paragraphLinks.length >= 1 : paragraphLinks.length >= 2, evidence: { contextualInternalLinks: paragraphLinks.length } };
+    case 11: return {
+      applicable,
+      passed: missingAlt.length === 0,
+      issueCount: missingAlt.length,
+      evidence: {
+        meaningfulImages: meaningfulImages.length,
+        missingAlt: missingAlt.length,
+        missingAltImages: missingAlt.map((img) => {
+          const suggestedAlt = suggestedAltFromPageContext($, img);
+          return {
+            pageUrl: page.finalUrl,
+            imageUrl: absoluteUrl(new URL(page.finalUrl), $(img).attr("src") || $(img).attr("data-src") || ""),
+            alt: $(img).attr("alt") ?? "",
+            issue: $(img).attr("alt") === undefined ? "Missing alt attribute" : "Empty alt text",
+            ...(suggestedAlt ? { suggestedAlt } : {})
+          };
+        }).slice(0, 10)
+      }
+    };
+    case 12: return {
+      applicable,
+      passed: headingCases.length <= 1 || headingCases.filter((item) => item === dominantCase).length / headingCases.length >= 0.8,
+      evidence: {
+        url: page.finalUrl,
+        ...capitalizationConflicts,
+        dominantCase
+      }
+    };
+    case 13: {
+      const h1 = hierarchy.headingTexts.find((heading) => heading.level === "H1")?.text ?? "";
+      return {
+        applicable,
+        passed: h1.length >= 20 && h1.length <= 70,
+        evidence: {
+          url: page.finalUrl,
+          h1,
+          length: h1.length,
+          h1Count: hierarchy.headingTexts.filter((heading) => heading.level === "H1").length,
+          recommendedRange: "20-70"
+        }
+      };
+    }
+    case 14: return {
+      applicable,
+      passed: hierarchy.emptyHeadings.length === 0,
+      issueCount: hierarchy.emptyHeadings.length,
+      evidence: {
+        url: page.finalUrl,
+        emptyHeadingCount: hierarchy.emptyHeadings.length,
+        emptyHeadings: hierarchy.emptyHeadings
+      }
+    };
+    default: return { applicable, passed: true };
+  }
+}
+
+export async function runOnPageSeoAudit(inputUrl: string, html?: string, siteCrawl?: SiteCrawlResult): Promise<OnPageSeoAuditResult> {
   const normalized = normalizeUrl(inputUrl);
   const url = new URL(normalized);
   const pageHtml = html ?? await fetchHtml(normalized);
+  const auditablePages = siteCrawl?.pages.filter(isAuditablePage) ?? [];
+  if (!auditablePages.length && isChallengeOrErrorHtml(pageHtml)) {
+    return {
+      score: 100,
+      checkedAt: new Date().toISOString(),
+      categories: [],
+      checks: []
+    };
+  }
   const $ = cheerio.load(pageHtml);
   const body = $("body").text().replace(/\s+/g, " ").trim();
-  const headings = $("h1,h2,h3,h4,h5,h6").toArray().map((el) => $(el).text().replace(/\s+/g, " ").trim()).filter(Boolean);
-  const h1Text = $("h1").first().text().replace(/\s+/g, " ").trim();
-  const hierarchy = headingHierarchy($);
+  const hierarchy = headingAnalysis($);
+  const headings = hierarchy.headings;
+  const h1Text = hierarchy.headingTexts.find((heading) => heading.level === "H1")?.text ?? "";
   const boldPhrases = $("strong,b").toArray().map((el) => $(el).text().replace(/\s+/g, " ").trim()).filter(Boolean);
   const totalWords = wordCount(body);
   const boldWords = boldPhrases.reduce((sum, phrase) => sum + wordCount(phrase), 0);
@@ -204,8 +438,6 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
   const records = parseJsonLd($);
   const schemaBreadcrumbs = breadcrumbSchemaNames(records);
   const domBreadcrumbs = domBreadcrumbNames($);
-  const schemaBreadcrumbText = schemaBreadcrumbs.map(compact).join(" > ");
-  const domBreadcrumbText = domBreadcrumbs.map(compact).join(" > ");
   const seeAlsoLinks = $("section,article,main,aside,footer").toArray().flatMap((section) =>
     $(section).find("a[href]").toArray().filter((link) => isSeeAlsoLinkText($(link).text()) || isSeeAlsoLinkText($(link).parent().text()))
   );
@@ -224,18 +456,38 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
       return false;
     }
   });
-  const images = $("img").toArray();
+  const allImages = $("img").toArray();
+  const images = allImages.filter((img) => !isLikelyDecorativeImage($, img));
   const imagesMissingAlt = images.filter((img) => !($(img).attr("alt") ?? "").trim());
   const headingCases = headings.map(headingCase).filter((item) => item !== "unknown");
+  const capitalizationConflicts = headingsByCase(headings);
   const dominantCase = headingCases.reduce((best, current) => headingCases.filter((item) => item === current).length > headingCases.filter((item) => item === best).length ? current : best, headingCases[0] ?? "unknown");
   const caseConsistency = headingCases.length ? headingCases.filter((item) => item === dominantCase).length / headingCases.length : 1;
   const checks: OnPageSeoCheckResult[] = [];
   const add = (id: number, state: Parameters<typeof result>[1]) => {
     const def = CHECKS.find((check) => check.id === id);
-    if (def) checks.push(result(def, state));
+    if (def) checks.push(result(def, { ...state, evidence: { pageUrl: normalized, ...(state.evidence ?? {}) } }));
   };
+  const missingAltImages = imagesMissingAlt.map((img) => {
+    const suggestedAlt = suggestedAltFromPageContext($, img);
+    return {
+      pageUrl: normalized,
+      imageUrl: absoluteUrl(url, $(img).attr("src") || $(img).attr("data-src") || ""),
+      alt: $(img).attr("alt") ?? "",
+      issue: $(img).attr("alt") === undefined ? "Missing alt attribute" : "Empty alt text",
+      ...(suggestedAlt ? { suggestedAlt } : {})
+    };
+  }).slice(0, 10);
 
-  add(1, { passed: hierarchy.levels.length > 0 && hierarchy.skips.length === 0, evidence: { headingLevels: hierarchy.levels, skips: hierarchy.skips } });
+  add(1, {
+    passed: hierarchy.skips.length === 0,
+    evidence: {
+      url: normalized,
+      headingSequence: hierarchy.headingSequence,
+      headings: hierarchy.headingTexts,
+      problem: hierarchy.problems.join("; ") || (hierarchy.levels.length ? "No skipped heading levels detected" : "No headings extracted")
+    }
+  });
   add(2, {
     passed: boldPhrases.length === 0 || (boldDensity <= maxBoldDensity && boldQualityRatio >= 0.6),
     warning: boldPhrases.length > 0 && (boldDensity > maxBoldDensity || boldQualityRatio < 0.6),
@@ -267,9 +519,17 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
     evidence: { dateTextCount, timeDatetimeCount }
   });
   add(8, {
-    passed: schemaBreadcrumbs.length === 0 || (domBreadcrumbs.length > 0 && (domBreadcrumbText.includes(schemaBreadcrumbText) || schemaBreadcrumbText.includes(domBreadcrumbText))),
+    passed: domBreadcrumbs.length > 0
+      && schemaBreadcrumbs.length > 0
+      && schemaBreadcrumbs.map(compact).length === domBreadcrumbs.map(compact).length
+      && schemaBreadcrumbs.map(compact).every((name, index) => name === domBreadcrumbs.map(compact)[index]),
     skipped: schemaBreadcrumbs.length === 0 && domBreadcrumbs.length === 0,
-    evidence: { schemaBreadcrumbs, domBreadcrumbs }
+    evidence: {
+      url: normalized,
+      issue: domBreadcrumbs.length === 0 ? "Visible Breadcrumb Missing" : "Breadcrumb Schema-DOM Mismatch",
+      visibleBreadcrumb: domBreadcrumbs,
+      schemaBreadcrumb: schemaBreadcrumbs
+    }
   });
   add(9, {
     passed: seeAlsoLinks.length > 0,
@@ -284,22 +544,57 @@ export async function runOnPageSeoAudit(inputUrl: string, html?: string): Promis
   });
   add(11, {
     passed: images.length === 0 || imagesMissingAlt.length === 0,
-    evidence: { images: images.length, missingAlt: imagesMissingAlt.length }
+    evidence: { images: images.length, totalImages: allImages.length, decorativeImagesIgnored: allImages.length - images.length, missingAlt: imagesMissingAlt.length, missingAltImages }
   });
   add(12, {
     passed: headingCases.length <= 1 || caseConsistency >= 0.8,
-    evidence: { headingCases, dominantCase, consistency: Number(caseConsistency.toFixed(2)) }
+    evidence: {
+      url: normalized,
+      ...capitalizationConflicts,
+      dominantCase,
+      consistency: Number(caseConsistency.toFixed(2))
+    }
   });
   add(13, {
     passed: h1Text.length >= 20 && h1Text.length <= 70,
     warning: h1Text.length >= 10 && h1Text.length <= 90,
-    evidence: { h1: h1Text, length: h1Text.length }
+    evidence: {
+      url: normalized,
+      h1: h1Text,
+      length: h1Text.length,
+      h1Count: hierarchy.headingTexts.filter((heading) => heading.level === "H1").length,
+      recommendedRange: "20-70"
+    }
+  });
+  add(14, {
+    passed: hierarchy.emptyHeadings.length === 0,
+    evidence: {
+      url: normalized,
+      emptyHeadingCount: hierarchy.emptyHeadings.length,
+      emptyHeadings: hierarchy.emptyHeadings
+    }
   });
 
-  const categories = summarize(checks);
-  const scorable = checks.filter((check) => !check.skipped);
-  const score = scorable.length
-    ? clamp((scorable.reduce((sum, check) => sum + check.score, 0) / scorable.reduce((sum, check) => sum + check.weight, 0)) * 100)
-    : 100;
-  return { score, checkedAt: new Date().toISOString(), categories, checks };
+  const siteWideChecks = auditablePages.length ? checks.map((check) => {
+    const applicablePages = auditablePages.filter((page) => evaluateOnPageCheck(page, check.id).applicable);
+    if (!applicablePages.length) return { ...check, passed: true, skipped: true, warning: false, score: 0, evidence: { scope: "page-level-site-wide", pagesCrawled: auditablePages.length, pagesChecked: 0, pagesPassed: 0, pagesFailed: 0, passRate: 100, affectedPages: [], sampleEvidence: [] } };
+    const evidence = aggregatePages({ pages: applicablePages }, (page) => evaluateOnPageCheck(page, check.id));
+    evidence.pagesCrawled = auditablePages.length;
+    const outcome = outcomeForEvidence(evidence);
+    const severity: OnPageSeoSeverity = outcome.severity;
+    return {
+      ...check,
+      severity,
+      passed: outcome.passed,
+      skipped: outcome.skipped,
+      warning: outcome.warning,
+      score: outcome.passed ? 1 : 0,
+      evidence,
+      recommendation: onPageSeoRecommendation(check.name, severity, evidence)
+    };
+  }) : checks;
+  const categories = summarize(siteWideChecks);
+  const scorable = siteWideChecks.filter((check) => !check.skipped);
+  const score = scoreParameterOutcomes(siteWideChecks);
+  return { score, checkedAt: new Date().toISOString(), categories, checks: siteWideChecks };
 }

@@ -142,7 +142,7 @@ export default function HomePage() {
               <div>
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold md:text-3xl">Uncovering what AI really thinks about your brand</h2>
-                  <p className="mt-2 text-sm text-ink/60">Your report opens automatically. Full sitemap scans can take 1-3 minutes.</p>
+                  <p className="mt-2 text-sm text-ink/60">Your report opens automatically. Larger sitemap scans can take up to 5 minutes.</p>
                 </div>
                 <div className="mb-6 flex min-h-12 items-center gap-3 rounded-lg border border-gold/30 bg-gold/15 px-4 text-sm font-bold text-ink">
                   <Loader2 className="size-4 animate-spin" />

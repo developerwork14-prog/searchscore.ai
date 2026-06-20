@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { scoreParameterOutcomes } from "./audit-outcome.js";
 import { CHATGPT_CITATION_RECOMMENDATIONS, isChatgptCitationCategory } from "./chatgpt-citation-audit.js";
 import { GEMINI_CITATION_RECOMMENDATIONS, isGeminiCitationCategory } from "./gemini-citation-audit.js";
 import { crawlSite, fetchSitemapUrls } from "./site-crawler.js";
@@ -72,12 +73,8 @@ export interface GeoAeoAuditResult {
 
 const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 1, category: "AI Bot Access", name: "GPTBot allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 2, category: "AI Bot Access", name: "ClaudeBot allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 3, category: "AI Bot Access", name: "PerplexityBot allowed", severity: "BLOCKER", scope: "domain" },
   { id: 4, category: "AI Bot Access", name: "Google-Extended allowed", severity: "BLOCKER", scope: "domain" },
   { id: 5, category: "AI Bot Access", name: "OAI-SearchBot allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 6, category: "AI Bot Access", name: "Grok allowed", severity: "BLOCKER", scope: "domain" },
-  { id: 7, category: "AI Bot Access", name: "DeepSeek allowed", severity: "BLOCKER", scope: "domain" },
   { id: 8, category: "AI Discovery Files", name: "llms.txt Exists", severity: "MAJOR", scope: "domain" },
   { id: 9, category: "AI Discovery Files", name: "llms.txt Plain Markdown", severity: "MAJOR", scope: "domain" },
   { id: 10, category: "AI Readiness", name: "llms.txt word count", severity: "MAJOR", scope: "domain" },
@@ -216,17 +213,6 @@ const CITATION_RECOMMENDATIONS: Record<number, string> = {
   102: "Verify Bing index coverage in Bing Webmaster Tools.",
   103: "Remove noindexed URLs from XML sitemaps."
 };
-
-function weightedCategoryScore(categories: GeoAeoCategorySummary[]) {
-  const totalWeight = categories.reduce((sum, category) => sum + (CATEGORY_WEIGHTS[category.categoryName] ?? 0), 0);
-
-  const weighted = categories.reduce((sum, category) => {
-    const weight = CATEGORY_WEIGHTS[category.categoryName] ?? 0;
-    return sum + category.score * weight;
-  }, 0);
-
-  return totalWeight ? clamp(weighted / totalWeight) : 0;
-}
 
 function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, Math.round(value)));
@@ -1405,7 +1391,8 @@ function productSchemaComplete(records: Record<string, unknown>[]) {
 function addCheck(results: GeoAeoCheckResult[], id: number, passed: boolean, evidence: string) {
   const def = CHECKS.find((check) => check.id === id);
   if (!def) return;
-  results.push({ ...def, passed, evidence });
+  const severity: GeoAeoSeverity = passed ? "MINOR" : def.scope === "domain" ? "MAJOR" : "MINOR";
+  results.push({ ...def, severity, passed, evidence });
 }
 
 function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: string) {
@@ -1419,7 +1406,7 @@ function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFai
     const categoryChecks = checks.filter((check) => check.category === categoryName);
     const scorableChecks = categoryChecks.filter((check) => !check.skipped);
     const failedChecks = scorableChecks.filter((check) => !check.passed).length;
-    const warningChecks = scorableChecks.filter((check) => !check.passed && check.severity === "MINOR").length;
+    const warningChecks = 0;
     const categoryFailedDetails = failedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
     const categorySkippedDetails = skippedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
 
@@ -1448,9 +1435,9 @@ function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
 function opportunityCounts(checks: GeoAeoCheckResult[]): GeoAeoOpportunityCounts {
   const failed = checks.filter((check) => !check.passed && !check.skipped);
   return {
-    high: failed.filter((check) => check.severity === "BLOCKER").length,
-    medium: failed.filter((check) => check.severity === "MAJOR").length,
-    low: failed.filter((check) => check.severity === "MINOR").length
+    high: failed.filter((check) => check.scope === "domain").length,
+    medium: failed.filter((check) => check.scope === "page").length,
+    low: 0
   };
 }
 
@@ -1654,12 +1641,8 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
 
   [
     ["GPTBot", 1],
-    ["ClaudeBot", 2],
-    ["PerplexityBot", 3],
     ["Google-Extended", 4],
-    ["OAI-SearchBot", 5],
-    ["Grok", 6],
-    ["DeepSeek", 7]
+    ["OAI-SearchBot", 5]
   ].forEach(([bot, id]) => {
     addCheck(result, Number(id), robotGroupAllows(robots?.text ?? "", String(bot)), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
   });
@@ -1798,9 +1781,9 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
       reason: check.evidence
     }));
   const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
-  const rawScore = weightedCategoryScore(categories);
-  const blockerFailed = result.some((check) => SCORE_CAP_BLOCKER_IDS.has(check.id) && check.severity === "BLOCKER" && !check.passed && !check.skipped);
-  const score = blockerFailed ? Math.min(rawScore, 50) : rawScore;
+  const rawScore = scoreParameterOutcomes(result, 0);
+  const blockerFailed = false;
+  const score = rawScore;
   const grade = gradeFor(score);
 
   return {

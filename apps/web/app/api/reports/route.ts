@@ -6,7 +6,7 @@ import { createdPublicReportView } from "@/lib/server/report-views";
 import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
 
 export const runtime = "nodejs";
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 const reportInputSchema = z.object({
   brandName: z.string().min(2).max(120),

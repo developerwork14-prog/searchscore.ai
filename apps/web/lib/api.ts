@@ -1,7 +1,8 @@
 import type { CreatedPublicReport, PlaygroundResult, ReportInput, StructuredAiVisibilityReport } from "@aiva/core";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
-const REPORT_REQUEST_TIMEOUT_MS = 180000;
+// Allow the server's five-minute audit budget plus response serialization time.
+const REPORT_REQUEST_TIMEOUT_MS = 330000;
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -23,7 +24,7 @@ export async function createReport(input: ReportInput) {
     return parseResponse<CreatedPublicReport>(response);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("The scan took too long. Please try again with a smaller site or check the audit server logs.");
+      throw new Error("The scan exceeded five minutes. Please try again or check the audit server logs.");
     }
     throw error;
   } finally {
