@@ -240,8 +240,9 @@ function formatAuditDate(value?: string) {
 }
 
 function tabMeta(label: string, categories: CategoryLike[], checks: CheckLike[] = [], score?: number, checkedAt?: string): TabInfo {
-  const available = categories.some((category) => category.totalChecks > 0) && !checksRepresentFailedAudit(checks);
-  return { label, categories, checks, score: clampScore(score), issues: available ? issueCount(categories) : 0, available, checkedAt };
+  const uniqueCategories = [...new Map(categories.map((category) => [category.categoryName, category])).values()];
+  const available = uniqueCategories.some((category) => category.totalChecks > 0) && !checksRepresentFailedAudit(checks);
+  return { label, categories: uniqueCategories, checks, score: clampScore(score), issues: available ? issueCount(uniqueCategories) : 0, available, checkedAt };
 }
 
 function statusLabel(score: number) {
@@ -882,6 +883,9 @@ function fixForIssue(name: string, categoryName: string, evidence = "") {
   if (/knowsabout/.test(text)) {
     return "Add knowsAbout topics only when they accurately describe the business expertise.";
   }
+  if (/organization schema present/.test(text)) {
+    return "Add one Organization JSON-LD block to the homepage with the real business name, canonical website URL, logo, and a stable @id. Add phone, address, sameAs, and other optional properties only when they are accurate and visible or officially verified.";
+  }
   if (/title length|titles within recommended|title tag.*30|title.*30-60/.test(text)) {
     return "Some page titles are outside the recommended 30-60 character range. Review longer or shorter titles and keep the primary keyword and brand while removing unnecessary words.";
   }
@@ -1205,12 +1209,14 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   const issues = issueItemsFor(category, checks);
   const passed = passedItemsFor(checks);
   const opportunities = opportunityItemsFor(checks);
-  const skippedItems = skippedItemsFor(category, checks);
+  const rawSkippedItems = skippedItemsFor(category, checks);
+  const structuredDataCategory = tab.label === "Structured data";
+  const skippedItems = structuredDataCategory ? [] : rawSkippedItems;
   const informationalOnly = checks.length > 0 && checks.every((check) => check.informational);
   const allSkippedChecksAreNotApplicable = checks.some((check) => check.skipped)
     && checks.filter((check) => check.skipped).every((check) => check.notApplicable);
   const passedCount = Math.max(0, (category.passedChecks ?? passed.length) - opportunities.length);
-  const skippedCount = category.skippedChecks ?? skippedItems.length;
+  const skippedCount = skippedItems.length;
   const issueCountLabel = issues.length;
   const limitedCoverage = !skipped && skippedCount > 0;
   const statusLabel = informationalOnly
@@ -1311,7 +1317,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
             )}
           </div>
           <div>
-            {!skipped && !informationalOnly ? (
+            {!skipped && !informationalOnly && passedCount > 0 ? (
               <>
                 <h4>Passed ({passedCount})</h4>
                 {passed.length ? (
@@ -1484,10 +1490,14 @@ export default function ReportPage() {
     const geminiChecks = checksForCategories(geoChecks, gemini);
     const crawlability = technical.filter((category) => ["Robots.txt & Sitemap", "Indexability & Crawlability", "Internal Linking", "AI Crawl Readiness"].includes(category.categoryName));
     const crawlabilityChecks = checksForCategories(report.technical_audit?.checks ?? [], crawlability);
+    const structuredDataCategories = (report.structured_data_audit?.categories ?? [])
+      .filter((category) => category.categoryName !== "Product Schema");
+    const structuredDataChecks = (report.structured_data_audit?.checks ?? [])
+      .filter((check) => check.category !== "Product Schema" && ![45, 50].includes(check.id ?? -1));
     const tabs: Record<AuditTabId, TabInfo> = {
       technical: tabMeta("Technical Audit", technical, report.technical_audit?.checks ?? [], report.technical_audit?.score, report.technical_audit?.checked_at ?? report.created_at),
       crawlability: tabMeta("Crawlability", crawlability, crawlabilityChecks, scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
-      structuredData: tabMeta("Structured data", report.structured_data_audit?.categories ?? [], report.structured_data_audit?.checks ?? [], report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
+      structuredData: tabMeta("Structured data", structuredDataCategories, structuredDataChecks, report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
       onPageSeo: tabMeta("On-Page SEO", report.on_page_seo_audit?.categories ?? [], report.on_page_seo_audit?.checks ?? [], report.on_page_seo_audit?.score, report.on_page_seo_audit?.checked_at),
       imageSeo: tabMeta("Image SEO", report.image_seo_audit?.categories ?? [], report.image_seo_audit?.checks ?? [], report.image_seo_audit?.score, report.image_seo_audit?.checked_at),
       eeat: tabMeta("EEAT Audit", report.eeat_audit?.categories ?? [], report.eeat_audit?.checks ?? [], report.eeat_audit?.score, report.eeat_audit?.checked_at),

@@ -232,7 +232,10 @@ export interface StructuredDataCheckResult {
   weight: number;
   passed: boolean;
   skipped: boolean;
+  notApplicable?: boolean;
   warning: boolean;
+  informational?: boolean;
+  opportunity?: string;
   score: number;
   evidence: Record<string, unknown>;
   priorityScore?: number;

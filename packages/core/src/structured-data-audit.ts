@@ -31,50 +31,44 @@ const CHECKS: CheckDefinition[] = [
   [9, "Organization Schema", "Organization authority-profile sameAs", 0, "Advisory"],
   [10, "Organization Schema", "Organization knowsAbout topics", 0, "Advisory"],
   [11, "Organization Schema", "Org: @id Declared", 1.52, "High"],
-  [12, "Organization Schema", "Org: foundingDate", 1.02, "Medium"],
-  [13, "LocalBusiness Schema", "LocalBusiness: GPS", 2.03, "High"],
-  [14, "LocalBusiness Schema", "LocalBusiness: areaServed", 1.52, "Medium"],
-  [15, "LocalBusiness Schema", "LocalBusiness: openingHours", 1.52, "Medium"],
+  [12, "Organization Schema", "Org: foundingDate", 0, "Advisory"],
+  [13, "LocalBusiness Schema", "LocalBusiness: GPS", 0, "Advisory"],
+  [14, "LocalBusiness Schema", "LocalBusiness: areaServed", 0, "Advisory"],
+  [15, "LocalBusiness Schema", "LocalBusiness: openingHours", 0, "Advisory"],
   [16, "LocalBusiness Schema", "LocalBusiness Schema Present with Valid @type", 2.03, "High"],
   [17, "Article Schema", "Article: headline", 2.03, "Critical"],
   [18, "Article Schema", "Article: author Person", 2.03, "High"],
   [19, "Article Schema", "Article: datePublished ISO", 1.52, "High"],
   [20, "Article Schema", "Article: dateModified Matches Visible Date", 0, "Advisory"],
-  [21, "Article Schema", "Article: about Entity", 1.52, "Medium"],
+  [21, "Article Schema", "Article: about Entity", 0, "Advisory"],
   [22, "Article Schema", "Article: image ImageObject", 1.02, "Medium"],
   [23, "Article Schema", "Article: publisher->Org", 1.52, "High"],
   [24, "Person Schema", "Person Schema on Bio Pages", 2.03, "High"],
   [25, "Person Schema", "Person: name Property", 1.52, "Medium"],
-  [26, "Person Schema", "Person: sameAs LinkedIn", 1.52, "Medium"],
-  [27, "Person Schema", "Person: knowsAbout", 1.52, "Medium"],
+  [26, "Person Schema", "Person: sameAs LinkedIn", 0, "Advisory"],
+  [27, "Person Schema", "Person: knowsAbout", 0, "Advisory"],
   [28, "FAQ & HowTo Schema", "FAQPage When FAQ in DOM", 2.03, "High"],
   [29, "FAQ & HowTo Schema", "FAQPage mainEntity present", 1.52, "Medium"],
   [30, "FAQ & HowTo Schema", "FAQPage acceptedAnswer completeness", 1.52, "Medium"],
   [31, "FAQ & HowTo Schema", "HowTo on Step-by-Step", 1.52, "Medium"],
-  [32, "Product Schema", "Product: name and description", 2.03, "Critical"],
-  [33, "Product Schema", "Product: offers price+avail", 2.03, "Critical"],
-  [34, "Product Schema", "Product: aggregateRating", 1.52, "High"],
-  [35, "Product Schema", "Product: GTIN/MPN/SKU", 1.52, "High"],
   [36, "Supporting Schema Types", "BreadcrumbList on Interior", 2.03, "High"],
   [37, "Supporting Schema Types", "BreadcrumbList Matches DOM", 1.52, "High"],
   [38, "Supporting Schema Types", "WebSite on Homepage", 1.02, "Medium"],
-  [39, "Supporting Schema Types", "@graph Interconnection", 1.52, "Medium"],
-  [40, "Supporting Schema Types", "ImageObject on Key Images", 1.02, "Medium"],
+  [39, "Supporting Schema Types", "@graph Interconnection", 0, "Advisory"],
+  [40, "Supporting Schema Types", "ImageObject on Key Images", 0, "Advisory"],
   [41, "Supporting Schema Types", "VideoObject on Videos", 1.02, "Medium"],
   [42, "Schema Validation & Quality", "JSON-LD Syntax Valid", 2.54, "Critical"],
-  [43, "Schema Validation & Quality", "JSON-LD Format (Not Microdata)", 1.52, "High"],
+  [43, "Schema Validation & Quality", "JSON-LD Format (Not Microdata)", 0, "Advisory"],
   [44, "Schema Validation & Quality", "Absolute HTTPS URLs in Schema", 1.52, "High"],
-  [45, "Schema-DOM Parity", "Schema-DOM: Price Match", 2.03, "Critical"],
   [46, "Schema-DOM Parity", "Schema-DOM: Phone Match", 2.03, "Critical"],
   [47, "Schema-DOM Parity", "Schema-DOM: Name Match", 1.52, "High"],
   [48, "Schema-DOM Parity", "Schema-DOM: Date Match", 1.52, "High"],
   [49, "Schema-DOM Parity", "Schema-DOM: FAQ Match", 1.52, "High"],
-  [50, "Schema-DOM Parity", "Schema-DOM: Availability Match", 1.52, "Critical"],
   [51, "Schema Validation & Quality", "No Conflicting Duplicate Entities", 1.52, "High"],
   [52, "Schema Validation & Quality", "Schema in Server HTML", 2.03, "Critical"],
   [53, "FAQ & HowTo Schema", "HowTo: step Array Nested", 1.52, "Medium"],
-  [54, "LocalBusiness Schema", "LocalBusiness: priceRange", 1.02, "Medium"],
-  [55, "FAQ & HowTo Schema", "HowTo: totalTime+Cost", 1.02, "Low"],
+  [54, "LocalBusiness Schema", "LocalBusiness: priceRange", 0, "Advisory"],
+  [55, "FAQ & HowTo Schema", "HowTo: totalTime+Cost", 0, "Advisory"],
   [56, "Schema Validation & Quality", "Schema Versioning", 0.51, "Low"],
   [57, "Specialist Schema Types", "Speakable + Valid Selectors", 0, "Advisory"],
   [58, "Specialist Schema Types", "DefinedTerm on Glossary", 0, "Advisory"],
@@ -308,6 +302,7 @@ function conflictingDuplicateIds(records: Record<string, unknown>[]) {
 function result(def: CheckDefinition, state: {
   passed?: boolean;
   skipped?: boolean;
+  notApplicable?: boolean;
   warning?: boolean;
   evidence?: Record<string, unknown>;
   whatIsWrong?: string;
@@ -315,10 +310,10 @@ function result(def: CheckDefinition, state: {
   weight?: number;
   priorityScore?: number;
 }): StructuredDataCheckResult {
-  const skipped = Boolean(state.skipped);
-  const passed = skipped ? true : Boolean(state.passed);
-  const warning = !skipped && !passed && Boolean(state.warning);
-  const affected = skipped || passed ? 0 : 1;
+  const skipped = false;
+  const passed = Boolean(state.passed);
+  const warning = false;
+  const affected = passed ? 0 : 1;
   return {
     ...def,
     ...(state.severity ? { severity: state.severity } : {}),
@@ -332,10 +327,9 @@ function result(def: CheckDefinition, state: {
     evidence: {
       ...(state.evidence ?? {}),
       pagesCrawled: 1,
-      pagesChecked: skipped ? 0 : 1,
+      pagesChecked: 1,
       pagesFailed: affected,
-      affectedRate: affected * 100,
-      ...skipped ? { skippedReason: String(state.evidence?.skippedReason || "Page type or required DOM pattern not detected") } : {}
+      affectedRate: affected * 100
     }
   };
 }
@@ -385,7 +379,6 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
   const person = findByType(records, (type) => type === "Person")[0];
   const faq = findByType(records, (type) => type === "FAQPage")[0];
   const howTo = findByType(records, (type) => type === "HowTo")[0];
-  const product = findByType(records, (type) => type === "Product")[0];
   const breadcrumb = findByType(records, (type) => type === "BreadcrumbList")[0];
   const website = findByType(records, (type) => type === "WebSite")[0];
   const sameAs = [...new Set(organizations.flatMap((record) =>
@@ -394,12 +387,20 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
   const knowsAbout = organizations.flatMap((record) => asArray(record.knowsAbout as unknown[] | undefined));
   const signals = pageSignals($, url);
   const segments = pathSegments(url);
-  const localSignalCount = [
-    /\b(contact|location|directions|visit us|near me)\b/i.test(signals.pathAndHeadings),
-    /\b(opening hours|business hours|address|phone)\b/i.test(signals.visible),
-    $("address,iframe[src*='google.com/maps'],a[href^='tel:']").length > 0
-  ].filter(Boolean).length;
-  const localApplicable = Boolean(local || localSignalCount >= 2);
+  const primaryScopeForLocal = $("main,article").length ? $("main,article") : $("body").clone().find("header,footer,nav,aside").remove().end();
+const primaryVisibleForLocal = primaryScopeForLocal.text().replace(/\s+/g, " ").toLowerCase();
+const primaryPathAndHeadingsForLocal = signals.pathAndHeadings;
+
+const localSignalCount = [
+  /\b(contact|location|directions|visit us|near me)\b/i.test(primaryPathAndHeadingsForLocal),
+  /\b(opening hours|business hours|store hours|walk-?in)\b/i.test(primaryVisibleForLocal),
+  primaryScopeForLocal.find("address,iframe[src*='google.com/maps']").length > 0
+].filter(Boolean).length;
+
+const digitalOnlyBusinessSignals = /\b(online platform|digital[- ]first|forex card|remittance|saas|sign ?up|create an account|download the app|loan app|buy now|enquiry form)\b/i.test(signals.visible)
+  && !/\b(walk-?in|visit our store|in-store|book an appointment|dine[- ]in)\b/i.test(signals.visible);
+
+const localApplicable = Boolean(local) || (localSignalCount >= 2 && !digitalOnlyBusinessSignals);
   const articlePath = /^(?:blog|blogs|articles?|news|insights?|guides?)$/i.test(segments[0] ?? "") && segments.length >= 2;
   const articleDom = $("article").length === 1
     && Boolean($("article h1").length)
@@ -412,15 +413,6 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
   const visibleFaq = visibleFaqSignals($);
   const faqApplicable = Boolean(faq || visibleFaq.applicable);
   const howToApplicable = Boolean(howTo || visibleHowToSignals($, signals));
-  const productApplicable = Boolean(product
-    || /\/(products?|shop|store|p)\//i.test(url.pathname)
-    || ($("[itemprop='price'],[data-product-id],button[name='add'],form[action*='cart']").length > 0)
-    || /\b(add to cart|buy now|sku|in stock|out of stock)\b/i.test(signals.visible));
-  const visibleRatingApplicable = /\b(?:rated|rating|reviews?)\b/i.test(signals.visible)
-    && /\b[0-5](?:\.\d)?\s*(?:\/\s*5|stars?)\b/i.test(signals.visible);
-  const visibleIdentifierApplicable = /\b(?:sku|gtin|mpn|isbn)\s*[:#]/i.test(signals.visible);
-  const visibleOfferApplicable = /\b(add to cart|buy now|in stock|out of stock|price)\b/i.test(signals.visible)
-    || $("[itemprop='price'],button[name='add'],form[action*='cart']").length > 0;
   const videoApplicable = Boolean($("video,iframe[src*='youtube'],iframe[src*='vimeo']").length);
   const contentImages = primaryContentImages($);
   const imageApplicable = contentImages.length > 0 && Boolean(articleApplicable || $("main,article").length);
@@ -458,34 +450,36 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
   add(4, { passed: Boolean(textValue(org?.logo)), skipped: !org, warning: Boolean(org), evidence: { logo: textValue(org?.logo) } });
   add(5, { passed: Boolean(textValue(org?.telephone)), skipped: !localApplicable || !org, warning: localApplicable && Boolean(org) && !textValue(org?.telephone), evidence: { telephone: textValue(org?.telephone), skippedReason: localApplicable ? "" : "No local/service intent detected" } });
   add(6, { passed: Boolean(objectValue(org?.address)["@type"] || textValue(org?.address)), skipped: !localApplicable || !org, warning: localApplicable && Boolean(org) && !objectValue(org?.address)["@type"] && !textValue(org?.address), evidence: { address: org?.address ?? null } });
-  add(7, { passed: sameAs.length > 0, skipped: !org || sameAs.length === 0, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs, note: "sameAs is optional and should contain verified official profiles only." } });
-  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), skipped: !org || !sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)), skippedReason: "No verified official LinkedIn profile was detected in Organization schema" } });
-  add(9, { passed: sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), skipped: !org || !sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), evidence: { sameAsUrls: sameAs, note: "Optional; do not create profiles to satisfy this check.", skippedReason: "No verified Wikidata or Crunchbase profile was detected in Organization schema" } });
-  add(10, { passed: knowsAbout.length > 0, skipped: !org || knowsAbout.length === 0, evidence: { knowsAboutCount: knowsAbout.length, skippedReason: "knowsAbout is optional and no verified expertise topics were supplied" } });
+  add(7, { passed: sameAs.length > 0, skipped: !org, warning: Boolean(org) && sameAs.length === 0, evidence: { sameAsCount: sameAs.length, sameAsUrls: sameAs, note: "sameAs is optional and should contain verified official profiles only." } });
+  add(8, { passed: sameAs.some((item) => /linkedin\.com/i.test(item)), skipped: !org, warning: Boolean(org) && !sameAs.some((item) => /linkedin\.com/i.test(item)), evidence: { linkedinFound: sameAs.some((item) => /linkedin\.com/i.test(item)) } });
+  add(9, { passed: sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), skipped: !org, warning: Boolean(org) && !sameAs.some((item) => /wikidata\.org|crunchbase\.com/i.test(item)), evidence: { sameAsUrls: sameAs, note: "Optional; do not create profiles to satisfy this check." } });
+  add(10, { passed: knowsAbout.length > 0, skipped: !org, warning: Boolean(org) && knowsAbout.length === 0, evidence: { knowsAboutCount: knowsAbout.length } });
   add(11, { passed: textValue(org?.["@id"]).startsWith("https://"), skipped: !org, warning: Boolean(org) && !textValue(org?.["@id"]).startsWith("https://"), evidence: { id: textValue(org?.["@id"]) } });
   add(12, {
     passed: /^\d{4}(-\d{2}-\d{2})?$/.test(textValue(org?.foundingDate)),
-    skipped: !org?.foundingDate,
-    evidence: { foundingDate: textValue(org?.foundingDate), skippedReason: "foundingDate is optional and no foundingDate property was supplied" },
+    skipped: !org,
+    warning: Boolean(org) && !org.foundingDate,
+    evidence: { foundingDate: textValue(org?.foundingDate) },
     whatIsWrong: "Organization foundingDate exists but is not a valid year or ISO date."
   });
 
-  add(13, { passed: Boolean(objectValue(local?.geo).latitude && objectValue(local?.geo).longitude), skipped: !localApplicable || !local || !local.geo, evidence: { geo: local?.geo ?? null, skippedReason: "Geo coordinates are optional and no geo property was supplied" } });
-  add(14, { passed: Boolean(local?.areaServed), skipped: !localApplicable || !local || !local.areaServed, evidence: { areaServed: local?.areaServed ?? null, skippedReason: "areaServed is optional and no areaServed property was supplied" } });
-  add(15, { passed: Boolean(local?.openingHours || local?.openingHoursSpecification), skipped: !localApplicable || !local || !(local.openingHours || local.openingHoursSpecification), evidence: { openingHours: local?.openingHours ?? local?.openingHoursSpecification ?? null, skippedReason: "Opening hours are optional and no hours property was supplied" } });
+  add(13, { passed: Boolean(objectValue(local?.geo).latitude && objectValue(local?.geo).longitude), skipped: !localApplicable || !local, warning: Boolean(local) && !local.geo, evidence: { geo: local?.geo ?? null } });
+  add(14, { passed: Boolean(local?.areaServed), skipped: !localApplicable || !local, warning: Boolean(local) && !local.areaServed, evidence: { areaServed: local?.areaServed ?? null } });
+  add(15, { passed: Boolean(local?.openingHours || local?.openingHoursSpecification), skipped: !localApplicable || !local, warning: Boolean(local) && !(local.openingHours || local.openingHoursSpecification), evidence: { openingHours: local?.openingHours ?? local?.openingHoursSpecification ?? null } });
   add(16, { passed: Boolean(local), skipped: !localApplicable, warning: localApplicable, evidence: { types: local ? typesOf(local) : [], localSignalsDetected: localSignalCount } });
-  add(54, { passed: Boolean(local?.priceRange), skipped: !localApplicable || !local || !local.priceRange, evidence: { priceRange: local?.priceRange ?? "", skippedReason: "priceRange is optional and no priceRange property was supplied" } });
+  add(54, { passed: Boolean(local?.priceRange), skipped: !localApplicable || !local, warning: Boolean(local) && !local.priceRange, evidence: { priceRange: local?.priceRange ?? "" } });
 
   add(17, { passed: Boolean(article?.headline), skipped: !articleApplicable, warning: articleApplicable, evidence: { headline: article?.headline ?? "" } });
   add(18, { passed: Boolean(article?.author), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { author: article?.author ?? null } });
   add(19, { passed: /^\d{4}-\d{2}-\d{2}/.test(textValue(article?.datePublished)), skipped: !articleApplicable || !article, warning: Boolean(article?.datePublished), evidence: { datePublished: article?.datePublished ?? "" } });
   const dateCandidates = visibleDateCandidates($);
   const dateModifiedMatches = dateMatchesCandidates(dateCandidates, article?.dateModified);
-  const dateModifiedConflict = dateCandidates.length > 0 && !dateModifiedMatches;
+  const dateModifiedConflict = Boolean(article?.dateModified) && dateCandidates.length > 0 && !dateModifiedMatches;
+  const dateModifiedMissing = Boolean(articleApplicable && article && !article.dateModified);
   add(20, {
-    passed: dateModifiedMatches || !dateModifiedConflict,
-    skipped: !articleApplicable || !article || !article.dateModified || dateCandidates.length === 0,
-    warning: false,
+    passed: Boolean(article?.dateModified) && (dateModifiedMatches || !dateModifiedConflict),
+    skipped: !articleApplicable || !article || Boolean(article.dateModified && dateCandidates.length === 0),
+    warning: dateModifiedMissing,
     severity: dateModifiedConflict ? "High" : "Advisory",
     weight: dateModifiedConflict ? 2.03 : 0,
     priorityScore: dateModifiedConflict ? 72 : 15,
@@ -494,22 +488,20 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
       visibleDateCandidates: dateCandidates,
       matched: dateModifiedMatches,
       explicitConflict: dateModifiedConflict,
-      skippedReason: !article?.dateModified
-        ? "dateModified is optional and no dateModified property was supplied"
-        : "No visible modified date was detected, so the schema dateModified value cannot be verified"
+      skippedReason: "No visible modified date was detected, so the schema dateModified value cannot be verified"
     },
     whatIsWrong: dateModifiedConflict
       ? `Schema dateModified ${textValue(article?.dateModified)} conflicts with the visible page date (${dateCandidates.join(", ")}).`
       : `Schema dateModified ${textValue(article?.dateModified) || "is unavailable"} cannot be verified because no visible modified date was detected.`
   });
-  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable || !article || !article.about, evidence: { about: article?.about ?? null, skippedReason: "about is optional and no about property was supplied" } });
+  add(21, { passed: Boolean(article?.about), skipped: !articleApplicable || !article, warning: Boolean(article) && !article.about, evidence: { about: article?.about ?? null } });
   add(22, { passed: Boolean(article?.image), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { image: article?.image ?? null } });
   add(23, { passed: Boolean(article?.publisher), skipped: !articleApplicable || !article, warning: Boolean(article), evidence: { publisher: article?.publisher ?? null } });
 
   add(24, { passed: Boolean(person), skipped: !personApplicable, warning: personApplicable, evidence: { personFound: Boolean(person) } });
   add(25, { passed: Boolean(person?.name), skipped: !personApplicable || !person, evidence: { name: person?.name ?? "" } });
-  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable || !person || !asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), evidence: { sameAs: person?.sameAs ?? [], skippedReason: "LinkedIn sameAs is optional and no verified LinkedIn profile was supplied" } });
-  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable || !person || asArray(person?.knowsAbout as unknown[] | undefined).length === 0, evidence: { knowsAbout: person?.knowsAbout ?? [], skippedReason: "Person knowsAbout is optional and no verified expertise topics were supplied" } });
+  add(26, { passed: asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), skipped: !personApplicable || !person, warning: Boolean(person) && !asArray(person?.sameAs as string | string[] | undefined).some((item) => /linkedin\.com/i.test(String(item))), evidence: { sameAs: person?.sameAs ?? [] } });
+  add(27, { passed: asArray(person?.knowsAbout as unknown[] | undefined).length > 0, skipped: !personApplicable || !person, warning: Boolean(person) && asArray(person?.knowsAbout as unknown[] | undefined).length === 0, evidence: { knowsAbout: person?.knowsAbout ?? [] } });
 
   const faqItems = asArray(faq?.mainEntity as unknown[] | undefined);
   add(28, { passed: Boolean(faq), skipped: !visibleFaq.applicable && !faq, warning: visibleFaq.applicable, evidence: { faqFound: Boolean(faq), visibleFaqContainers: visibleFaq.containers, visibleFaqQuestions: visibleFaq.questions } });
@@ -525,39 +517,39 @@ async function runStructuredDataPageAudit(inputUrl: string, html?: string): Prom
   }).length } });
   add(31, { passed: Boolean(howTo), skipped: !howToApplicable, warning: howToApplicable, evidence: { howToFound: Boolean(howTo) } });
   add(53, { passed: asArray(howTo?.step as unknown[] | undefined).length > 0, skipped: !howToApplicable || !howTo, warning: Boolean(howTo), evidence: { steps: asArray(howTo?.step as unknown[] | undefined).length } });
-  add(55, { passed: Boolean(howTo?.totalTime || howTo?.estimatedCost), skipped: !howTo || !(howTo.totalTime || howTo.estimatedCost), evidence: { totalTime: howTo?.totalTime ?? "", estimatedCost: howTo?.estimatedCost ?? "", skippedReason: "totalTime and estimatedCost are optional and neither property was supplied" } });
-
-  const offers = objectValue(product?.offers);
-  add(32, { passed: Boolean(product?.name && product?.description), skipped: !productApplicable, warning: productApplicable, evidence: { productFound: Boolean(product), name: product?.name ?? "", brand: product?.brand ?? "", description: Boolean(product?.description) } });
-  add(33, { passed: Boolean(offers.price && offers.availability), skipped: !productApplicable || !product || !visibleOfferApplicable, warning: Boolean(offers.price || offers.availability), evidence: { offers, skippedReason: "No visible commerce offer pattern was detected" } });
-  add(34, { passed: Boolean(product?.aggregateRating), skipped: !productApplicable || !product || !visibleRatingApplicable, warning: visibleRatingApplicable, evidence: { aggregateRating: product?.aggregateRating ?? null, skippedReason: "No visible rating or review pattern was detected" } });
-  add(35, { passed: Boolean(product?.gtin || product?.gtin13 || product?.mpn || product?.sku), skipped: !productApplicable || !product || !visibleIdentifierApplicable, warning: visibleIdentifierApplicable, evidence: { gtin: product?.gtin ?? product?.gtin13 ?? "", mpn: product?.mpn ?? "", sku: product?.sku ?? "", skippedReason: "No visible product identifier was detected" } });
+  add(55, { passed: Boolean(howTo?.totalTime || howTo?.estimatedCost), skipped: !howTo, warning: Boolean(howTo) && !(howTo.totalTime || howTo.estimatedCost), evidence: { totalTime: howTo?.totalTime ?? "", estimatedCost: howTo?.estimatedCost ?? "" } });
 
   add(36, { passed: Boolean(breadcrumb), skipped: url.pathname === "/", evidence: { breadcrumbFound: Boolean(breadcrumb) } });
   add(37, { passed: Boolean(breadcrumb?.itemListElement), skipped: !breadcrumb, evidence: { itemListElement: breadcrumb?.itemListElement ?? null } });
   add(38, { passed: Boolean(website), skipped: url.pathname !== "/", warning: url.pathname === "/", evidence: { websiteFound: Boolean(website) } });
-  add(39, { passed: records.some((record) => Boolean(record["@id"])) && records.length > 1, skipped: records.length < 2, warning: records.length > 1, evidence: { records: records.length, ids: ids.length } });
+  add(39, { passed: records.some((record) => Boolean(record["@id"])) && records.length > 1, skipped: records.length < 2, warning: records.length > 1 && ids.length === 0, evidence: { records: records.length, ids: ids.length } });
   add(40, { passed: findByType(records, (type) => type === "ImageObject").length > 0, skipped: !imageApplicable, warning: imageApplicable, evidence: { primaryContentImages: contentImages.length } });
   add(41, { passed: findByType(records, (type) => type === "VideoObject").length > 0, skipped: !videoApplicable, evidence: { videos: $("video,iframe[src*='youtube'],iframe[src*='vimeo']").length } });
 
   add(42, {
     passed: errors.length === 0,
-    skipped: $("script[type='application/ld+json']").length === 0,
     evidence: { parseErrors: errors, jsonLdBlocks: $("script[type='application/ld+json']").length },
     whatIsWrong: errors.length ? `JSON-LD parsing failed: ${errors.join("; ")}` : undefined
   });
-  add(43, { passed: $("script[type='application/ld+json']").length > 0, skipped: records.length === 0 && $("[itemscope],[typeof],[property]").length === 0, warning: $("[itemscope],[typeof],[property]").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, microdataRdfaSignals: $("[itemscope],[typeof],[property]").length } });
-  add(44, { passed: allUrls.every((item) => item.invalid.length === 0), skipped: records.length === 0, evidence: { invalidHttpUrls: allUrls.flatMap((item) => item.invalid).slice(0, 10) } });
-  add(51, { passed: conflictingIds.length === 0, skipped: ids.length === 0, evidence: { conflictingIds } });
-  add(52, { passed: $("script[type='application/ld+json']").length > 0, skipped: records.length === 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length } });
-  add(56, { passed: records.some((record) => Boolean(record["@context"])), skipped: records.length === 0, warning: records.length > 0, evidence: { contexts: records.map((record) => record["@context"]).filter(Boolean) } });
+  add(43, { passed: $("[itemscope],[typeof],[property]").length === 0 || $("script[type='application/ld+json']").length > 0, warning: $("[itemscope],[typeof],[property]").length > 0 && $("script[type='application/ld+json']").length === 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, microdataRdfaSignals: $("[itemscope],[typeof],[property]").length } });
+  add(44, { passed: allUrls.every((item) => item.invalid.length === 0), evidence: { invalidHttpUrls: allUrls.flatMap((item) => item.invalid).slice(0, 10) } });
+  add(51, { passed: conflictingIds.length === 0, evidence: { conflictingIds } });
+  const schemaExpected = url.pathname === "/"
+    || articleApplicable
+    || personApplicable
+    || visibleFaq.applicable
+    || howToApplicable
+    || localApplicable
+    || eventApplicable
+    || softwareApplicable
+    || definedTermApplicable;
+  add(52, { passed: !schemaExpected || $("script[type='application/ld+json']").length > 0, evidence: { jsonLdBlocks: $("script[type='application/ld+json']").length, schemaExpected } });
+  add(56, { passed: records.length === 0 || records.some((record) => Boolean(record["@context"])), warning: records.length > 0 && !records.some((record) => Boolean(record["@context"])), evidence: { contexts: records.map((record) => record["@context"]).filter(Boolean) } });
 
-  add(45, { passed: Boolean(!offers.price || normalizedText(body).includes(normalizedText(String(offers.price)))), skipped: !productApplicable || !offers.price, evidence: { price: offers.price ?? "" } });
   add(46, { passed: Boolean(!org?.telephone || normalizedText(body).includes(normalizedText(textValue(org.telephone)))), skipped: !org?.telephone, evidence: { telephone: org?.telephone ?? "" } });
   add(47, { passed: Boolean(!org?.name || normalizedText(body).includes(normalizedText(textValue(org.name)))), skipped: !org?.name, evidence: { name: org?.name ?? "" } });
   add(48, { passed: visibleDateMatches(body, article?.datePublished), skipped: !articleApplicable || !article?.datePublished, evidence: { datePublished: article?.datePublished ?? "" } });
   add(49, { passed: faqItems.length > 0 && faqItems.every((item) => normalizedText(body).includes(normalizedText(textValue(item)).slice(0, 40))), skipped: !faq, evidence: { itemCount: faqItems.length, visibleFaqQuestions: visibleFaq.questions } });
-  add(50, { passed: Boolean(!offers.availability || normalizedText(body).includes(normalizedText(String(offers.availability)).replace("https schema org ", ""))), skipped: !productApplicable || !offers.availability, evidence: { availability: offers.availability ?? "" } });
 
   add(57, { passed: findByType(records, (type) => type === "SpeakableSpecification").length > 0, skipped: !speakableApplicable, warning: speakableApplicable, evidence: { speakableApplicable } });
   add(58, { passed: findByType(records, (type) => type === "DefinedTerm").length > 0, skipped: !definedTermApplicable, warning: definedTermApplicable, evidence: { definedTermApplicable } });
@@ -600,7 +592,10 @@ function aggregatePageAudits(
       ...(representative ? {
         severity: representative.severity,
         weight: representative.weight,
-        priorityScore: representative.priorityScore
+        priorityScore: representative.priorityScore,
+        informational: representative.informational,
+        opportunity: representative.opportunity,
+        notApplicable: representative.notApplicable
       } : {}),
       passed: skipped ? true : passed,
       skipped,

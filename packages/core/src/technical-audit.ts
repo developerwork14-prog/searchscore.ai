@@ -2930,18 +2930,39 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   });
   add(82, hasSchemaType(allLdBlocks, /WebSite/) && pages.some((p) => /SearchAction/.test(p.html)), "WebSite/SearchAction schema");
   add(83, !samplePages.length || samplePages.every((p) => hasSchemaType(jsonLd(p).blocks, /BreadcrumbList/)), `${samplePages.length} interior pages crawled`);
-  const articleSchemaRate = pagePassRate((p) => !/blog|article/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Article|BlogPosting/));
-  const faqSchemaRate = pagePassRate((p) => p.$("details, .faq, [class*='faq']").length < 1 || hasSchemaType(jsonLd(p).blocks, /FAQPage/));
-  const howToSchemaRate = pagePassRate((p) => !/how-to|how to/i.test(`${new URL(p.finalUrl).pathname} ${p.$("h1").first().text().trim()}`) || hasSchemaType(jsonLd(p).blocks, /HowTo/));
-  const serviceSchemaRate = pagePassRate((p) => {
+  const articleApplicablePages = pages.filter((p) => /blog|article/i.test(new URL(p.finalUrl).pathname));
+  const faqApplicablePages = pages.filter((p) => p.$("details, .faq, [class*='faq']").length >= 1);
+  const howToApplicablePages = pages.filter((p) => /how-to|how to/i.test(`${new URL(p.finalUrl).pathname} ${p.$("h1").first().text().trim()}`));
+  const localServiceApplicablePages = pages.filter((p) => {
     const visible = `${new URL(p.finalUrl).pathname} ${p.$("h1").first().text()} ${p.$("body").text()}`;
     const localSignals = [
       /\b(location|directions|visit us|near me|local)\b/i.test(visible),
       /\b(opening hours|business hours|address)\b/i.test(visible),
       p.$("address,iframe[src*='google.com/maps'],a[href^='tel:']").length > 0
     ].filter(Boolean).length;
-    return localSignals < 2 || hasSchemaType(jsonLd(p).blocks, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/);
+    return localSignals >= 2;
   });
+  const pageTypeSchemaEvidence = (
+    applicablePages: FetchedPage[],
+    schemaPattern: RegExp,
+    issue: string
+  ) => {
+    const failed = applicablePages.filter((candidate) => !hasSchemaType(jsonLd(candidate).blocks, schemaPattern));
+    return JSON.stringify({
+      scope: "page-level-site-wide",
+      pagesCrawled: pages.length,
+      pagesChecked: applicablePages.length,
+      pagesPassed: applicablePages.length - failed.length,
+      pagesFailed: failed.length,
+      passRate: applicablePages.length ? Number((((applicablePages.length - failed.length) / applicablePages.length) * 100).toFixed(1)) : 100,
+      affectedPages: failed.slice(0, 10).map((candidate) => ({
+        url: candidate.finalUrl,
+        issueCount: 1,
+        sampleEvidence: issue
+      })),
+      sampleEvidence: failed.slice(0, 10).map((candidate) => ({ url: candidate.finalUrl, issue }))
+    });
+  };
   const personSchemaRate = pagePassRate((p) => !/author|team/i.test(new URL(p.finalUrl).pathname) || hasSchemaType(jsonLd(p).blocks, /Person/));
   const productSchemaRate = pagePassRate((p) => {
     const visible = `${new URL(p.finalUrl).pathname} ${p.$("h1").first().text()} ${p.$("body").text()}`;
@@ -2951,10 +2972,10 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
     return !productPage || hasSchemaType(jsonLd(p).blocks, /Product/);
   });
   const priceParityRate = pagePassRate((p) => !/"price"\s*:/.test(p.html) || /\$|₹|€|£|\bprice\b/i.test(p.$("body").text()));
-  add(84, articleSchemaRate.rate >= 0.8, pageRateEvidence(articleSchemaRate, "have Article schema when they look like articles"));
-  add(85, faqSchemaRate.rate >= 0.8, pageRateEvidence(faqSchemaRate, "have FAQPage schema when visible FAQ content exists"));
-  add(86, howToSchemaRate.rate >= 0.8, pageRateEvidence(howToSchemaRate, "have HowTo schema when they look like how-to pages"));
-  add(87, serviceSchemaRate.rate >= 0.75, pageRateEvidence(serviceSchemaRate, "have service/local schema when they look like service pages"));
+  add(84, articleApplicablePages.every((candidate) => hasSchemaType(jsonLd(candidate).blocks, /Article|BlogPosting/)), pageTypeSchemaEvidence(articleApplicablePages, /Article|BlogPosting/, "Article schema is missing on a detected article/blog page"), { skipped: articleApplicablePages.length === 0 });
+  add(85, faqApplicablePages.every((candidate) => hasSchemaType(jsonLd(candidate).blocks, /FAQPage/)), pageTypeSchemaEvidence(faqApplicablePages, /FAQPage/, "FAQPage schema is missing where visible FAQ content exists"), { skipped: faqApplicablePages.length === 0 });
+  add(86, howToApplicablePages.every((candidate) => hasSchemaType(jsonLd(candidate).blocks, /HowTo/)), pageTypeSchemaEvidence(howToApplicablePages, /HowTo/, "HowTo schema is missing on a detected step-by-step page"), { skipped: howToApplicablePages.length === 0 });
+  add(87, localServiceApplicablePages.every((candidate) => hasSchemaType(jsonLd(candidate).blocks, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/)), pageTypeSchemaEvidence(localServiceApplicablePages, /LocalBusiness|ProfessionalService|MedicalBusiness|MedicalClinic|Physician|Dentist/, "LocalBusiness schema is missing on a page with clear local-business signals"), { skipped: localServiceApplicablePages.length === 0 });
   add(88, personSchemaRate.rate >= 0.8, pageRateEvidence(personSchemaRate, "have Person schema when they look like author/team pages"));
   add(89, productSchemaRate.rate >= 0.8, pageRateEvidence(productSchemaRate, "have Product schema when they look like product/pricing pages"));
   add(90, priceParityRate.rate >= 0.95, pageRateEvidence(priceParityRate, "keep schema price visible in DOM"));
@@ -3026,7 +3047,9 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   add(123, soft404Status === 404 || soft404Status === 410, `Fake URL returned status ${soft404Status || "missing"}${soft404Status === 200 && /\b(not found|page not found|no results|error)\b/i.test(soft404Body) ? " with soft error language" : ""}`);
   const rssFullTextPassed = Boolean(foundFeed) && avgFeedWords >= 120;
   add(125, rssFullTextPassed, foundFeed ? `Feed found at ${foundFeed.url}, avg item words ${avgFeedWords}` : "No feed found at /feed, /rss, or /atom.xml", { severity: "ADVISORY", weight: 0, warning: !rssFullTextPassed });
-  add(126, !historyMatch, historyMatch ? `Matched pattern: ${historyMatch}` : "No suspicious history manipulation found");
+  add(126, true, historyMatch
+    ? "History API code was detected, but no confirmed Back-button interference was observed."
+    : "No suspicious history manipulation found");
   add(127, !exitIntentMatch, exitIntentMatch ? `Matched pattern: ${exitIntentMatch}` : "No exit-intent redirects found");
   add(128, apiUrls.length === 0 || corsValues.length > 0, apiUrls.length === 0 ? "No public API found" : corsValues.length ? `CORS header: ${corsValues[0]}` : `${apiUrls.length} public API endpoints found without CORS header`);
   add(129, subdomainSslResults.every((item) => item.valid), subdomainSslResults.length ? `${subdomainSslResults.filter((item) => item.valid).length}/${subdomainSslResults.length} discovered subdomains have valid SSL` : "No linked subdomains discovered");
@@ -3134,7 +3157,9 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   }).join(", ")}` : ""}`);
   add(202, Boolean(canonicalAbs) && await fetchPage(canonicalAbs, 1800).then((canonicalPage) => canonicalPage.status === 200).catch(() => false), canonicalAbs ? `Canonical target ${canonicalAbs}` : "Canonical missing");
   add(203, Boolean(canonicalAbs) && /^https:\/\//i.test(canonicalAbs), canonicalAbs || "Canonical missing");
-  add(204, !historyMatch, historyMatch ? `Matched pattern: ${historyMatch}` : "No suspicious history manipulation found");
+  add(204, true, historyMatch
+    ? "History API code was detected, but no confirmed Back-button interference was observed."
+    : "No suspicious history manipulation found");
   add(205, !exitIntentMatch, exitIntentMatch ? `Matched pattern: ${exitIntentMatch}` : "No exit-intent redirects found");
   add(206, indexableRate.rate >= 0.98, pageRateEvidence(indexableRate, "are not noindex sitemap targets", robotsContentAllowsIndex));
   add(207, soft404Status === 404 || soft404Status === 410, `Fake URL returned status ${soft404Status || "missing"}${soft404Status === 200 && /\b(not found|page not found|no results|error)\b/i.test(soft404Body) ? " with soft error language" : ""}`);
