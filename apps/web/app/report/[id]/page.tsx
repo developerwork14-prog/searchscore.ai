@@ -1244,7 +1244,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
         <span className={styles.progress}><i style={{ width: displayedScore === null ? "0%" : `${displayedScore}%` }} /></span>
         <div className={styles.checkColumns}>
           <div>
-            <h4>{opportunities.length ? `Content opportunities (${opportunities.length})` : `Issues found (${issueCountLabel})`}</h4>
+            <h4>{opportunities.length ? `Content opportunities (${opportunities.length})` : `Issues (${issueCountLabel})`}</h4>
             {opportunities.length ? (
               <ul className={styles.checkList}>
                 {opportunities.map((opportunity) => (
@@ -1261,116 +1261,48 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
             ) : issues.length ? (
               <ul className={styles.checkList}>
                 {issues.map((issue) => (
-                  <li key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
-                    <b>!</b>
-                    <span>
-                      <strong><i className={styles.fieldLabel}>Issue Summary</i>{issue.summary || issue.name}</strong>
-                      <small className={styles.findingMeta}>
-                        <span><i>Severity</i>{issue.severity ?? "Medium"}</span>
-                        <span><i>Priority Score</i>{issue.priorityScore ?? 0}/100</span>
-                        {issue.scopeLabel ? (
-                          <span><i>Scope</i>{issue.scopeLabel}</span>
-                        ) : (
-                          <span>
-                            <i>Affected Rate</i>
-                            {issue.pagesAffected !== undefined && issue.pagesAnalyzed !== undefined
-                              ? `${issue.pagesAffected} of ${issue.pagesAnalyzed} pages`
-                              : `${issue.affectedRate ?? 0}%`}
-                          </span>
-                        )}
-                        {issue.uniqueAssetsAffected !== undefined ? <span><i>Unique Assets</i>{issue.uniqueAssetsAffected}</span> : null}
-                      </small>
-                      {issue.issue ? <small><i>What is wrong</i>{issue.issue}</small> : null}
+                  <li className={styles.issueDropdownItem} key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
+                    <details className={styles.issueDropdown}>
+                      <summary>
+                        <b>!</b>
+                        <strong>{issue.name}</strong>
+                        <i>View details</i>
+                      </summary>
+                      <div className={styles.issueDropdownBody}>
+                      {(issue.issue || issue.summary) ? <small>{issue.issue || issue.summary}</small> : null}
+                      {issue.brokenLinkEvidence?.length ? (
+                        <small className={styles.evidenceText}>
+                          <i>Failed URLs</i>
+                          <ul>
+                            {issue.brokenLinkEvidence.map((finding, index) => (
+                              <li key={`${finding.brokenUrl}-${index}`}>
+                                <a href={finding.brokenUrl} target="_blank" rel="noreferrer">{finding.brokenUrl}</a>
+                                {" "}— {finding.finalStatus}
+                              </li>
+                            ))}
+                          </ul>
+                        </small>
+                      ) : null}
                       {issue.pages?.length ? (
                         <small className={styles.affectedPages}>
-                          <i>Affected Pages</i>
-                          {issue.pages.slice(0, 3).map((page) => <a key={page} href={page} target="_blank" rel="noreferrer">{page}</a>)}
+                          <i>Pages with this issue</i>
+                          {issue.pages.map((page) => <a key={page} href={page} target="_blank" rel="noreferrer">{page}</a>)}
                         </small>
                       ) : null}
                       {issue.images?.length ? (
                         <small className={styles.affectedPages}>
-                          <i>Affected Assets</i>
+                          <i>Assets with this issue</i>
                           {issue.images.slice(0, 5).map((image) => <span key={image}>{imageFileName(image)}</span>)}
                         </small>
                       ) : null}
-                      {issue.impactLevel && issue.scaleLevel && issue.effortLevel ? (
-                        <small><i>Prioritization</i>Impact: {issue.impactLevel} · Scale: {issue.scaleLevel} · Effort: {issue.effortLevel}</small>
-                      ) : null}
-                      {issue.rootCause?.length ? (
-                        <small className={styles.evidenceText}><i>Root Cause</i><ul>{issue.rootCause.map((cause) => <li key={cause}>{cause}</li>)}</ul></small>
-                      ) : null}
-                      {issue.likelyTemplates?.length ? (
-                        <small className={styles.evidenceText}><i>Likely Templates</i><ul>{issue.likelyTemplates.map((template) => <li key={template}>{template}</li>)}</ul></small>
-                      ) : null}
-                      {issue.estimatedFixScope?.level && issue.estimatedFixScope.description ? (
-                        <small><i>Estimated Fix Scope</i><strong>{issue.estimatedFixScope.level}</strong>{issue.estimatedFixScope.description}</small>
-                      ) : null}
-                      <small><i>Why it matters</i>{issue.whyItMatters || issue.businessImpact}</small>
-                      {issue.businessImpact ? <small><i>Business Impact</i>{issue.businessImpact}</small> : null}
-                      {issue.overallAiVisibilityImpact ? (
-                        <small className={styles.platformImpact}>
-                          <i>Overall AI Visibility Impact</i>
-                          <strong>{issue.overallAiVisibilityImpact.level}</strong>
-                          {issue.overallAiVisibilityImpact.explanation ? <em>{issue.overallAiVisibilityImpact.explanation}</em> : null}
-                        </small>
-                      ) : issue.aiVisibilityImpact ? <small><i>Overall AI Visibility Impact</i>{issue.aiVisibilityImpact}</small> : null}
                       {issue.fixes?.length ? (
                         <small className={styles.actionSteps}>
-                          <i>Recommended Fix</i>
+                          <i>How to fix</i>
                           <ol>{issue.fixes.map((step) => <li key={step}>{step}</li>)}</ol>
                         </small>
                       ) : null}
-                      {issue.developerNotes ? <small><i>Implementation Guide</i>{issue.developerNotes}</small> : null}
-                      {issue.evidenceLines?.length ? (
-                        <small className={styles.evidenceText}>
-                          <i>Validation Summary</i>
-                          <ul>{issue.evidenceLines.map((line) => <li key={line}>{line}</li>)}</ul>
-                        </small>
-                      ) : issue.evidence ? <small className={styles.evidenceText}><i>Validation Summary</i>{issue.evidence}</small> : null}
-                      {issue.brokenLinkEvidence?.length ? (
-                        <small className={styles.brokenLinkEvidence}>
-                          <i>Broken-link evidence</i>
-                          {issue.brokenLinkEvidence.map((finding, index) => (
-                            <dl key={`${finding.brokenUrl}-${finding.sourcePage}-${index}`}>
-                              <div><dt>Broken URL</dt><dd><a href={finding.brokenUrl} target="_blank" rel="noreferrer">{finding.brokenUrl}</a></dd></div>
-                              {finding.redirectHops > 0 ? (
-                                <div><dt>Redirect Destination</dt><dd><a href={finding.finalUrl} target="_blank" rel="noreferrer">{finding.finalUrl}</a></dd></div>
-                              ) : null}
-                              <div><dt>{finding.redirectHops > 0 ? "Final Status" : "HTTP Status"}</dt><dd>{finding.finalStatus}</dd></div>
-                              <div><dt>Source Page</dt><dd><a href={finding.sourcePage} target="_blank" rel="noreferrer">{finding.sourcePage}</a></dd></div>
-                            </dl>
-                          ))}
-                        </small>
-                      ) : null}
-                      {issue.representativeImage ? (
-                        <small className={styles.representativeExample}>
-                          <i>Representative example</i>
-                          <dl>
-                            <div><dt>Image</dt><dd>{issue.representativeImage.fileName}</dd></div>
-                            <div><dt>Issue</dt><dd>{issue.representativeImage.issue}</dd></div>
-                            <div><dt>Suggested alt</dt><dd>“{issue.representativeImage.suggestedAlt}”</dd></div>
-                          </dl>
-                        </small>
-                      ) : null}
-                      {issue.confidence ? <small><i>Detection Confidence</i>{issue.confidence.score}% — {issue.confidence.reason}</small> : null}
-                      {issue.topFixCandidates?.length ? (
-                        <small className={styles.affectedPages}>
-                          <i>Top Fix Candidates</i>
-                          {issue.topFixCandidates.map((candidate) => /^https?:\/\//i.test(candidate)
-                            ? <a key={candidate} href={candidate} target="_blank" rel="noreferrer">{candidate}</a>
-                            : <span key={candidate}>{candidate}</span>)}
-                        </small>
-                      ) : null}
-                      {(issue.pages?.length || issue.images?.length || issue.bestPracticeExample) ? (
-                        <details className={styles.technicalEvidence}>
-                          <summary>Technical evidence and implementation notes</summary>
-                          {issue.pages?.length ? <small className={styles.affectedPages}><i>Affected Pages</i>{issue.pages.map((page) => <a key={page} href={page} target="_blank" rel="noreferrer">{page}</a>)}</small> : null}
-                          {issue.images?.length ? <small className={styles.affectedPages}><i>Affected Assets</i>{issue.images.map((image) => /^https?:\/\//i.test(image) ? <a key={image} href={image} target="_blank" rel="noreferrer">{imageFileName(image)}</a> : <span key={image}>{image}</span>)}</small> : null}
-                          {issue.bestPracticeExample ? <small><i>Best-practice example</i><code>{issue.bestPracticeExample}</code></small> : null}
-                        </details>
-                      ) : null}
-                    </span>
-                    {issue.meta ? <em>{issue.meta}</em> : null}
+                      </div>
+                    </details>
                   </li>
                 ))}
               </ul>
@@ -1381,7 +1313,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
           <div>
             {!skipped && !informationalOnly ? (
               <>
-                <h4>Passed checks ({passedCount})</h4>
+                <h4>Passed ({passedCount})</h4>
                 {passed.length ? (
                   <ul className={styles.checkList}>
                     {passed.map((item) => (

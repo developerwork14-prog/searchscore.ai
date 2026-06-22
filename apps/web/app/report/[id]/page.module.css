@@ -1300,6 +1300,62 @@
   padding: 8px 10px;
 }
 
+.checkList li.issueDropdownItem {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.issueDropdown summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.issueDropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.issueDropdown summary strong {
+  color: #111;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.issueDropdown summary > i {
+  color: #8A6D1F;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.issueDropdown[open] summary {
+  border-bottom: 1px solid var(--border);
+  background: #FFF9ED;
+}
+
+.issueDropdown[open] summary > i {
+  font-size: 0;
+}
+
+.issueDropdown[open] summary > i::after {
+  content: "Hide details";
+  font-size: 11px;
+}
+
+.issueDropdownBody {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 14px 44px;
+}
+
 .checkList b {
   display: inline-grid;
   min-width: 24px;
