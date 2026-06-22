@@ -187,8 +187,8 @@ export default function HomePage() {
           </div>
         </header>
 
-        <div className="grid flex-1 gap-8 py-7 sm:gap-10 sm:py-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:items-center lg:py-10">
-          <section className="max-w-5xl">
+        <div className="grid flex-1 gap-8 py-7 sm:gap-10 sm:py-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:gap-x-8 lg:gap-y-0 lg:py-10">
+          <section className="order-1 max-w-5xl lg:col-start-1 lg:row-start-1">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-gold/30 bg-white/78 px-3 py-2 text-xs font-bold text-ink shadow-soft backdrop-blur sm:mb-6 sm:text-sm">
               <WandSparkles className="size-3.5 text-[#8A6D1F] sm:size-4" />
               Multi-channel visibility scoring
@@ -201,8 +201,10 @@ export default function HomePage() {
             <p className="mt-4 max-w-2xl text-[15px] font-medium leading-6 text-ink/62 sm:mt-5 sm:text-lg sm:leading-7">
               Generate a boardroom-ready visibility score across AI answers, classic search, local discovery, video results, entity authority, and category-level prompts.
             </p>
+          </section>
 
-            <div className="mt-7 grid max-w-4xl gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="order-3 max-w-5xl lg:col-start-1 lg:row-start-2 lg:mt-7">
+            <div className="grid max-w-4xl gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {channels.map((channel) => {
                 const Icon = channel.icon;
                 return (
@@ -230,7 +232,7 @@ export default function HomePage() {
             </div>
           </section>
 
-          <div ref={auditFormRef}>
+          <div ref={auditFormRef} className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-center">
           <Card className={`relative overflow-hidden border-black/10 bg-white/96 shadow-panel ${isAuditFormHighlighted ? "audit-card-focus" : ""}`}>
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold via-mint to-teal" />
             <div className="border-b border-black/10 bg-ink p-5 text-white">
