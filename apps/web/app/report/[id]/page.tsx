@@ -73,7 +73,7 @@ type RecommendationDetails = {
   bestPracticeExample?: string;
   developerNotes?: string;
 };
-type CheckLike = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; warning?: boolean; severity?: string; scope?: string; evidence?: unknown; recommendation?: string | RecommendationDetails; recommendationDetails?: RecommendationDetails };
+type CheckLike = { id?: number; category?: string; name?: string; passed?: boolean; skipped?: boolean; notApplicable?: boolean; warning?: boolean; informational?: boolean; opportunity?: string; severity?: string; priorityScore?: number; scope?: string; evidence?: unknown; issueSummary?: string; whatIsWrong?: string; businessImpact?: string; validationSummary?: string[]; recommendation?: string | RecommendationDetails; recommendationDetails?: RecommendationDetails };
 type GeoIssueCategory = CategoryLike & {
   failedCheckDetails?: { name?: string; severity?: string; evidence?: string; recommendation?: string }[];
   skippedCheckDetails?: { name?: string; reason?: string }[];
@@ -107,7 +107,7 @@ function scoreFromCategories(categories: CategoryLike[], fallback = 0) {
 }
 
 function issueCount(categories: CategoryLike[]) {
-  return categories.reduce((sum, category) => sum + category.failedChecks + (category.warningChecks ?? 0), 0);
+  return categories.reduce((sum, category) => sum + category.failedChecks, 0);
 }
 
 function checksRepresentFailedAudit(checks: readonly CheckLike[] | undefined) {
@@ -403,6 +403,7 @@ type DetailItem = {
   severity?: string;
   priority?: string;
   priorityScore?: number;
+  scopeLabel?: string;
   impactLevel?: string;
   scaleLevel?: string;
   effortLevel?: string;
@@ -424,6 +425,7 @@ type DetailItem = {
   developerNotes?: string;
   evidence?: string;
   evidenceLines?: string[];
+  brokenLinkEvidence?: { brokenUrl: string; finalUrl: string; finalStatus: string; redirectHops: number; sourcePage: string }[];
   topFixCandidates?: string[];
   pages?: string[];
   images?: string[];
@@ -435,6 +437,24 @@ type DetailItem = {
   };
 };
 
+function brokenLinkEvidenceFromEvidence(value: unknown) {
+  const evidence = evidenceObject(value);
+  const records = Array.isArray(evidence?.brokenLinkEvidence) ? evidence.brokenLinkEvidence : [];
+  return records.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const brokenUrl = String(record.brokenUrl ?? "").trim();
+    const finalUrl = String(record.finalUrl ?? brokenUrl).trim();
+    const sourcePage = String(record.sourcePage ?? "").trim();
+    const finalStatus = String(record.finalStatus ?? record.status ?? "").trim();
+    const recordedRedirectHops = Number(record.redirectHops);
+    const redirectHops = Number.isFinite(recordedRedirectHops)
+      ? Math.max(0, recordedRedirectHops)
+      : finalUrl !== brokenUrl ? 1 : 0;
+    return brokenUrl && finalUrl && sourcePage && finalStatus ? [{ brokenUrl, finalUrl, finalStatus, redirectHops, sourcePage }] : [];
+  });
+}
+
 function checksForCategory(tab: TabInfo, category: CategoryLike) {
   return tab.checks.filter((check) => check.category === category.categoryName);
 }
@@ -444,7 +464,7 @@ function boundedSummaryLine(value: string) {
   return cleaned.length <= 150 ? cleaned : `${cleaned.slice(0, 149).trimEnd()}…`;
 }
 
-function fallbackValidationSummary(value: unknown) {
+function fallbackValidationSummary(value: unknown, detectedFailure?: string) {
   const evidence = evidenceObject(value);
   const pagesCrawled = Number(evidence?.pagesCrawled);
   const pagesChecked = Number(evidence?.pagesChecked);
@@ -452,14 +472,28 @@ function fallbackValidationSummary(value: unknown) {
   const rate = Number.isFinite(pagesChecked) && pagesChecked > 0 && Number.isFinite(pagesFailed)
     ? Math.round((pagesFailed / pagesChecked) * 1000) / 10
     : 0;
+  const firstAffected = Array.isArray(evidence?.affectedPages) && evidence.affectedPages[0] && typeof evidence.affectedPages[0] === "object"
+    ? evidence.affectedPages[0] as Record<string, unknown>
+    : null;
+  const pageEvidence = firstAffected?.evidence && typeof firstAffected.evidence === "object"
+    ? firstAffected.evidence as Record<string, unknown>
+    : evidence;
+  const parserErrors = Array.isArray(pageEvidence?.parseErrors) ? pageEvidence.parseErrors.map(String).filter(Boolean) : [];
+  const visibleDates = Array.isArray(pageEvidence?.visibleDateCandidates) ? pageEvidence.visibleDateCandidates.map(String).filter(Boolean) : [];
+  const evidenceDetail = parserErrors.length
+    ? `Parser error: ${parserErrors[0]}`
+    : pageEvidence?.schemaDateModified
+      ? `Date evidence: schema ${String(pageEvidence.schemaDateModified)}; visible ${visibleDates.join(", ") || "none detected"}`
+      : "";
   return [
     `Pages crawled: ${Number.isFinite(pagesCrawled) ? pagesCrawled : "Unavailable"}`,
     `Pages analyzed: ${Number.isFinite(pagesChecked) ? pagesChecked : "Unavailable"}`,
     `Pages affected: ${Number.isFinite(pagesFailed) ? pagesFailed : "Unavailable"}`,
     `Affected rate: ${rate}% (${Number.isFinite(pagesFailed) ? pagesFailed : "Unavailable"} of ${Number.isFinite(pagesChecked) ? pagesChecked : "Unavailable"} pages)`,
-    "Most common issue: Detailed pattern data is retained in technical evidence.",
+    evidenceDetail,
+    `Most common issue: ${detectedFailure || "See the affected-page evidence for the detected signal."}`,
     "Expected outcome: The affected parameter passes consistently across analyzed pages."
-  ].map(boundedSummaryLine);
+  ].filter(Boolean).map(boundedSummaryLine);
 }
 
 function sentenceSteps(value: string) {
@@ -484,9 +518,41 @@ function genericAiImpact(name: string) {
 function priorityFromCheck(check: CheckLike) {
   if (check.warning) return "Low";
   const severity = (check.severity ?? "").toLowerCase();
+  if (severity === "advisory") return "Low";
   if (severity === "critical" || severity === "high" || impactForFinding(check) === "high") return "High";
   if (severity === "low") return "Low";
   return "Medium";
+}
+
+function normalizedSeverity(value?: string, warning = false) {
+  if (warning) return "Advisory";
+  const severity = (value ?? "").toLowerCase();
+  if (severity === "blocker" || severity === "critical") return "Critical";
+  if (severity === "major" || severity === "high") return "High";
+  if (severity === "minor" || severity === "medium" || severity === "minor attention") return "Medium";
+  if (severity === "advisory") return "Advisory";
+  if (severity === "low") return "Low";
+  return "Medium";
+}
+
+function numericPriorityScore(check: CheckLike, severity: string, provided?: number) {
+  if (typeof provided === "number" && Number.isFinite(provided)) return Math.max(0, Math.min(100, Math.round(provided)));
+  if (check.warning || severity === "Low" || severity === "Advisory") return 30;
+  if (severity === "Critical") return check.scope === "domain" ? 95 : 88;
+  if (severity === "High") return check.scope === "domain" ? 85 : 72;
+  const impact = impactForFinding(check);
+  if (impact === "high") return 65;
+  if (impact === "medium") return 50;
+  return 35;
+}
+
+function issueScopeLabel(check: CheckLike) {
+  const evidence = evidenceObject(check.evidence);
+  if (check.scope !== "domain" && evidence?.scope !== "domain-level") return undefined;
+  const name = (check.name ?? "").toLowerCase();
+  if (/robots/.test(name)) return "Sitewide configuration check";
+  if (/sitemap/.test(name)) return "Sitewide discovery check";
+  return "Sitewide check";
 }
 
 function affectedRateFromEvidence(value: unknown) {
@@ -619,12 +685,17 @@ function evidenceObject(value: unknown): Record<string, unknown> | null {
 
 function skippedReasonText(check: CheckLike) {
   const evidence = check.evidence;
-  if (evidence && typeof evidence === "object") {
-    const record = evidence as Record<string, unknown>;
-    const reason = record.reason ?? record.skippedReason ?? record.note;
+  const record = evidenceObject(evidence);
+  if (record) {
+    const reason = record.reason ?? record.skippedReason ?? record.note ?? record.error;
     if (typeof reason === "string" && reason.trim()) return reason;
   }
   return evidenceText(evidence);
+}
+
+function checksForCategories(checks: CheckLike[], categories: CategoryLike[]) {
+  const categoryNames = new Set(categories.map((category) => category.categoryName));
+  return checks.filter((check) => check.category && categoryNames.has(check.category));
 }
 
 function pushUniqueUrl(urls: string[], value: unknown) {
@@ -698,9 +769,119 @@ function affectedImagesFromEvidence(value: unknown) {
   return urlsFromEvidenceKeys(value, ["image", "imageUrl", "imageUrls", "src", "missingAlt", "missingAltImages", "sampleImages", "nonDescriptive", "unstableUrls"]);
 }
 
+function robotsTxtCandidateFromEvidence(value: unknown) {
+  const evidence = evidenceObject(value);
+  const sample = Array.isArray(evidence?.sampleEvidence) && evidence.sampleEvidence[0] && typeof evidence.sampleEvidence[0] === "object"
+    ? evidence.sampleEvidence[0] as Record<string, unknown>
+    : {};
+  const explicit = String(sample.robotsUrl ?? "").trim();
+  if (/^https?:\/\//i.test(explicit)) return explicit;
+  const requested = String(sample.requestedUrl ?? "").trim();
+  if (requested.endsWith("/robots.txt")) return requested;
+  try {
+    return `${new URL(requested).origin}/robots.txt`;
+  } catch {
+    return "";
+  }
+}
+
+function sourceTemplateCandidatesFromEvidence(value: unknown, details?: RecommendationDetails) {
+  const candidates: string[] = [];
+  details?.likelyTemplates?.forEach((item) => {
+    if (item && !candidates.includes(item)) candidates.push(item);
+  });
+  details?.rootCause?.forEach((item) => {
+    const normalized = item.toLowerCase();
+    const label = normalized.includes("shared navigation")
+      ? "Shared Navigation Template"
+      : normalized.includes("footer")
+        ? "Shared Footer Template"
+        : "";
+    if (label && !candidates.includes(label)) candidates.push(label);
+  });
+  const evidence = evidenceObject(value);
+  const groups = Array.isArray(evidence?.brokenUrlGroups) ? evidence.brokenUrlGroups as unknown[] : [];
+  groups.forEach((group) => {
+    if (!group || typeof group !== "object") return;
+    const locations = Array.isArray((group as Record<string, unknown>).locations)
+      ? (group as Record<string, unknown>).locations as unknown[]
+      : [];
+    locations.forEach((location) => {
+      const normalized = String(location ?? "").toLowerCase();
+      const label = normalized.includes("shared navigation")
+        ? "Shared Navigation Template"
+        : normalized.includes("footer")
+          ? "Shared Footer Template"
+          : "";
+      if (label && !candidates.includes(label)) candidates.push(label);
+    });
+  });
+  return candidates;
+}
+
+function topFixCandidatesForCheck(check: CheckLike, details: RecommendationDetails | undefined, pages: string[]) {
+  if (details?.topFixCandidates?.length) return details.topFixCandidates.slice(0, 3);
+  const name = `${check.category ?? ""} ${check.name ?? ""}`.toLowerCase();
+  if (/robots\.txt|sitemap/.test(name)) {
+    const robots = robotsTxtCandidateFromEvidence(check.evidence);
+    return robots ? [robots] : pages.slice(0, 3);
+  }
+  const sourceCandidates = [...pages.slice(0, 3), ...sourceTemplateCandidatesFromEvidence(check.evidence, details)]
+    .filter((item, index, all) => item && all.indexOf(item) === index);
+  return sourceCandidates.slice(0, 3);
+}
+
 function fixForIssue(name: string, categoryName: string, evidence = "") {
   const text = `${categoryName} ${name}`.toLowerCase();
   const evidenceText = evidence.toLowerCase();
+  if (/js-rendered content available in raw html|raw html content|ssr for oai-searchbot/.test(text)) {
+    return "Ensure primary content is available in the initial HTML response or server-rendered markup.";
+  }
+  if (/data point density/.test(text)) {
+    return "Add factual details, numbers, examples, comparisons, or entity-rich statements where relevant.";
+  }
+  if (/definedterm/.test(text)) {
+    return "Add DefinedTerm schema only on glossary term pages.";
+  }
+  if (/json-ld syntax valid/.test(text)) {
+    return "Correct the JSON-LD syntax error shown in the validation evidence, then parse the updated block again.";
+  }
+  if (/datemodified matches visible date|schema-dom: date match/.test(text)) {
+    return "Make schema dateModified match the visible updated date, or remove dateModified when no reliable update date is shown.";
+  }
+  if (/faqpage when faq in dom/.test(text)) {
+    return "Add FAQPage schema only to pages with visible question-and-answer content, and keep it identical to the displayed FAQs.";
+  }
+  if (/faqpage text|schema-dom: faq match/.test(text)) {
+    return "Make each FAQPage question and answer match the visible FAQ wording on that same page.";
+  }
+  if (/howto on step-by-step/.test(text)) {
+    return "Add HowTo schema only when the page contains a genuine ordered, step-by-step process.";
+  }
+  if (/person schema|profilepage|person:/.test(text)) {
+    return "Add Person schema only on bio/profile pages.";
+  }
+  if (/softwareapp|softwareapplication/.test(text)) {
+    return "Add SoftwareApplication schema only on actual tool/app pages.";
+  }
+  if (/\bevent\b|webinar/.test(text)) {
+    return "Add Event schema only when the page promotes a real dated event or webinar.";
+  }
+  if (/imageobject/.test(text)) {
+    return "Add ImageObject schema for primary content images only.";
+  }
+  if (/article schema|article:/.test(text)) {
+    return "Add Article schema only on blog/article pages, and make its properties match the visible article.";
+  }
+  if (/product schema|product:/.test(text)) {
+    return "Add Product schema only on product or ecommerce pages, using visible product details.";
+  }
+  if (/localbusiness/.test(text)) {
+    return "Add LocalBusiness schema only when the page represents a real local business or location.";
+  }
+  if (/knowsabout/.test(text)) {
+    return "Add knowsAbout topics only when they accurately describe the business expertise.";
+  }
   if (/title length|titles within recommended|title tag.*30|title.*30-60/.test(text)) {
     return "Some page titles are outside the recommended 30-60 character range. Review longer or shorter titles and keep the primary keyword and brand while removing unnecessary words.";
   }
@@ -723,7 +904,7 @@ function fixForIssue(name: string, categoryName: string, evidence = "") {
     return "Add the visible business phone and address into your Organization or LocalBusiness JSON-LD schema.";
   }
   if (/sameas/.test(text)) {
-    return "Add official profile links in schema, such as LinkedIn, Facebook, Instagram, YouTube, Crunchbase, or Wikidata if available.";
+    return "Optional entity reinforcement: add official sameAs links when verified profiles exist. Do not create profiles only to satisfy this check.";
   }
   if (/https \+ valid ssl|ssl certificate valid|https protocol|ssl covers|ssl covers all subdomains|ssl covers discovered subdomains/.test(text)) {
     return "Make sure the website opens with https:// and shows a secure lock in the browser. If it does not, ask your hosting provider to install or renew the SSL certificate.";
@@ -809,7 +990,7 @@ function fixForIssue(name: string, categoryName: string, evidence = "") {
   if (/url params stripped|parameter url/.test(text)) {
     return "Use clean internal links. Do not link to your own pages with tracking parameters like utm_source or ?ref=.";
   }
-  if (/robots|bot|gptbot|oai-searchbot|chatgpt-user|google-extended|googleother|crawler|crawlability|waf/.test(text)) {
+  if (/robots|bot access|gptbot|oai-searchbot|chatgpt-user|google-extended|googleother|crawler access|waf challenge/.test(text)) {
     return "Check robots.txt and firewall settings. Public pages should be reachable by search engines and trusted AI crawlers.";
   }
   if (/llms\.txt/.test(text)) {
@@ -831,7 +1012,7 @@ function fixForIssue(name: string, categoryName: string, evidence = "") {
     return "Use one clear H1 title, then organize the page with H2 and H3 headings. Put the most important answer near the top.";
   }
   if (/schema|json-ld|structured data|sameas|organization|localbusiness|product|faqpage|videoobject|speakable/.test(text)) {
-    return "Add or fix JSON-LD schema. The schema should describe the same business, address, phone, products, FAQs, or articles that users can see on the page.";
+    return `Update the ${name} markup so it describes the visible page content and includes only properties supported by page evidence.`;
   }
   if (/faq/.test(text)) {
     return "Add real FAQs on the page, with short direct answers. If you use FAQ schema, make sure it matches the visible FAQs.";
@@ -856,7 +1037,30 @@ function fixForIssue(name: string, categoryName: string, evidence = "") {
 
 function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
   const checkItems = checks
-    .filter((check) => !check.skipped && check.passed === false)
+    .filter((check) => !check.skipped && !check.informational && check.passed === false)
+    .filter((check) => {
+      const structuredDataCategory = /^(Organization|LocalBusiness|Article|Person|FAQ & HowTo|Product|Supporting Schema Types|Schema Validation & Quality|Schema-DOM Parity|Specialist Schema Types) Schema?$/.test(check.category ?? category.categoryName)
+        || ["Supporting Schema Types", "Schema Validation & Quality", "Schema-DOM Parity", "Specialist Schema Types"].includes(check.category ?? category.categoryName);
+      const geoAeoCategory = [
+        "AI Bot Access", "AI Readiness", "Entity & Trust Signals", "FAQ & Answer Optimization",
+        "Content Authority", "Local GEO Signals", "AI Crawlability", "Structured Data Integrity",
+        "Crawlability", "Technical Access", "Content Structure", "Content Quality",
+        "Gemini Crawlability", "Local & E-Commerce", "Schema & Technical",
+        "Media & Visuals", "Robots & Bot Access", "AI Discovery Files"
+      ].includes(check.category ?? category.categoryName);
+      const eeatCategory = ["Author & Expertise", "Editorial Standards", "Trust & Transparency", "Trust Signals & Reviews", "Citations & Evidence"]
+        .includes(check.category ?? category.categoryName);
+      const indexabilityCategory = ["Index Status", "Canonicalization", "Snippet Controls", "URL & Redirect Management", "International & Pagination", "Access & Gating", "Rendering & Content Access"]
+        .includes(check.category ?? category.categoryName);
+      const trustSignalsCategory = ["NAP & Brand Consistency", "Schema-DOM Parity", "Technical Trust"]
+        .includes(check.category ?? category.categoryName);
+      if (!structuredDataCategory && !geoAeoCategory && !eeatCategory && !indexabilityCategory && !trustSignalsCategory) return true;
+      const pageCounts = pageCountsFromEvidence(check.evidence);
+      return pageCounts.pagesAffected !== undefined
+        && pageCounts.pagesAnalyzed !== undefined
+        && pageCounts.pagesAffected > 0
+        && pageCounts.pagesAnalyzed > 0;
+    })
     .map((check) => {
       const evidence = evidenceText(check.evidence);
       const recommendationDetails = typeof check.recommendation === "object"
@@ -875,12 +1079,15 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
         ? { score: recommendationDetails.detectionConfidence.score, reason: recommendationDetails.detectionConfidence.reason }
         : undefined;
       const pageCounts = pageCountsFromEvidence(check.evidence);
+      const severity = normalizedSeverity(recommendationDetails?.severity || check.severity, check.warning);
+      const priorityScore = numericPriorityScore(check, severity, recommendationDetails?.priorityScore ?? check.priorityScore);
       return {
         name: check.name || "Unnamed issue",
         meta: check.warning ? "Warning" : "Issue",
-        severity: recommendationDetails?.severity || check.severity || (check.warning ? "Low" : "Medium"),
+        severity,
         priority: recommendationDetails?.priority || priorityFromCheck(check),
-        priorityScore: recommendationDetails?.priorityScore,
+        priorityScore,
+        scopeLabel: issueScopeLabel(check),
         impactLevel: recommendationDetails?.impactLevel,
         scaleLevel: recommendationDetails?.scaleLevel,
         effortLevel: recommendationDetails?.effortLevel,
@@ -892,10 +1099,14 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
         likelyTemplates: recommendationDetails?.likelyTemplates,
         estimatedFixScope: recommendationDetails?.estimatedFixScope,
         overallAiVisibilityImpact: recommendationDetails?.overallAiVisibilityImpact,
-        summary: recommendationDetails?.issueSummary || `${check.name || "The audited parameter"} requires corrective action.`,
-        issue: recommendationDetails?.whatIsWrong || recommendationDetails?.issue || `The ${check.name || "audited parameter"} check failed on one or more analyzed pages.`,
+        summary: recommendationDetails?.issueSummary || check.issueSummary || (check.warning
+          ? `${check.name || "The audited parameter"} is an optional improvement opportunity.`
+          : `${check.name || "The audited parameter"} needs attention on affected pages.`),
+        issue: recommendationDetails?.whatIsWrong || recommendationDetails?.issue || check.whatIsWrong || (check.warning
+          ? `The advisory signal was not detected on the measured applicable pages.`
+          : `The ${check.name || "audited parameter"} check failed on the measured affected pages.`),
         whyItMatters: recommendationDetails?.whyItMatters,
-        businessImpact: recommendationDetails?.businessImpact || genericBusinessImpact(check.name || ""),
+        businessImpact: recommendationDetails?.businessImpact || check.businessImpact || genericBusinessImpact(check.name || ""),
         aiVisibilityImpact: recommendationDetails?.aiVisibilityImpact || genericAiImpact(check.name || ""),
         fixes: recommendationDetails?.recommendedFix?.slice(0, 3) || sentenceSteps(recommendationDetails?.howToFix || fallbackFix),
         bestPracticeExample: recommendationDetails?.bestPracticeExample,
@@ -903,31 +1114,46 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
         evidence: undefined,
         evidenceLines: (recommendationDetails?.whatWeChecked?.length
           ? recommendationDetails.whatWeChecked
-          : fallbackValidationSummary(check.evidence)).slice(0, 7).map(boundedSummaryLine),
-        topFixCandidates: (recommendationDetails?.topFixCandidates?.length ? recommendationDetails.topFixCandidates : pages).slice(0, 3),
+          : check.validationSummary?.length
+            ? check.validationSummary
+            : fallbackValidationSummary(check.evidence, check.whatIsWrong || `${check.name || "The audited signal"} was not detected on the affected pages.`)).slice(0, 7).map(boundedSummaryLine),
+        brokenLinkEvidence: brokenLinkEvidenceFromEvidence(check.evidence),
+        topFixCandidates: topFixCandidatesForCheck(check, recommendationDetails, pages),
         pages,
         images,
         confidence,
         representativeImage: representativeImageFromEvidence(check.evidence)
       };
     });
-  const detailItems = checks.length ? [] : ((category as GeoIssueCategory).failedCheckDetails ?? []).map((detail) => ({
+  const detailItems = checks.length ? [] : ((category as GeoIssueCategory).failedCheckDetails ?? []).filter((detail) => {
+    const counts = pageCountsFromEvidence(detail.evidence);
+    return counts.pagesAffected !== undefined
+      && counts.pagesAnalyzed !== undefined
+      && counts.pagesAffected > 0
+      && counts.pagesAnalyzed > 0
+      && affectedPagesFromEvidence(detail.evidence).length > 0;
+  }).map((detail) => {
+    const pages = affectedPagesFromEvidence(detail.evidence);
+    const check = { name: detail.name, category: category.categoryName, severity: detail.severity, evidence: detail.evidence };
+    return {
       name: detail.name || "Unnamed issue",
       meta: "Issue",
-      severity: detail.severity || "Medium",
+      severity: normalizedSeverity(detail.severity),
       priority: detail.severity === "High" || detail.severity === "Critical" ? "High" : "Medium",
+      priorityScore: numericPriorityScore({ severity: detail.severity, evidence: detail.evidence }, normalizedSeverity(detail.severity)),
       affectedRate: 0,
-      summary: `${detail.name || "The audited parameter"} requires corrective action.`,
-      issue: detail.name || "The audited parameter failed.",
+      summary: `${detail.name || "The audited parameter"} needs attention on measured affected pages.`,
+      issue: `${detail.name || "The audited signal"} was not detected on the affected pages shown in evidence.`,
       businessImpact: genericBusinessImpact(detail.name || ""),
       aiVisibilityImpact: genericAiImpact(detail.name || ""),
       fixes: detail.recommendation ? sentenceSteps(detail.recommendation) : [],
       evidence: undefined,
       evidenceLines: fallbackValidationSummary(detail.evidence),
-      topFixCandidates: affectedPagesFromEvidence(detail.evidence).slice(0, 3),
-      pages: affectedPagesFromEvidence(detail.evidence),
+      topFixCandidates: topFixCandidatesForCheck(check, undefined, pages),
+      pages,
       images: affectedImagesFromEvidence(detail.evidence)
-    }));
+    };
+  });
 
   const seen = new Map<string, DetailItem>();
   for (const item of [...detailItems, ...checkItems]) {
@@ -940,8 +1166,18 @@ function issueItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[
 
 function passedItemsFor(checks: CheckLike[]): DetailItem[] {
   return checks
-    .filter((check) => !check.skipped && check.passed && !check.warning)
+    .filter((check) => !check.skipped && !check.informational && check.passed && !check.warning)
     .map((check) => ({ name: check.name || "Unnamed passed check", meta: "Passed" }));
+}
+
+function opportunityItemsFor(checks: CheckLike[]): DetailItem[] {
+  return checks
+    .filter((check) => check.informational && check.opportunity)
+    .map((check) => ({
+      name: check.name || "Content opportunity",
+      meta: "Informational",
+      summary: check.opportunity
+    }));
 }
 
 function skippedItemsFor(category: CategoryLike, checks: CheckLike[]): DetailItem[] {
@@ -949,7 +1185,7 @@ function skippedItemsFor(category: CategoryLike, checks: CheckLike[]): DetailIte
     .filter((check) => check.skipped)
     .map((check) => ({
       name: check.name || "Unnamed skipped check",
-      meta: "Not applicable",
+      meta: check.notApplicable ? "Not applicable" : "Skipped",
       evidence: skippedReasonText(check)
     }));
   const detailItems = checks.length ? [] : ((category as GeoIssueCategory).skippedCheckDetails ?? []).map((detail) => ({
@@ -968,10 +1204,21 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
   const checks = checksForCategory(tab, category);
   const issues = issueItemsFor(category, checks);
   const passed = passedItemsFor(checks);
+  const opportunities = opportunityItemsFor(checks);
   const skippedItems = skippedItemsFor(category, checks);
-  const passedCount = category.passedChecks ?? passed.length;
+  const informationalOnly = checks.length > 0 && checks.every((check) => check.informational);
+  const allSkippedChecksAreNotApplicable = checks.some((check) => check.skipped)
+    && checks.filter((check) => check.skipped).every((check) => check.notApplicable);
+  const passedCount = Math.max(0, (category.passedChecks ?? passed.length) - opportunities.length);
   const skippedCount = category.skippedChecks ?? skippedItems.length;
   const issueCountLabel = issues.length;
+  const limitedCoverage = !skipped && skippedCount > 0;
+  const statusLabel = informationalOnly
+    ? "Informational"
+    : status === "Passed" && limitedCoverage
+      ? "Passed · limited coverage"
+      : status;
+  const displayedScore = informationalOnly ? null : score;
 
   return (
     <details className={`${styles.card} ${styles.auditRow}`}>
@@ -981,11 +1228,12 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
           <span>{category.totalChecks} checks</span>
         </div>
         <div className={styles.auditRowStats}>
-          <span className={styles.passCount}>{passedCount} passed</span>
+          {!informationalOnly ? <span className={styles.passCount}>{passedCount} passed</span> : null}
+          {opportunities.length > 0 ? <span className={styles.passCount}>{opportunities.length} opportunities</span> : null}
           <span className={issueCountLabel > 0 ? styles.issueCount : styles.passCount}>{issueCountLabel} issues</span>
           {skippedCount > 0 ? <span className={styles.skipCount}>{skippedCount} skipped</span> : null}
-          <strong>{score === null ? "N/A" : `${score}%`}</strong>
-          <span className={`${styles.badge} ${statusMeta[status].className}`}>{statusMeta[status].icon} {status}</span>
+          <strong>{displayedScore === null ? "N/A" : `${displayedScore}%`}</strong>
+          <span className={`${styles.badge} ${statusMeta[status].className}`}>{informationalOnly ? "i" : statusMeta[status].icon} {statusLabel}</span>
           <span className={styles.detailToggle}>
             <span>View details</span>
             <i aria-hidden="true" />
@@ -993,11 +1241,24 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
         </div>
       </summary>
       <div className={styles.auditRowBody}>
-        <span className={styles.progress}><i style={{ width: score === null ? "0%" : `${score}%` }} /></span>
+        <span className={styles.progress}><i style={{ width: displayedScore === null ? "0%" : `${displayedScore}%` }} /></span>
         <div className={styles.checkColumns}>
           <div>
-            <h4>Issues found ({issueCountLabel})</h4>
-            {issues.length ? (
+            <h4>{opportunities.length ? `Content opportunities (${opportunities.length})` : `Issues found (${issueCountLabel})`}</h4>
+            {opportunities.length ? (
+              <ul className={styles.checkList}>
+                {opportunities.map((opportunity) => (
+                  <li key={`${category.categoryName}-${opportunity.name}-opportunity`} className={styles.passedCheck}>
+                    <b>+</b>
+                    <span>
+                      <strong>{opportunity.name}</strong>
+                      <small>{opportunity.summary}</small>
+                    </span>
+                    <em>{opportunity.meta}</em>
+                  </li>
+                ))}
+              </ul>
+            ) : issues.length ? (
               <ul className={styles.checkList}>
                 {issues.map((issue) => (
                   <li key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
@@ -1006,14 +1267,17 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                       <strong><i className={styles.fieldLabel}>Issue Summary</i>{issue.summary || issue.name}</strong>
                       <small className={styles.findingMeta}>
                         <span><i>Severity</i>{issue.severity ?? "Medium"}</span>
-                        <span><i>Priority Score</i>{issue.priorityScore !== undefined ? `${issue.priorityScore}/100` : issue.priority ?? "Medium"}</span>
-                        <span>
-                          <i>Affected Rate</i>
-                          {issue.affectedRate ?? 0}%
-                          {issue.pagesAffected !== undefined && issue.pagesAnalyzed !== undefined
-                            ? <small>{issue.pagesAffected} of {issue.pagesAnalyzed} pages</small>
-                            : null}
-                        </span>
+                        <span><i>Priority Score</i>{issue.priorityScore ?? 0}/100</span>
+                        {issue.scopeLabel ? (
+                          <span><i>Scope</i>{issue.scopeLabel}</span>
+                        ) : (
+                          <span>
+                            <i>Affected Rate</i>
+                            {issue.pagesAffected !== undefined && issue.pagesAnalyzed !== undefined
+                              ? `${issue.pagesAffected} of ${issue.pagesAnalyzed} pages`
+                              : `${issue.affectedRate ?? 0}%`}
+                          </span>
+                        )}
                         {issue.uniqueAssetsAffected !== undefined ? <span><i>Unique Assets</i>{issue.uniqueAssetsAffected}</span> : null}
                       </small>
                       {issue.issue ? <small><i>What is wrong</i>{issue.issue}</small> : null}
@@ -1063,6 +1327,21 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                           <ul>{issue.evidenceLines.map((line) => <li key={line}>{line}</li>)}</ul>
                         </small>
                       ) : issue.evidence ? <small className={styles.evidenceText}><i>Validation Summary</i>{issue.evidence}</small> : null}
+                      {issue.brokenLinkEvidence?.length ? (
+                        <small className={styles.brokenLinkEvidence}>
+                          <i>Broken-link evidence</i>
+                          {issue.brokenLinkEvidence.map((finding, index) => (
+                            <dl key={`${finding.brokenUrl}-${finding.sourcePage}-${index}`}>
+                              <div><dt>Broken URL</dt><dd><a href={finding.brokenUrl} target="_blank" rel="noreferrer">{finding.brokenUrl}</a></dd></div>
+                              {finding.redirectHops > 0 ? (
+                                <div><dt>Redirect Destination</dt><dd><a href={finding.finalUrl} target="_blank" rel="noreferrer">{finding.finalUrl}</a></dd></div>
+                              ) : null}
+                              <div><dt>{finding.redirectHops > 0 ? "Final Status" : "HTTP Status"}</dt><dd>{finding.finalStatus}</dd></div>
+                              <div><dt>Source Page</dt><dd><a href={finding.sourcePage} target="_blank" rel="noreferrer">{finding.sourcePage}</a></dd></div>
+                            </dl>
+                          ))}
+                        </small>
+                      ) : null}
                       {issue.representativeImage ? (
                         <small className={styles.representativeExample}>
                           <i>Representative example</i>
@@ -1100,10 +1379,34 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
             )}
           </div>
           <div>
-            <h4>{skipped ? `Skipped checks (${skippedCount})` : `Passed checks (${passedCount})`}</h4>
-            {skipped && skippedItems.length ? (
+            {!skipped && !informationalOnly ? (
               <>
-                <p className={styles.emptyChecks}>This category is not applicable for the audited page or site type.</p>
+                <h4>Passed checks ({passedCount})</h4>
+                {passed.length ? (
+                  <ul className={styles.checkList}>
+                    {passed.map((item) => (
+                      <li key={`${category.categoryName}-${item.name}-${item.meta ?? "passed"}`} className={styles.passedCheck}>
+                        <b>OK</b>
+                        <span>{item.name}</span>
+                        {item.meta ? <em>{item.meta}</em> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className={styles.emptyChecks}>{passedCount} checks passed. Detailed passed-check names are not available for this audit section.</p>
+                )}
+              </>
+            ) : null}
+            {skippedItems.length ? (
+              <>
+                <h4>{allSkippedChecksAreNotApplicable ? "Not applicable" : "Skipped / not applicable"} checks ({skippedCount})</h4>
+                {skipped ? (
+                  <p className={styles.emptyChecks}>
+                    {allSkippedChecksAreNotApplicable
+                      ? "This category is not applicable for the audited page or site type."
+                      : "These checks were skipped because they were not applicable or could not be verified in the current crawl environment."}
+                  </p>
+                ) : null}
                 <ul className={styles.checkList}>
                   {skippedItems.map((item) => (
                     <li key={`${category.categoryName}-${item.name}-${item.meta ?? "skipped"}`} className={styles.skippedCheck}>
@@ -1117,19 +1420,7 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                   ))}
                 </ul>
               </>
-            ) : passed.length ? (
-              <ul className={styles.checkList}>
-                {passed.map((item) => (
-                  <li key={`${category.categoryName}-${item.name}-${item.meta ?? "passed"}`} className={styles.passedCheck}>
-                    <b>OK</b>
-                    <span>{item.name}</span>
-                    {item.meta ? <em>{item.meta}</em> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className={styles.emptyChecks}>{passedCount} checks passed. Detailed passed-check names are not available for this audit section.</p>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -1155,10 +1446,26 @@ function AuditDetailPanel({ tab }: { tab: TabInfo }) {
       </section>
     );
   }
-  const failedCategories = tab.categories.filter((category) => category.status !== "Skipped" && (category.failedChecks > 0 || (category.warningChecks ?? 0) > 0));
-  const skippedCategories = tab.categories.filter((category) => category.status === "Skipped" || category.skippedChecks === category.totalChecks);
-  const passedCategories = tab.categories.filter((category) => category.status !== "Skipped" && category.failedChecks === 0 && (category.warningChecks ?? 0) === 0);
+  const failedCategories = tab.categories.filter((category) => category.status !== "Skipped" && category.failedChecks > 0);
+  const informationalCategoryNames = new Set(
+    tab.checks.filter((check) => check.informational).map((check) => check.category).filter(Boolean)
+  );
+  const passedCategories = tab.categories.filter((category) =>
+    category.status !== "Skipped"
+    && category.failedChecks === 0
+    && !informationalCategoryNames.has(category.categoryName)
+  );
+  const skippedCheckCount = tab.checks.filter((check) => check.skipped).length;
   const highPriorityIssues = tab.checks.filter((check) => !check.passed && !check.skipped && impactForFinding(check) === "high").length;
+  const totalChecks = tab.checks.length;
+  const completedChecks = tab.checks.filter((check) => !check.skipped).length;
+  const coverage = totalChecks ? Math.round((completedChecks / totalChecks) * 100) : 0;
+  const passedCheckCount = tab.checks.filter((check) => check.passed && !check.skipped && !check.warning).length;
+  const issueCheckCount = tab.checks.filter((check) => !check.passed && !check.skipped && !check.warning).length;
+  const advisoryCheckCount = tab.checks.filter((check) => check.warning && !check.skipped).length;
+  const notApplicableCheckCount = tab.checks.filter((check) => check.skipped && check.notApplicable).length;
+  const unverifiableCheckCount = tab.checks.filter((check) => check.skipped && !check.notApplicable).length;
+  const trustSignalSummary = tab.label === "Trust Signal";
 
   return (
     <section className={styles.auditPanel}>
@@ -1169,11 +1476,20 @@ function AuditDetailPanel({ tab }: { tab: TabInfo }) {
           <span>Review the parameters, affected page evidence, and recommended fixes for this audit area.</span>
         </div>
         <div className={styles.auditHeroScore}>
-          <strong>{tab.score}%</strong>
+          <strong>{trustSignalSummary ? completedChecks : `${tab.score}%`}</strong>
           <span>{tab.issues} open issues</span>
+          <span>{trustSignalSummary ? "completed checks" : `${coverage}% check coverage`}</span>
         </div>
       </div>
 
+      {trustSignalSummary ? (
+        <div className={styles.auditSummaryGrid}>
+          <article className={styles.card}><span>Completed checks</span><strong>{completedChecks}</strong><p>Checks with sufficient measurable evidence.</p></article>
+          <article className={styles.card}><span>Passed</span><strong>{passedCheckCount}</strong><p>Completed checks with no detected problem.</p></article>
+          <article className={styles.card}><span>Issues / advisory</span><strong>{issueCheckCount} / {advisoryCheckCount}</strong><p>Proven issues and optional opportunities.</p></article>
+          <article className={styles.card}><span>Skipped / not applicable</span><strong>{unverifiableCheckCount} / {notApplicableCheckCount}</strong><p>Unverifiable checks and checks outside the site context.</p></article>
+        </div>
+      ) : (
       <div className={styles.auditSummaryGrid}>
         <article className={styles.card}>
           <span>Needs work</span>
@@ -1186,16 +1502,17 @@ function AuditDetailPanel({ tab }: { tab: TabInfo }) {
           <p>Issues affecting the whole domain or every checked page.</p>
         </article>
         <article className={styles.card}>
-          <span>Healthy</span>
+          <span>No detected issues</span>
           <strong>{passedCategories.length}</strong>
-          <p>Categories passing current checks.</p>
+          <p>Categories with no actionable failures in completed checks.</p>
         </article>
         <article className={styles.card}>
-          <span>Not applicable</span>
-          <strong>{skippedCategories.length}</strong>
-          <p>Skipped because this page/site type does not match.</p>
+          <span>Skipped / not applicable checks</span>
+          <strong>{skippedCheckCount}</strong>
+          <p>Checks not applicable or not verifiable in this crawl environment.</p>
         </article>
       </div>
+      )}
 
       <div className={styles.sectionHead}>
         <h2>{tab.label} parameters</h2>
@@ -1230,18 +1547,22 @@ export default function ReportPage() {
     const geo = geoAll.filter((category) => !CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) && !GEMINI_CITATION_CATEGORIES.includes(category.categoryName) && category.categoryName !== "ChatGPT Citation" && category.categoryName !== "Gemini Citation");
     const citation = geoAll.filter((category) => CHATGPT_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "ChatGPT Citation");
     const gemini = geoAll.filter((category) => GEMINI_CITATION_CATEGORIES.includes(category.categoryName) || category.categoryName === "Gemini Citation");
+    const geoTabChecks = checksForCategories(geoChecks, geo);
+    const citationChecks = checksForCategories(geoChecks, citation);
+    const geminiChecks = checksForCategories(geoChecks, gemini);
     const crawlability = technical.filter((category) => ["Robots.txt & Sitemap", "Indexability & Crawlability", "Internal Linking", "AI Crawl Readiness"].includes(category.categoryName));
+    const crawlabilityChecks = checksForCategories(report.technical_audit?.checks ?? [], crawlability);
     const tabs: Record<AuditTabId, TabInfo> = {
       technical: tabMeta("Technical Audit", technical, report.technical_audit?.checks ?? [], report.technical_audit?.score, report.technical_audit?.checked_at ?? report.created_at),
-      crawlability: tabMeta("Crawlability", crawlability, report.technical_audit?.checks ?? [], scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
+      crawlability: tabMeta("Crawlability", crawlability, crawlabilityChecks, scoreFromCategories(crawlability), report.technical_audit?.checked_at ?? report.created_at),
       structuredData: tabMeta("Structured data", report.structured_data_audit?.categories ?? [], report.structured_data_audit?.checks ?? [], report.structured_data_audit?.score, report.structured_data_audit?.checked_at),
       onPageSeo: tabMeta("On-Page SEO", report.on_page_seo_audit?.categories ?? [], report.on_page_seo_audit?.checks ?? [], report.on_page_seo_audit?.score, report.on_page_seo_audit?.checked_at),
       imageSeo: tabMeta("Image SEO", report.image_seo_audit?.categories ?? [], report.image_seo_audit?.checks ?? [], report.image_seo_audit?.score, report.image_seo_audit?.checked_at),
       eeat: tabMeta("EEAT Audit", report.eeat_audit?.categories ?? [], report.eeat_audit?.checks ?? [], report.eeat_audit?.score, report.eeat_audit?.checked_at),
       trustSignals: tabMeta("Trust Signal", report.trust_signals_audit?.categories ?? [], report.trust_signals_audit?.checks ?? [], report.trust_signals_audit?.score, report.trust_signals_audit?.checked_at),
-      geo: tabMeta("GEO / AEO Audit", geo, geoChecks, scoreFromCategories(geo, report.geo_aeo_audit?.score), report.geo_aeo_audit?.checked_at),
-      citation: tabMeta("ChatGPT Citation", citation, geoChecks, scoreFromCategories(citation), report.geo_aeo_audit?.checked_at),
-      gemini: tabMeta("Gemini Citation", gemini, geoChecks, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
+      geo: tabMeta("GEO / AEO Audit", geo, geoTabChecks, scoreFromCategories(geo, report.geo_aeo_audit?.score), report.geo_aeo_audit?.checked_at),
+      citation: tabMeta("ChatGPT Citation", citation, citationChecks, scoreFromCategories(citation), report.geo_aeo_audit?.checked_at),
+      gemini: tabMeta("Gemini Citation", gemini, geminiChecks, scoreFromCategories(gemini), report.geo_aeo_audit?.checked_at),
       indexability: tabMeta("Indexability", report.indexability_audit?.categories ?? [], report.indexability_audit?.checks ?? [], report.indexability_audit?.score, report.indexability_audit?.checked_at)
     };
     const primaryTabs = [tabs.technical, tabs.structuredData, tabs.onPageSeo, tabs.imageSeo, tabs.eeat, tabs.trustSignals, tabs.geo, tabs.indexability];

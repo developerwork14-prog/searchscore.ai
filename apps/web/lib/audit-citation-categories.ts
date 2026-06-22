@@ -2,7 +2,8 @@ export const CHATGPT_CITATION_CATEGORIES: string[] = [
   "Crawlability",
   "Technical Access",
   "Content Structure",
-  "Content Quality"
+  "Content Quality",
+  "Content Opportunities"
 ] as string[];
 
 export const GEMINI_CITATION_CATEGORIES: string[] = [

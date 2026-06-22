@@ -4,13 +4,23 @@ export interface ParameterOutcome {
   passed: boolean;
   skipped?: boolean;
   warning?: boolean;
+  informational?: boolean;
+  weight?: number;
+  severity?: string;
+}
+
+function isScorable(check: ParameterOutcome) {
+  return !check.skipped
+    && !check.informational
+    && check.weight !== 0
+    && check.severity !== "Advisory";
 }
 
 export function scoreParameterOutcomes(
   checks: readonly ParameterOutcome[],
   emptyScore = 100
 ) {
-  const applicable = checks.filter((check) => !check.skipped);
+  const applicable = checks.filter(isScorable);
   if (!applicable.length) return emptyScore;
   const passed = applicable.filter((check) => check.passed && !check.warning).length;
   return Math.round((passed / applicable.length) * 100);
@@ -19,7 +29,7 @@ export function scoreParameterOutcomes(
 export function statusForParameterOutcomes(
   checks: readonly ParameterOutcome[]
 ): TechnicalCategoryStatus {
-  const applicable = checks.filter((check) => !check.skipped);
+  const applicable = checks.filter(isScorable);
   if (!applicable.length) return "Skipped";
   if (applicable.some((check) => !check.passed && !check.warning)) {
     return "Needs Attention";

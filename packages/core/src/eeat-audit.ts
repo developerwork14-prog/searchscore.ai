@@ -76,13 +76,21 @@ function sameOrigin(base: URL, href: string) {
   }
 }
 
-function findLink($: cheerio.CheerioAPI, base: URL, pattern: RegExp) {
+function findLink($: cheerio.CheerioAPI, base: URL, pattern: RegExp, sameSiteOnly = true) {
   return $("a[href]").toArray()
     .map((el) => ({ href: absolute(base, $(el).attr("href") ?? ""), text: $(el).text().replace(/\s+/g, " ").trim() }))
-    .find((link) => link.href && sameOrigin(base, link.href) && (pattern.test(link.href) || pattern.test(link.text)));
+    .find((link) => link.href && (!sameSiteOnly || sameOrigin(base, link.href)) && (pattern.test(link.href) || pattern.test(link.text)));
 }
 
-function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): EeatCheckResult {
+function result(def: CheckDefinition, state: {
+  passed?: boolean;
+  skipped?: boolean;
+  notApplicable?: boolean;
+  warning?: boolean;
+  priorityScore?: number;
+  recommendation?: string;
+  evidence?: Record<string, unknown>;
+}): EeatCheckResult {
   const skipped = Boolean(state.skipped);
   const passed = skipped ? true : Boolean(state.passed);
   const warning = !skipped && !passed && Boolean(state.warning);
@@ -90,10 +98,35 @@ function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boole
     ...def,
     passed,
     skipped,
+    ...(state.notApplicable ? { notApplicable: true } : {}),
     warning,
+    ...(state.priorityScore !== undefined ? { priorityScore: state.priorityScore } : {}),
+    ...(state.recommendation ? { recommendation: state.recommendation } : {}),
     score: skipped ? 0 : passed ? 1 : 0,
     evidence: state.evidence ?? {}
   };
+}
+
+function pageEvidence(url: string, failed: boolean, details: Record<string, unknown> = {}) {
+  return {
+    pagesCrawled: 1,
+    pagesChecked: 1,
+    pagesFailed: failed ? 1 : 0,
+    affectedPages: failed ? [{ url, issueCount: 1 }] : [],
+    ...details
+  };
+}
+
+function skippedEvidence(reason: string, details: Record<string, unknown> = {}) {
+  return { reason, ...details };
+}
+
+function actualArticlePage(html: string, pageUrl: string) {
+  if (!html) return false;
+  const page$ = cheerio.load(html);
+  const path = new URL(pageUrl).pathname.replace(/\/+$/, "");
+  return /\/(?:blogs?|articles?|news|insights?|guides?)\/[^/]+$/i.test(path)
+    || (page$("article h1").length > 0 && wordCount(page$("article").text()) >= 150);
 }
 
 function summarize(checks: EeatCheckResult[]): EeatCategorySummary[] {
@@ -124,8 +157,24 @@ function hasByline($: cheerio.CheerioAPI) {
 
 function bylineBioLink($: cheerio.CheerioAPI, base: URL) {
   return $("a[href]").toArray()
-    .map((el) => ({ href: absolute(base, $(el).attr("href") ?? ""), text: $(el).text().trim() }))
-    .find((link) => link.href && sameOrigin(base, link.href) && /author|team|about|bio|profile/i.test(link.href + " " + link.text));
+    .map((el) => {
+      const node = $(el);
+      const href = absolute(base, node.attr("href") ?? "");
+      const explicitAuthorLink = /\bauthor\b/i.test(node.attr("rel") ?? "")
+        || node.closest("[class*='author' i],[class*='byline' i],[itemprop='author']").length > 0;
+      let profilePath = false;
+      let validTarget = false;
+      try {
+        const parsed = new URL(href);
+        validTarget = !parsed.hash && !/\/comments?(?:\/|$)/i.test(parsed.pathname);
+        profilePath = /\/(?:author|authors|team|people|leadership|bio|profile)(?:\/|$)/i.test(parsed.pathname)
+          && !parsed.hash;
+      } catch {
+        profilePath = false;
+      }
+      return { href, explicitAuthorLink, profilePath, validTarget };
+    })
+    .find((link) => link.href && link.validTarget && sameOrigin(base, link.href) && (link.explicitAuthorLink || link.profilePath));
 }
 
 function phoneFound(text: string) {
@@ -134,6 +183,7 @@ function phoneFound(text: string) {
     if (/\b\d+(?:\.\d+){2,}\b/.test(candidate)) return false;
     if (/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/.test(candidate)) return false;
     if (/^1800\d{6,7}$/.test(normalized)) return true;
+    if (/^91[6-9]\d{9}$/.test(normalized)) return true;
     if (/^[6-9]\d{9}$/.test(normalized)) return true;
     if (/^0\d{9,11}$/.test(normalized)) return true;
     return /^[1-9]\d{9,10}$/.test(normalized);
@@ -149,7 +199,8 @@ function addressFound(text: string) {
 }
 
 function localTrustApplicable(text: string) {
-  return /\b(local|near me|visit us|office|clinic|store|restaurant|service area|directions|hours|appointment)\b/i.test(text);
+  return /\b(near me|visit us|clinic|store|restaurant|service area|directions|opening hours|book an appointment|our location)\b/i.test(text)
+    && addressFound(text);
 }
 
 function authoritativeOutboundLinks(links: string[]) {
@@ -172,8 +223,8 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
   const links = {
     about: findLink($, base, /about/i),
     contact: findLink($, base, /contact|get in touch/i),
-    privacy: findLink($, base, /privacy/i),
-    terms: findLink($, base, /terms|conditions|tos/i),
+    privacy: findLink($, base, /privacy/i, false),
+    terms: findLink($, base, /terms|conditions|tos/i, false),
     team: findLink($, base, /team|people|leadership|authors/i),
     editorial: findLink($, base, /editorial|fact.check|review.policy|correction/i),
     caseStudy: findLink($, base, /case.stud|results|customer.story|success.story/i),
@@ -185,9 +236,24 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
     page: link?.href ? await fetchHtml(link.href) : null
   })));
   const pageFor = (key: string) => fetched.find((item) => item.key === key)?.page?.html ?? "";
-  const articleHtml = pageFor("article");
+  const fetchedUrlFor = (key: string) => fetched.find((item) => item.key === key)?.page?.url ?? "";
+  let articleHtml = pageFor("article");
+  let articleUrl = fetchedUrlFor("article") || links.article?.href || normalized;
+  if (articleHtml && !actualArticlePage(articleHtml, articleUrl)) {
+    const listing$ = cheerio.load(articleHtml);
+    const detailLink = listing$("a[href]").toArray()
+      .map((element) => absolute(new URL(articleUrl), listing$(element).attr("href") ?? ""))
+      .find((href) => href && sameOrigin(base, href) && /\/(?:blogs?|articles?|news|insights?|guides?)\/[^/]+\/?$/i.test(new URL(href).pathname));
+    if (detailLink) {
+      const detailPage = await fetchHtml(detailLink);
+      if (detailPage?.html && actualArticlePage(detailPage.html, detailPage.url)) {
+        articleHtml = detailPage.html;
+        articleUrl = detailPage.url;
+      }
+    }
+  }
   const article$ = cheerio.load(articleHtml || homepage);
-  const articleApplicable = Boolean(articleHtml || $("article").length || /blog|article|news|insight/i.test(homepage));
+  const articleApplicable = actualArticlePage(articleHtml, articleUrl) || actualArticlePage(homepage, normalized);
   const bioLink = bylineBioLink(article$, base) || bylineBioLink($, base);
   const bioPage = bioLink?.href ? await fetchHtml(bioLink.href) : null;
   const bio$ = cheerio.load(bioPage?.html ?? "");
@@ -200,9 +266,16 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
   const team$ = cheerio.load(pageFor("team"));
   const teamText = team$("body").text().replace(/\s+/g, " ").trim();
   const caseText = cheerio.load(pageFor("caseStudy"))("body").text().replace(/\s+/g, " ").trim();
-  const outboundLinks = $("a[href^='http']").toArray().map((el) => $(el).attr("href") ?? "").filter((href) => !sameOrigin(base, href));
+  const evidencePage$ = articleApplicable ? article$ : $;
+  const outboundLinks = evidencePage$("a[href]").toArray()
+    .map((el) => absolute(new URL(articleApplicable ? articleUrl : normalized), evidencePage$(el).attr("href") ?? ""))
+    .filter((href) => href && !sameOrigin(base, href));
   const authorityLinks = authoritativeOutboundLinks(outboundLinks);
-  const sourceCitations = $("article a[href^='http'],main a[href^='http'],cite,blockquote,sup a[href]").length;
+  const sourceCitations = evidencePage$("article a[href],main a[href],cite,blockquote,sup a[href]").toArray()
+    .filter((element) => {
+      const href = evidencePage$(element).attr("href");
+      return !href || !sameOrigin(base, absolute(new URL(articleApplicable ? articleUrl : normalized), href));
+    }).length;
   const localIntent = localTrustApplicable(homepage + " " + contactText);
   const hasContactLink = Boolean(links.contact || contactText);
   const results: EeatCheckResult[] = [];
@@ -211,29 +284,127 @@ export async function runEeatAudit(inputUrl: string, html?: string): Promise<Eea
     if (def) results.push(result(def, state));
   };
 
-  add(1, { passed: articleApplicable && hasByline(article$), skipped: !articleApplicable, evidence: { articleUrl: links.article?.href ?? normalized, articleDetected: articleApplicable } });
-  add(2, { passed: articleApplicable && Boolean(bioLink), skipped: !articleApplicable, warning: articleApplicable && hasByline(article$) && !bioLink, evidence: { bioLink: bioLink?.href ?? "", articleDetected: articleApplicable } });
-  add(3, { passed: Boolean(bioPage?.html), skipped: !articleApplicable && !bioLink, warning: Boolean(bioLink) && !bioPage?.html, evidence: { bioUrl: bioLink?.href ?? "", status: bioPage?.status ?? 0 } });
-  add(4, { passed: wordCount(bioText) >= 150, skipped: !bioPage?.html, warning: wordCount(bioText) >= 80, evidence: { bioUrl: bioLink?.href ?? "", words: wordCount(bioText) } });
-  add(5, { passed: bio$("a[href*='linkedin.com']").length > 0, skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { linkedinLinks: bio$("a[href*='linkedin.com']").length } });
-  add(6, { passed: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length >= 3, skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { contentLinks: bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length } });
-  add(21, { passed: /\b\d+\+?\s+(years?|yrs?)\b|\b(since|experience)\s+\d{4}\b/i.test(bioText), skipped: !bioPage?.html, warning: Boolean(bioPage?.html), evidence: { bioUrl: bioLink?.href ?? "" } });
+  add(1, {
+    passed: articleApplicable && hasByline(article$),
+    skipped: !articleApplicable,
+    notApplicable: !articleApplicable,
+    evidence: !articleApplicable
+      ? skippedEvidence("Author bylines are checked only on actual article or blog-detail pages")
+      : pageEvidence(articleUrl, !hasByline(article$), { articleDetected: true }),
+    recommendation: "Add a visible author or reviewer byline to the affected article page."
+  });
+  add(2, {
+    passed: articleApplicable && Boolean(bioLink),
+    skipped: !articleApplicable || !bioLink,
+    notApplicable: !articleApplicable,
+    evidence: !articleApplicable
+      ? skippedEvidence("Byline links are checked only on actual article or blog-detail pages")
+      : !bioLink
+        ? skippedEvidence("Optional author-profile reinforcement: no verified bio link was detected")
+        : pageEvidence(articleUrl, false, { bioLink: bioLink.href })
+  });
+  add(3, {
+    passed: Boolean(bioPage?.html),
+    skipped: !bioLink,
+    notApplicable: !articleApplicable,
+    evidence: !bioLink
+      ? skippedEvidence("Author bio-page checks require a detected byline profile link")
+      : pageEvidence(articleUrl, !bioPage?.html, { bioUrl: bioLink.href, status: bioPage?.status ?? 0 }),
+    recommendation: "Repair the affected author-profile link so it opens a public bio page."
+  });
+  add(4, {
+    passed: wordCount(bioText) >= 150,
+    skipped: !bioPage?.html,
+    notApplicable: !articleApplicable,
+    warning: Boolean(bioPage?.html) && wordCount(bioText) < 150,
+    priorityScore: 15,
+    evidence: !bioPage?.html
+      ? skippedEvidence("Bio depth is checked only when a public author bio page exists")
+      : pageEvidence(bioPage.url, wordCount(bioText) < 150, { words: wordCount(bioText) }),
+    recommendation: "Expand the author bio only with accurate qualifications, role, and relevant experience."
+  });
+  add(5, { passed: true, skipped: !bioPage?.html || bio$("a[href*='linkedin.com']").length === 0, notApplicable: !articleApplicable, evidence: skippedEvidence("LinkedIn is optional; add it only when a verified author profile exists", { linkedinLinks: bio$("a[href*='linkedin.com']").length }) });
+  add(6, { passed: true, skipped: !bioPage?.html || bio$("a[href*='/blog'],a[href*='/article'],a[href*='/news'],a[href*='/insight']").length < 3, notApplicable: !articleApplicable, evidence: skippedEvidence("Author content-volume links are optional and require a public author archive") });
+  add(21, { passed: true, skipped: !bioPage?.html || !/\b\d+\+?\s+(years?|yrs?)\b|\b(since|experience)\s+\d{4}\b/i.test(bioText), notApplicable: !articleApplicable, evidence: skippedEvidence("Quantified experience is optional and should be added only when accurate") });
 
-  add(7, { passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100, skipped: !articleApplicable, warning: articleApplicable && !pageFor("editorial"), evidence: { editorialUrl: links.editorial?.href ?? "" } });
+  add(7, {
+    passed: Boolean(pageFor("editorial")) && wordCount(cheerio.load(pageFor("editorial"))("body").text()) >= 100,
+    skipped: !articleApplicable || !pageFor("editorial"),
+    notApplicable: !articleApplicable,
+    evidence: !articleApplicable
+      ? skippedEvidence("Editorial-policy checks apply only to article-led publishers")
+      : skippedEvidence("Editorial policy is an optional publisher trust signal")
+  });
   add(8, { passed: addressFound(contactText), skipped: !localIntent, warning: localIntent && hasContactLink, evidence: { contactUrl: links.contact?.href ?? "", localIntent } });
   add(9, { passed: phoneFound(contactText), skipped: !localIntent && emailFound(contactText), warning: hasContactLink, evidence: { contactUrl: links.contact?.href ?? "", localIntent } });
-  add(10, { passed: emailFound(contactText), warning: hasContactLink || phoneFound(contactText), evidence: { contactUrl: links.contact?.href ?? "" } });
+  add(10, {
+    passed: emailFound(contactText),
+    skipped: !hasContactLink || (!emailFound(contactText) && phoneFound(contactText)),
+    warning: hasContactLink && !emailFound(contactText) && !phoneFound(contactText),
+    priorityScore: 15,
+    evidence: !hasContactLink
+      ? skippedEvidence("No contact page was available for company-email analysis")
+      : !emailFound(contactText) && phoneFound(contactText)
+        ? skippedEvidence("A company email is optional when a working phone or contact channel is provided")
+        : pageEvidence(links.contact?.href ?? normalized, !emailFound(contactText))
+  });
   add(11, { skipped: true, evidence: { reason: "Form functionality cannot be verified with 100% accuracy without submitting a form." } });
-  add(12, { passed: wordCount(privacyText) >= 300, warning: wordCount(privacyText) >= 120, evidence: { privacyUrl: links.privacy?.href ?? "", words: wordCount(privacyText) } });
-  add(13, { passed: Boolean(pageFor("terms")) && wordCount(termsText) >= 100, warning: Boolean(pageFor("terms")), evidence: { termsUrl: links.terms?.href ?? "", words: wordCount(termsText) } });
-  add(15, { passed: wordCount(aboutText) >= 300, warning: wordCount(aboutText) >= 120, evidence: { aboutUrl: links.about?.href ?? "", words: wordCount(aboutText) } });
-  add(20, { passed: Boolean(pageFor("team")) && (team$("img").length >= 2 || team$("a[href*='linkedin.com']").length >= 2 || (teamText.match(/\b(CEO|Founder|Director|Manager|Lead|Head of)\b/g) ?? []).length >= 2), skipped: !pageFor("team"), warning: Boolean(pageFor("team")), evidence: { teamUrl: links.team?.href ?? "" } });
+  add(12, {
+    passed: wordCount(privacyText) >= 120,
+    skipped: !links.privacy || !pageFor("privacy"),
+    evidence: !links.privacy
+      ? pageEvidence(normalized, true, { reason: "No privacy-policy link was detected" })
+      : !pageFor("privacy")
+        ? skippedEvidence("Privacy-policy page could not be retrieved for substantive-content verification", { privacyUrl: links.privacy.href })
+        : pageEvidence(links.privacy.href, wordCount(privacyText) < 120, { words: wordCount(privacyText) }),
+    recommendation: "Publish or repair a readable privacy policy describing data collection, use, retention, and contact rights."
+  });
+  add(13, {
+    passed: Boolean(pageFor("terms")) && wordCount(termsText) >= 100,
+    skipped: !links.terms || !pageFor("terms"),
+    evidence: !links.terms
+      ? pageEvidence(normalized, true, { reason: "No terms link was detected" })
+      : !pageFor("terms")
+        ? skippedEvidence("Terms page could not be retrieved for content verification", { termsUrl: links.terms.href })
+        : pageEvidence(links.terms.href, wordCount(termsText) < 100, { words: wordCount(termsText) }),
+    recommendation: "Publish or repair clear terms and conditions for the service."
+  });
+  add(15, {
+    passed: wordCount(aboutText) >= 120,
+    skipped: !pageFor("about"),
+    notApplicable: !pageFor("about"),
+    warning: Boolean(pageFor("about")) && wordCount(aboutText) < 120,
+    priorityScore: 15,
+    evidence: !pageFor("about")
+      ? skippedEvidence("About-page depth is checked only when an About page is detected")
+      : pageEvidence(links.about?.href ?? normalized, wordCount(aboutText) < 120, { words: wordCount(aboutText) }),
+    recommendation: "Describe the company, ownership, purpose, and relevant expertise accurately on the About page."
+  });
+  add(20, {
+    passed: Boolean(pageFor("team")) && (team$("img").length >= 2 || team$("a[href*='linkedin.com']").length >= 2 || (teamText.match(/\b(CEO|Founder|Director|Manager|Lead|Head of)\b/g) ?? []).length >= 2),
+    skipped: !pageFor("team"),
+    notApplicable: !pageFor("team"),
+    warning: Boolean(pageFor("team")),
+    evidence: !pageFor("team")
+      ? skippedEvidence("Team-page completeness is checked only when a Team or Leadership page is detected")
+      : pageEvidence(links.team?.href ?? normalized, false, { teamUrl: links.team?.href ?? "" })
+  });
 
   add(14, { passed: /trusted by|clients|customers|partners|featured in/i.test(homepage) && $("img[alt]").length >= 2, skipped: !/clients|customers|partners|featured in|trusted by|case stud/i.test(homepage), warning: /trusted by|clients|customers|partners|featured in/i.test(homepage), evidence: { logoImages: $("img[alt]").length } });
-  add(16, { passed: authorityLinks.length > 0, skipped: !articleApplicable && outboundLinks.length === 0, warning: outboundLinks.length > 0, evidence: { authorityLinks: authorityLinks.slice(0, 10), outboundLinks: outboundLinks.length } });
-  add(17, { passed: articleApplicable && sourceCitations > 0, skipped: !articleApplicable, warning: articleApplicable, evidence: { sourceCitations, articleDetected: articleApplicable } });
+  add(16, { passed: true, skipped: !articleApplicable || authorityLinks.length === 0, notApplicable: !articleApplicable, evidence: skippedEvidence(!articleApplicable ? "Authority-link checks run only on informational article or research pages" : ".edu and .gov links are optional; cite the most relevant authoritative source regardless of domain", { authorityLinks: authorityLinks.slice(0, 10), outboundLinks: outboundLinks.length }) });
+  add(17, { passed: articleApplicable && sourceCitations > 0, skipped: !articleApplicable || sourceCitations === 0, notApplicable: !articleApplicable, evidence: skippedEvidence(!articleApplicable ? "Inline citation checks run only on informational article or research pages" : "No claim requiring a validated inline source was established from the sampled page", { sourceCitations, articleDetected: articleApplicable }) });
   add(18, { skipped: true, evidence: { reason: "Verifiable claim ratio requires claim extraction and source validation; static HTML alone cannot verify it exactly." } });
-  add(19, { passed: Boolean(pageFor("caseStudy")) && /\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText), skipped: !/client|customer|case stud|portfolio|results|success/i.test(homepage), warning: Boolean(pageFor("caseStudy")), evidence: { caseStudyUrl: links.caseStudy?.href ?? "" } });
+  add(19, {
+    passed: Boolean(pageFor("caseStudy")) && /\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText),
+    skipped: !pageFor("caseStudy"),
+    notApplicable: !pageFor("caseStudy"),
+    warning: Boolean(pageFor("caseStudy")) && !/\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText),
+    priorityScore: 15,
+    evidence: !pageFor("caseStudy")
+      ? skippedEvidence("Case studies are optional and no case-study page was detected")
+      : pageEvidence(links.caseStudy?.href ?? normalized, !/\b\d+(?:\.\d+)?%|\b\d+x\b|\bROI\b|\brevenue\b|\bsaved\b/i.test(caseText)),
+    recommendation: "Add metrics only to genuine case studies when outcomes can be substantiated."
+  });
 
   const categories = summarize(results);
   const scorable = results.filter((check) => !check.skipped);

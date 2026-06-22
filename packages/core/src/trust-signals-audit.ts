@@ -37,7 +37,7 @@ const CHECKS: CheckDefinition[] = [
   [11, "Technical Trust", "Contact Form Functional", 2.67, "High"],
   [12, "Technical Trust", "No Outdated Copyright Year", 2.14, "Medium"],
   [13, "Technical Trust", "HTTPS Security Headers", 2.14, "Medium"],
-  [14, "Technical Trust", "Legal Registration Number", 2.14, "Medium"],
+  [14, "Technical Trust", "Legal Registration Number", 0, "Advisory"],
   [15, "Technical Trust", "Privacy Policy <24 Months Old", 2.14, "Medium"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
@@ -209,6 +209,21 @@ function schemaDates(records: Record<string, unknown>[]) {
   return records.flatMap((record) => [textValue(record.datePublished), textValue(record.dateModified), textValue(record.uploadDate), textValue(record.startDate), textValue(record.endDate)]).filter(Boolean);
 }
 
+function visibleDateCandidates($: cheerio.CheerioAPI) {
+  return Array.from(new Set(
+    $("time[datetime],[itemprop='datePublished'],[itemprop='dateModified'],[class*='published' i],[class*='updated' i],[class*='modified' i]")
+      .toArray()
+      .flatMap((element) => [$(element).attr("datetime") ?? "", $(element).text().replace(/\s+/g, " ").trim()])
+      .filter((value) => /\b(?:19|20)\d{2}\b/.test(value))
+  ));
+}
+
+function comparableDate(value: string) {
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return value.match(/\b((?:19|20)\d{2})-(\d{2})-(\d{2})\b/)?.[0] ?? compact(value);
+}
+
 function schemaPrices(records: Record<string, unknown>[]) {
   return records.flatMap((record) => {
     const offerRecords = asArray(record.offers as Record<string, unknown> | Record<string, unknown>[] | undefined).map(objectValue);
@@ -244,18 +259,45 @@ function footerText($: cheerio.CheerioAPI) {
   return footer || $("[class*='footer' i],[id*='footer' i]").text().replace(/\s+/g, " ").trim();
 }
 
-function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boolean; warning?: boolean; evidence?: Record<string, unknown> }): TrustSignalsCheckResult {
+function result(def: CheckDefinition, state: {
+  passed?: boolean;
+  skipped?: boolean;
+  notApplicable?: boolean;
+  warning?: boolean;
+  priorityScore?: number;
+  recommendation?: string;
+  severity?: TrustSignalsSeverity;
+  evidence?: Record<string, unknown>;
+}): TrustSignalsCheckResult {
   const skipped = Boolean(state.skipped);
   const warning = !skipped && Boolean(state.warning);
   const passed = skipped ? true : Boolean(state.passed);
   return {
     ...def,
+    severity: state.severity ?? def.severity,
     passed,
     skipped,
+    ...(state.notApplicable ? { notApplicable: true } : {}),
     warning,
+    ...(state.priorityScore !== undefined ? { priorityScore: state.priorityScore } : {}),
+    ...(state.recommendation ? { recommendation: state.recommendation } : {}),
     score: skipped ? 0 : passed ? 1 : 0,
     evidence: state.evidence ?? {}
   };
+}
+
+function pageEvidence(url: string, failed: boolean, details: Record<string, unknown> = {}) {
+  return {
+    pagesCrawled: 1,
+    pagesChecked: 1,
+    pagesFailed: failed ? 1 : 0,
+    affectedPages: failed ? [{ url, issueCount: 1 }] : [],
+    ...details
+  };
+}
+
+function skippedEvidence(reason: string, details: Record<string, unknown> = {}) {
+  return { reason, ...details };
 }
 
 function summarize(checks: TrustSignalsCheckResult[]): TrustSignalsCategorySummary[] {
@@ -322,6 +364,7 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   const schemaPhoneValues = schemaPhones(entity);
   const productRecords = findByType(records, (type) => type === "Product");
   const pageDates = schemaDates(records);
+  const visibleDates = visibleDateCandidates($);
   const prices = schemaPrices(productRecords);
   const footer = footerText($);
   const body = $("body").text().replace(/\s+/g, " ").trim();
@@ -351,6 +394,15 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
   const allEmails = emailCandidates(allText);
   const brandCandidate = brandName || schemaName;
   const currentYear = new Date().getFullYear();
+  const comparisonReady = Boolean(entity && address.full && schemaPhoneDigits.length > 0 && visibleAddress && visiblePhoneDigits.length > 0);
+  const contact$ = cheerio.load(contactPage?.html ?? "");
+  const contactFormExists = contact$("form").length > 0;
+  const supportChannelExists = contactFormExists
+    || visiblePhoneDigits.length > 0
+    || contact$("a[href^='mailto:'],a[href*='whatsapp' i],a[href*='chat' i],[class*='support' i]").length > 0;
+  const expectedEmailDomain = businessEmail ? rootDomain(domainFromEmail(businessEmail)) : rootDomain(base.hostname);
+  const conflictingEmails = allEmails.filter((email) => rootDomain(domainFromEmail(email)) !== expectedEmailDomain);
+  const regulatedIndustry = /\b(financial|finance|loan|credit|bank|insurance|healthcare|medical|clinic|investment|mortgage)\b/i.test(allText);
   const checks: TrustSignalsCheckResult[] = [];
   const add = (id: number, state: Parameters<typeof result>[1]) => {
     const def = CHECKS.find((check) => check.id === id);
@@ -359,84 +411,164 @@ export async function runTrustSignalsAudit(inputUrl: string, html?: string, bran
 
   add(1, {
     passed: Boolean(schemaAddressMatchesVisible && schemaPhoneMatchesVisible),
-    warning: visibleNapPresent && (!address.full || !schemaPhoneDigits.length),
-    evidence: {
-      schemaAddress: address.full,
-      schemaPhones: schemaPhoneValues,
-      contactUrl: contactLink?.href ?? "",
-      visibleAddress,
-      footerAddresses,
-      contactAddresses,
-      footerPhones,
-      contactPhones
-    }
+    skipped: !comparisonReady,
+    evidence: !comparisonReady
+      ? skippedEvidence("Insufficient evidence.", { schemaExists: Boolean(entity), schemaAddress: address.full, schemaPhones: schemaPhoneValues, visibleAddress, visiblePhones: allPhones })
+      : pageEvidence(normalized, !(schemaAddressMatchesVisible && schemaPhoneMatchesVisible), { schemaAddress: address.full, schemaPhones: schemaPhoneValues, contactUrl: contactLink?.href ?? "", visibleAddress, footerAddresses, contactAddresses, footerPhones, contactPhones }),
+    recommendation: "Make the verified business address and phone match across schema, footer, and contact page."
   });
   add(2, {
     passed: Boolean(address.city && [body, footer, contactText].every((text) => !text || containsExactText(text, address.city))),
-    evidence: { city: address.city, checkedSurfaces: ["homepage", "footer", "contact"] }
+    skipped: !comparisonReady || !address.city,
+    evidence: !comparisonReady || !address.city
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, ![body, footer, contactText].every((text) => !text || containsExactText(text, address.city)), { city: address.city, checkedSurfaces: ["homepage", "footer", "contact"] }),
+    recommendation: "Use the verified city name consistently across schema, footer, and contact information."
   });
   add(3, {
     passed: Boolean(brandCandidate && containsExactText(body, brandCandidate) && (!schemaName || compact(schemaName) === compact(brandCandidate)) && (!contactText || containsExactText(contactText, brandCandidate))),
-    evidence: { inputBrand: brandName, schemaName, contactUrl: contactLink?.href ?? "" }
+    skipped: !comparisonReady || !brandCandidate,
+    evidence: !comparisonReady || !brandCandidate
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, !(containsExactText(body, brandCandidate) && compact(schemaName) === compact(brandCandidate) && (!contactText || containsExactText(contactText, brandCandidate))), { inputBrand: brandName, schemaName, contactUrl: contactLink?.href ?? "" }),
+    recommendation: "Use the verified brand name consistently in schema, homepage, and contact information."
   });
   add(4, {
-    passed: allEmails.length > 0 && allEmails.every((email) => {
-      const emailDomain = domainFromEmail(email);
-      const expected = businessEmail ? rootDomain(domainFromEmail(businessEmail)) : rootDomain(base.hostname);
-      return rootDomain(emailDomain) === expected;
+    passed: conflictingEmails.length === 0 && (allEmails.length > 0 || supportChannelExists),
+    warning: conflictingEmails.length === 0 && !allEmails.length && !supportChannelExists,
+    priorityScore: conflictingEmails.length ? 65 : 15,
+    evidence: pageEvidence(normalized, conflictingEmails.length > 0 || (!allEmails.length && !supportChannelExists), {
+      emails: allEmails,
+      conflictingEmails,
+      expectedDomain: expectedEmailDomain,
+      contactFormExists,
+      phoneExists: visiblePhoneDigits.length > 0,
+      supportChannelExists
     }),
-    evidence: { emails: allEmails, expectedDomain: businessEmail ? rootDomain(domainFromEmail(businessEmail)) : rootDomain(base.hostname) }
+    recommendation: conflictingEmails.length
+      ? "Replace the conflicting public email with an address that clearly belongs to the verified business identity."
+      : "Provide at least one reliable business contact method, such as a phone number, support form, or verified email."
   });
   add(5, {
     passed: schemaAddressMatchesVisible,
-    warning: Boolean(visibleAddress && !address.full),
-    evidence: { schemaAddress: address.full, visibleAddress, footerAddresses, contactAddresses, contactUrl: contactLink?.href ?? "" }
+    skipped: !comparisonReady,
+    evidence: !comparisonReady
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, !schemaAddressMatchesVisible, { schemaAddress: address.full, visibleAddress, footerAddresses, contactAddresses, contactUrl: contactLink?.href ?? "" }),
+    recommendation: "Correct the proven address mismatch between visible contact details and organization schema."
   });
   add(6, {
     passed: allPhoneDigits.length === 1,
-    evidence: { phones: allPhones, normalizedPhones: allPhoneDigits }
+    skipped: allPhoneDigits.length === 0,
+    evidence: allPhoneDigits.length === 0
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, allPhoneDigits.length > 1, { phones: allPhones, normalizedPhones: allPhoneDigits }),
+    recommendation: "Use one verified phone number format consistently across public contact surfaces."
   });
   add(7, {
     passed: prices.length > 0 && prices.every((price) => containsExactText(body, price)),
-    evidence: { schemaPrices: prices }
+    skipped: prices.length === 0,
+    notApplicable: prices.length === 0,
+    evidence: prices.length === 0
+      ? skippedEvidence("Price parity is not applicable because no schema price was detected.")
+      : pageEvidence(normalized, !prices.every((price) => containsExactText(body, price)), { schemaPrices: prices }),
+    recommendation: "Make schema prices match the prices visibly displayed on the affected page."
   });
   add(8, {
     passed: Boolean(schemaName && containsExactText(body, schemaName)),
-    evidence: { schemaName }
+    skipped: !schemaName,
+    evidence: !schemaName
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, !containsExactText(body, schemaName), { schemaName }),
+    recommendation: "Make the organization name in schema match the visible brand name."
   });
   add(9, {
     passed: schemaPhoneDigits.length > 0 && schemaPhoneDigits.every((phone) => allPhoneDigits.includes(phone)),
-    warning: allPhoneDigits.length > 0 && schemaPhoneDigits.length === 0,
-    evidence: { schemaPhones: schemaPhoneValues, domPhones: allPhones }
+    skipped: !comparisonReady,
+    evidence: !comparisonReady
+      ? skippedEvidence("Insufficient evidence.")
+      : pageEvidence(normalized, !schemaPhoneDigits.every((phone) => allPhoneDigits.includes(phone)), { schemaPhones: schemaPhoneValues, domPhones: allPhones }),
+    recommendation: "Correct the proven phone-number mismatch between visible contact details and organization schema."
   });
   add(10, {
-    passed: pageDates.length > 0 && pageDates.every((date) => containsExactText(body, date)),
-    evidence: { schemaDates: pageDates }
+    passed: pageDates.some((schemaDate) => visibleDates.some((visibleDate) => comparableDate(schemaDate) === comparableDate(visibleDate))),
+    skipped: pageDates.length === 0 || visibleDates.length === 0,
+    notApplicable: pageDates.length === 0,
+    evidence: pageDates.length === 0
+      ? skippedEvidence("Date parity is not applicable because no comparable schema date was detected.")
+      : visibleDates.length === 0
+        ? skippedEvidence("Insufficient evidence: no comparable visible date was detected.")
+        : pageEvidence(normalized, !pageDates.some((schemaDate) => visibleDates.some((visibleDate) => comparableDate(schemaDate) === comparableDate(visibleDate))), { schemaDates: pageDates, visibleDates }),
+    recommendation: "Make schema dates match the visible dates on the affected page."
   });
   add(11, { skipped: true, evidence: { reason: "Form functionality cannot be verified with 100% accuracy without submitting the form." } });
   add(12, {
     passed: copyrightYears(allText).some((year) => year >= currentYear),
-    evidence: { copyrightYears: copyrightYears(allText), currentYear }
+    skipped: copyrightYears(allText).length === 0,
+    evidence: copyrightYears(allText).length === 0
+      ? skippedEvidence("Unable to verify a visible copyright year.")
+      : pageEvidence(normalized, !copyrightYears(allText).some((year) => year >= currentYear), { copyrightYears: copyrightYears(allText), currentYear }),
+    recommendation: `Update the visible copyright year to ${currentYear} when the footer displays an older year.`
   });
+  const requiredSecurityHeaders = {
+    "Strict-Transport-Security": headers["strict-transport-security"] ?? "",
+    "X-Content-Type-Options": headers["x-content-type-options"] ?? "",
+    "X-Frame-Options": headers["x-frame-options"] ?? "",
+    "Referrer-Policy": headers["referrer-policy"] ?? "",
+    "Permissions-Policy": headers["permissions-policy"] ?? ""
+  };
+  const missingSecurityHeaders = Object.entries(requiredSecurityHeaders).filter(([, value]) => !value).map(([name]) => name);
   add(13, {
-    passed: base.protocol === "https:" && Boolean(headers["strict-transport-security"]) && Boolean(headers["x-content-type-options"]),
-    evidence: {
+    passed: base.protocol === "https:" && missingSecurityHeaders.length === 0,
+    skipped: !headerPage,
+    evidence: !headerPage ? skippedEvidence("Unable to retrieve response headers for security verification.") : pageEvidence(normalized, base.protocol !== "https:" || missingSecurityHeaders.length > 0, {
       protocol: base.protocol,
-      strictTransportSecurity: headers["strict-transport-security"] ?? "",
-      contentSecurityPolicy: headers["content-security-policy"] ?? "",
-      xContentTypeOptions: headers["x-content-type-options"] ?? "",
-      referrerPolicy: headers["referrer-policy"] ?? ""
-    }
+      headers: requiredSecurityHeaders,
+      missingSecurityHeaders
+    }),
+    recommendation: missingSecurityHeaders.length
+      ? `Configure the missing HTTPS security headers: ${missingSecurityHeaders.join(", ")}.`
+      : "Serve the site over HTTPS with HSTS, framing, MIME-sniffing, referrer, and permissions protections."
   });
   add(14, {
     passed: legalRegistrationNumbers(allText).length > 0,
-    evidence: { legalRegistrationNumbers: legalRegistrationNumbers(allText).slice(0, 5) }
+    skipped: !regulatedIndustry,
+    notApplicable: !regulatedIndustry,
+    warning: regulatedIndustry && legalRegistrationNumbers(allText).length === 0,
+    severity: "Advisory",
+    priorityScore: 10,
+    evidence: !regulatedIndustry
+      ? skippedEvidence("Legal registration disclosure is not applicable to the detected business type.")
+      : legalRegistrationNumbers(allText).length === 0
+        ? pageEvidence(normalized, true, { reason: "Optional regulated-industry trust signal: no verifiable registration number was detected." })
+        : pageEvidence(normalized, false, { legalRegistrationNumbers: legalRegistrationNumbers(allText).slice(0, 5) }),
+    recommendation: "For regulated services, display a verified legal or regulatory registration number when one legitimately applies."
   });
   const privacyUpdated = policyDate(privacyText);
   add(15, {
     passed: Boolean(privacyUpdated && addMonths(privacyUpdated, 24) >= new Date()),
-    evidence: { privacyUrl: privacyLink?.href ?? "", status: privacyPage?.status ?? 0, lastUpdated: privacyUpdated?.toISOString() ?? "" }
+    skipped: !privacyUpdated,
+    evidence: !privacyUpdated
+      ? skippedEvidence("Unable to verify policy update date.", { privacyUrl: privacyLink?.href ?? "", status: privacyPage?.status ?? 0 })
+      : pageEvidence(privacyLink?.href ?? normalized, addMonths(privacyUpdated, 24) < new Date(), { lastUpdated: privacyUpdated.toISOString() }),
+    recommendation: "Review and visibly update the privacy policy when its verified update date is older than 24 months."
   });
+
+  for (const check of checks) {
+    if (check.passed || check.skipped) continue;
+    const pagesChecked = Number(check.evidence.pagesChecked);
+    const pagesFailed = Number(check.evidence.pagesFailed);
+    const affectedPages = Array.isArray(check.evidence.affectedPages) ? check.evidence.affectedPages : [];
+    if (!(pagesChecked > 0 && pagesFailed > 0 && affectedPages.some((page) =>
+      page && typeof page === "object" && typeof (page as Record<string, unknown>).url === "string"
+    ))) {
+      check.passed = true;
+      check.skipped = true;
+      check.warning = false;
+      check.score = 0;
+      check.evidence = skippedEvidence("Insufficient evidence.");
+    }
+  }
 
   const categories = summarize(checks);
   const scorable = checks.filter((check) => !check.skipped);

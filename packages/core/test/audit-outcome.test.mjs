@@ -20,6 +20,20 @@ assert.equal(
   statusForParameterOutcomes([{ passed: true, skipped: true }]),
   "Skipped"
 );
+assert.equal(
+  scoreParameterOutcomes([
+    { passed: true },
+    { passed: false, informational: true, weight: 0 }
+  ]),
+  100
+);
+assert.equal(
+  statusForParameterOutcomes([
+    { passed: true },
+    { passed: false, severity: "Advisory" }
+  ]),
+  "Passed"
+);
 
 const partialFailure = outcomeForEvidence({
   scope: "page-level-site-wide",

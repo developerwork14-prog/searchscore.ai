@@ -4,10 +4,10 @@ import { CHATGPT_CITATION_RECOMMENDATIONS, isChatgptCitationCategory } from "./c
 import { GEMINI_CITATION_RECOMMENDATIONS, isGeminiCitationCategory } from "./gemini-citation-audit.js";
 import { crawlSite, fetchSitemapUrls } from "./site-crawler.js";
 
-export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR";
+export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
 export type GeoAeoScope = "page" | "domain";
 export type GeoAeoGrade = "A" | "B" | "C" | "D" | "F";
-export type GeoAeoStatus = "Passed" | "Minor Attention" | "Needs Attention";
+export type GeoAeoStatus = "Passed" | "Minor Attention" | "Needs Attention" | "Skipped";
 
 export interface GeoAeoCheckDefinition {
   id: number;
@@ -21,6 +21,12 @@ export interface GeoAeoCheckResult extends GeoAeoCheckDefinition {
   passed: boolean;
   evidence: string;
   skipped?: boolean;
+  notApplicable?: boolean;
+  warning?: boolean;
+  informational?: boolean;
+  opportunity?: string;
+  priorityScore?: number;
+  recommendation?: string;
 }
 
 export interface GeoAeoCategorySummary {
@@ -29,6 +35,7 @@ export interface GeoAeoCategorySummary {
   passedChecks: number;
   failedChecks: number;
   warningChecks: number;
+  skippedChecks: number;
   score: number;
   status: GeoAeoStatus;
   failedCheckDetails?: GeoAeoFailedCheckDetail[];
@@ -79,29 +86,29 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 9, category: "AI Discovery Files", name: "llms.txt Plain Markdown", severity: "MAJOR", scope: "domain" },
   { id: 10, category: "AI Readiness", name: "llms.txt word count", severity: "MAJOR", scope: "domain" },
   { id: 11, category: "AI Readiness", name: "llms.txt content completeness", severity: "MAJOR", scope: "domain" },
-  { id: 12, category: "Entity & Trust Signals", name: "Organization sameAs depth", severity: "MAJOR", scope: "domain" },
-  { id: 13, category: "Entity & Trust Signals", name: "LinkedIn present in sameAs", severity: "MAJOR", scope: "domain" },
-  { id: 14, category: "Entity & Trust Signals", name: "Crunchbase or Wikidata present", severity: "MAJOR", scope: "domain" },
+  { id: 12, category: "Entity & Trust Signals", name: "Organization sameAs reinforcement", severity: "ADVISORY", scope: "domain" },
+  { id: 13, category: "Entity & Trust Signals", name: "Verified LinkedIn sameAs", severity: "ADVISORY", scope: "domain" },
+  { id: 14, category: "Entity & Trust Signals", name: "Verified authority-profile sameAs", severity: "ADVISORY", scope: "domain" },
   { id: 15, category: "Entity & Trust Signals", name: "NAP schema-DOM match", severity: "BLOCKER", scope: "domain" },
   { id: 16, category: "Entity & Trust Signals", name: "Schema-DOM consistency", severity: "BLOCKER", scope: "page" },
   { id: 17, category: "FAQ & Answer Optimization", name: "FAQ section exists", severity: "MAJOR", scope: "page" },
   { id: 18, category: "FAQ & Answer Optimization", name: "FAQPage schema exists", severity: "MAJOR", scope: "page" },
   { id: 19, category: "FAQ & Answer Optimization", name: "FAQ schema completeness", severity: "MAJOR", scope: "page" },
-  { id: 20, category: "FAQ & Answer Optimization", name: "BLUF detection", severity: "MAJOR", scope: "page" },
-  { id: 21, category: "FAQ & Answer Optimization", name: "Question-based content structure", severity: "MAJOR", scope: "page" },
+  { id: 20, category: "FAQ & Answer Optimization", name: "BLUF detection", severity: "ADVISORY", scope: "page" },
+  { id: 21, category: "FAQ & Answer Optimization", name: "Question-based content structure", severity: "ADVISORY", scope: "page" },
   { id: 22, category: "Content Authority", name: "Author byline quality", severity: "MINOR", scope: "page" },
   { id: 23, category: "Content Authority", name: "Author bio quality", severity: "MINOR", scope: "page" },
   { id: 24, category: "Content Authority", name: "Credentials/certifications", severity: "MINOR", scope: "page" },
-  { id: 25, category: "Content Authority", name: "First-hand experience language", severity: "MINOR", scope: "page" },
+  { id: 25, category: "Content Authority", name: "First-hand experience language", severity: "ADVISORY", scope: "page" },
   { id: 26, category: "Content Authority", name: "Last updated visible", severity: "MINOR", scope: "page" },
   { id: 27, category: "Content Authority", name: "Outbound authority links", severity: "MINOR", scope: "page" },
   { id: 28, category: "Local GEO Signals", name: "Local entity schema", severity: "MAJOR", scope: "domain" },
-  { id: 29, category: "Local GEO Signals", name: "geo.latitude", severity: "MAJOR", scope: "domain" },
-  { id: 30, category: "Local GEO Signals", name: "geo.longitude", severity: "MAJOR", scope: "domain" },
-  { id: 31, category: "Local GEO Signals", name: "areaServed", severity: "MAJOR", scope: "domain" },
+  { id: 29, category: "Local GEO Signals", name: "geo.latitude", severity: "MINOR", scope: "domain" },
+  { id: 30, category: "Local GEO Signals", name: "geo.longitude", severity: "MINOR", scope: "domain" },
+  { id: 31, category: "Local GEO Signals", name: "areaServed", severity: "MINOR", scope: "domain" },
   { id: 32, category: "AI Crawlability", name: "JS-rendered content available in raw HTML", severity: "BLOCKER", scope: "page" },
   { id: 33, category: "AI Crawlability", name: "Hidden content under threshold", severity: "MAJOR", scope: "page" },
-  { id: 34, category: "AI Crawlability", name: "Data point density", severity: "MAJOR", scope: "page" },
+  { id: 34, category: "AI Crawlability", name: "Data point density", severity: "ADVISORY", scope: "page" },
   { id: 35, category: "Structured Data Integrity", name: "FAQ schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 36, category: "Structured Data Integrity", name: "Product schema-DOM match", severity: "BLOCKER", scope: "page" },
   { id: 37, category: "Structured Data Integrity", name: "Schema consistency validation", severity: "BLOCKER", scope: "page" },
@@ -110,8 +117,8 @@ const CHECKS: GeoAeoCheckDefinition[] = [
   { id: 40, category: "Crawlability", name: "GPTBot rules do not block OAI agents", severity: "MAJOR", scope: "domain" },
   { id: 41, category: "Crawlability", name: "WAF not challenging OAI agents", severity: "BLOCKER", scope: "domain" },
   { id: 42, category: "Technical Access", name: "No paywall on citable content", severity: "MAJOR", scope: "page" },
-  { id: 49, category: "Content Structure", name: "Alternatives page detection", severity: "MINOR", scope: "domain" },
-  { id: 50, category: "Content Structure", name: "Use-case page detection", severity: "MINOR", scope: "domain" },
+  { id: 49, category: "Content Opportunities", name: "Alternatives and comparison pages", severity: "ADVISORY", scope: "domain" },
+  { id: 50, category: "Content Opportunities", name: "Use-case and industry pages", severity: "ADVISORY", scope: "domain" },
   { id: 52, category: "Content Quality", name: "Product schema completeness", severity: "MAJOR", scope: "page" },
   { id: 54, category: "Content Quality", name: "Review diversity check", severity: "MINOR", scope: "domain" },
   { id: 55, category: "Content Quality", name: "Merchant trust pages", severity: "MAJOR", scope: "domain" },
@@ -144,6 +151,7 @@ const CATEGORY_ORDER = [
   "Technical Access",
   "Content Structure",
   "Content Quality",
+  "Content Opportunities",
   "Gemini Crawlability",
   "Local & E-Commerce",
   "Schema & Technical",
@@ -600,14 +608,22 @@ function robotGroupFor(robotsText: string, bot: string) {
 }
 
 function challengeDetected(status: number, text: string) {
-  if (status === 403 || status === 503) return true;
+  if (status === 401 || status === 403) return true;
   if (status !== 200) return false;
-  if (text.length >= 5000) return false;
-  return /\b(captcha|challenge|blocked|cloudflare)\b/i.test(text);
+  return /\b(captcha|challenge page|access denied|bot (?:block|blocked)|cloudflare challenge|attention required|checking your browser|verify you are human|just a moment)\b/i.test(text);
 }
 
 function htmlContentExists(text: string) {
   return /<html[\s>]|<!doctype html|<body[\s>]|<main[\s>]|<article[\s>]/i.test(text) || cheerio.load(text)("body").text().trim().length > 0;
+}
+
+function visibleBodyText(text: string) {
+  return cheerio.load(text.replace(/></g, "> <"))("body").text().replace(/\s+/g, " ").trim();
+}
+
+function paywallDetected(text: string) {
+  const visibleText = visibleBodyText(text);
+  return /\b(?:login|log in|sign in) (?:is )?required\b|\b(?:log in|sign in) to (?:continue|read|view|access)\b|\bsubscription (?:is )?required\b|\bsubscribe to (?:continue|read|view|access)\b|\bmembers? only\b|\bregistration (?:is )?required\b|\bregister to (?:continue|read|view|access)\b|\bcontent (?:is )?(?:hidden|locked)\b/i.test(visibleText);
 }
 
 function h2Texts($: cheerio.CheerioAPI) {
@@ -869,9 +885,17 @@ function geminiWafEvidence(page: { response: Response; text: string } | null) {
   const status = page?.response.status ?? 0;
   const htmlLength = page?.text.length ?? 0;
   const text = page?.text ?? "";
-  const challengeDetected = /captcha|challenge|blocked|access denied/i.test(text) && htmlLength < 10000;
-  const pass = Boolean(page && status === 200 && htmlLength > 5000 && (htmlLength > 50000 || !challengeDetected));
-  return { pass: status === 403 || status === 503 ? false : pass, status, htmlLength };
+  const challenge = challengeDetected(status, text);
+  const explicitlyBlocked = status === 403 || challenge;
+  const accessible = Boolean(page && status === 200 && htmlContentExists(text) && !challenge);
+  return {
+    pass: accessible,
+    conclusive: explicitlyBlocked || accessible,
+    explicitlyBlocked,
+    status,
+    htmlLength,
+    challengeDetected: challenge
+  };
 }
 
 function schemaTextValue(record: Record<string, unknown>, keys: string[]): string {
@@ -959,7 +983,7 @@ function cookieConsentEvidence(html: string) {
   const rawWordCount = wordCount(page$("body").text());
   const consentPatternFound = /cookie consent|accept cookies|gdpr|before you continue/i.test(html);
   const consentWallDetected = consentPatternFound && rawWordCount < 200;
-  return { pass: rawWordCount > 200 && !consentWallDetected, rawWordCount, consentWallDetected };
+  return { pass: !consentWallDetected, rawWordCount, consentPatternFound, consentWallDetected };
 }
 
 function speakableEvidence(blocks: unknown[], pageText = "") {
@@ -1388,11 +1412,29 @@ function productSchemaComplete(records: Record<string, unknown>[]) {
   return records.some((record) => Boolean(record.name && (record.offers || record.aggregateRating || record.review)));
 }
 
-function addCheck(results: GeoAeoCheckResult[], id: number, passed: boolean, evidence: string) {
+function addCheck(
+  results: GeoAeoCheckResult[],
+  id: number,
+  passed: boolean,
+  evidence: string,
+  options: {
+    warning?: boolean;
+    priorityScore?: number;
+    recommendation?: string;
+    severity?: GeoAeoSeverity;
+  } = {}
+) {
   const def = CHECKS.find((check) => check.id === id);
   if (!def) return;
-  const severity: GeoAeoSeverity = passed ? "MINOR" : def.scope === "domain" ? "MAJOR" : "MINOR";
-  results.push({ ...def, severity, passed, evidence });
+  results.push({
+    ...def,
+    severity: options.severity ?? def.severity,
+    passed,
+    evidence,
+    ...(options.warning && !passed ? { warning: true } : {}),
+    ...(options.priorityScore !== undefined ? { priorityScore: options.priorityScore } : {}),
+    ...(options.recommendation ? { recommendation: options.recommendation } : {})
+  });
 }
 
 function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: string) {
@@ -1401,25 +1443,52 @@ function addSkippedCheck(results: GeoAeoCheckResult[], id: number, evidence: str
   results.push({ ...def, passed: true, evidence, skipped: true });
 }
 
+function addNotApplicableCheck(results: GeoAeoCheckResult[], id: number, evidence: string) {
+  const def = CHECKS.find((check) => check.id === id);
+  if (!def) return;
+  results.push({ ...def, passed: true, evidence, skipped: true, notApplicable: true });
+}
+
+function addInformationalCheck(
+  results: GeoAeoCheckResult[],
+  id: number,
+  evidence: string,
+  opportunity: string
+) {
+  const def = CHECKS.find((check) => check.id === id);
+  if (!def) return;
+  results.push({
+    ...def,
+    passed: true,
+    evidence,
+    informational: true,
+    opportunity,
+    priorityScore: 0,
+    recommendation: opportunity
+  });
+}
+
 function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFailedCheckDetail[] = [], skippedDetails: GeoAeoSkippedCheckDetail[] = []): GeoAeoCategorySummary[] {
   return CATEGORY_ORDER.filter((categoryName) => checks.some((check) => check.category === categoryName)).map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
     const scorableChecks = categoryChecks.filter((check) => !check.skipped);
-    const failedChecks = scorableChecks.filter((check) => !check.passed).length;
-    const warningChecks = 0;
+    const failedChecks = scorableChecks.filter((check) => !check.passed && !check.warning).length;
+    const warningChecks = scorableChecks.filter((check) => check.warning).length;
     const categoryFailedDetails = failedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
     const categorySkippedDetails = skippedDetails.filter((detail) => categoryChecks.some((check) => check.id === detail.id));
+    const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
 
     return {
       categoryName,
-      totalChecks: scorableChecks.length,
-      passedChecks: scorableChecks.length - failedChecks,
+      totalChecks: categoryChecks.length,
+      passedChecks: scorableChecks.filter((check) => check.passed).length,
       failedChecks,
       warningChecks,
+      skippedChecks,
       score: scorableChecks.length
-  ? clamp(((scorableChecks.length - failedChecks) / scorableChecks.length) * 100)
+  ? clamp((scorableChecks.filter((check) => check.passed || check.warning).length / scorableChecks.length) * 100)
   : 100,
-      status: statusFor(failedChecks),
+      status: scorableChecks.length === 0 ? "Skipped" : warningChecks > 0 && failedChecks === 0 ? "Minor Attention" : statusFor(failedChecks),
       ...(categoryFailedDetails.length ? { failedCheckDetails: categoryFailedDetails } : {}),
       ...(categorySkippedDetails.length ? { skippedCheckDetails: categorySkippedDetails } : {})
     };
@@ -1427,7 +1496,7 @@ function categorySummaries(checks: GeoAeoCheckResult[], failedDetails: GeoAeoFai
 }
 
 function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
-  const scoped = checks.filter((check) => check.scope === scope && !check.skipped);
+  const scoped = checks.filter((check) => check.scope === scope && !check.skipped && check.severity !== "ADVISORY");
   if (!scoped.length) return 100;
   return clamp((scoped.filter((check) => check.passed).length / scoped.length) * 100);
 }
@@ -1435,10 +1504,88 @@ function scoreByScope(checks: GeoAeoCheckResult[], scope: GeoAeoScope) {
 function opportunityCounts(checks: GeoAeoCheckResult[]): GeoAeoOpportunityCounts {
   const failed = checks.filter((check) => !check.passed && !check.skipped);
   return {
-    high: failed.filter((check) => check.scope === "domain").length,
-    medium: failed.filter((check) => check.scope === "page").length,
-    low: 0
+    high: failed.filter((check) => !check.warning && check.scope === "domain").length,
+    medium: failed.filter((check) => !check.warning && check.scope === "page").length,
+    low: failed.filter((check) => check.warning || check.severity === "ADVISORY").length
   };
+}
+
+function geoPageEvidence(
+  pagesCrawled: number,
+  applicablePages: LocalPageHtml[],
+  failingPages: LocalPageHtml[],
+  issue: string
+) {
+  const urls = failingPages.map((page, index) => page.url ?? `unknown-page-${index + 1}`);
+  return JSON.stringify({
+    scope: "page-level-site-wide",
+    pagesCrawled,
+    pagesChecked: applicablePages.length,
+    pagesPassed: Math.max(0, applicablePages.length - failingPages.length),
+    pagesFailed: failingPages.length,
+    passRate: applicablePages.length
+      ? Number((((applicablePages.length - failingPages.length) / applicablePages.length) * 100).toFixed(1))
+      : 100,
+    affectedPages: urls.map((url) => ({ url, issueCount: 1, sampleEvidence: issue })),
+    sampleEvidence: urls.map((url) => ({ url, issue }))
+  });
+}
+
+function pageClassification(page: LocalPageHtml) {
+  const page$ = cheerio.load(page.html);
+  const title = page$("title").first().text();
+  const h1 = page$("h1").first().text();
+  const text = page$("body").text().replace(/\s+/g, " ").trim();
+  const url = page.url ?? "";
+  const headingContext = `${url} ${title} ${h1}`;
+  const article = page$("article").length > 0
+    || /\/(?:blog|articles?|news|insights?|guides?)\//i.test(url)
+    || /\b(?:blog|article|guide|news|insight)\b/i.test(headingContext)
+      && /\b(?:author|published|updated|reading time)\b/i.test(text);
+  const faq = page$("details,.faq,[id*='faq' i],[class*='faq' i]").length > 0
+    || /\b(?:frequently asked questions|faq|questions and answers)\b/i.test(headingContext);
+  const help = /\/(?:help|support|knowledge-base|docs?)\//i.test(url)
+    || /\b(?:help|support|documentation|knowledge base)\b/i.test(headingContext);
+  const research = /\b(?:research|study|report|analysis|survey|data|methodology|statistics)\b/i.test(headingContext);
+  const informational = article || faq || help || research;
+  const ymyl = /\b(?:loan|credit|finance|financial|investment|insurance|medical|health|doctor|clinic|legal|law|tax|mortgage)\b/i.test(`${headingContext} ${text.slice(0, 2000)}`);
+  return { page$, title, h1, text, url, article, faq, help, research, informational, ymyl };
+}
+
+function hiddenPrimaryContentEvidence(page: LocalPageHtml) {
+  const page$ = cheerio.load(page.html);
+  const primary = page$("main,article,[role='main']").first();
+  if (!primary.length) {
+    return { url: page.url ?? "", primaryContainerFound: false, hiddenWords: 0, hiddenRatio: 0, samples: [] as string[] };
+  }
+
+  const hiddenElements = primary
+    .find("[hidden],[aria-hidden='true'],[style*='display:none' i],[style*='display: none' i],[style*='visibility:hidden' i],[style*='visibility: hidden' i]")
+    .toArray()
+    .filter((element) => {
+      const node = page$(element);
+      const excludedContainer = node.closest("nav,header,footer,details,dialog,[role='dialog'],[role='menu'],[role='navigation']").length > 0;
+      const uiContext = `${node.attr("class") ?? ""} ${node.attr("id") ?? ""}`;
+      return !excludedContainer && !/\b(?:modal|menu|nav|accordion|carousel|slider|tab-panel|tooltip|cookie|consent)\b/i.test(uiContext);
+    });
+  const uniqueTopLevel = hiddenElements.filter((element) =>
+    !hiddenElements.some((candidate) => candidate !== element && page$(element).parents().toArray().includes(candidate))
+  );
+  const hiddenText = uniqueTopLevel.map((element) => page$(element).text().replace(/\s+/g, " ").trim()).filter(Boolean);
+  const hiddenWords = hiddenText.reduce((sum, text) => sum + wordCount(text), 0);
+  const primaryWords = wordCount(primary.text());
+  return {
+    url: page.url ?? "",
+    primaryContainerFound: true,
+    hiddenWords,
+    hiddenRatio: primaryWords ? Number((hiddenWords / primaryWords).toFixed(2)) : 0,
+    samples: hiddenText.slice(0, 3).map((text) => text.slice(0, 180))
+  };
+}
+
+function scoreGeoChecks(checks: GeoAeoCheckResult[]) {
+  const scorable = checks.filter((check) => !check.skipped && check.severity !== "ADVISORY");
+  return scoreParameterOutcomes(scorable, 100);
 }
 
 export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<GeoAeoAuditResult> {
@@ -1464,6 +1611,8 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     localPages,
     crawled,
     oaiPage,
+    gptBotPage,
+    chatgptUserPage,
     googleExtendedPage,
     serverPage,
     browserPage,
@@ -1475,6 +1624,8 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     resolveWithin(fetchLikelyLocalPageEntries(origin), 4200, []),
     resolveWithin(crawlSite(normalizedUrl, { maxPages: 4, maxDepth: 1, timeoutMs: 1200, concurrency: 4, maxSitemapFiles: 1 }), 6500, emptyCrawl),
     fetchTextWithUserAgent(normalizedUrl, "OAI-SearchBot/1.0", 1800).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "GPTBot/1.0", 1800).catch(() => null),
+    fetchTextWithUserAgent(normalizedUrl, "ChatGPT-User/1.0", 1800).catch(() => null),
     fetchTextWithUserAgent(normalizedUrl, "Google-Extended", 1800).catch(() => null),
     fetchText(normalizedUrl, 1800).catch(() => null),
     fetchTextWithUserAgent(normalizedUrl, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36", 1800).catch(() => null),
@@ -1488,6 +1639,14 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     url: page.finalUrl
   }));
   const sitePages = crawledPages.length ? crawledPages : [{ source: "homepage", html: pageHtml, url: normalizedUrl }];
+  const measurablePageContent = sitePages.some((page) => wordCount(cheerio.load(page.html)("body").text()) > 0);
+  const classifiedPages = sitePages.map((page) => ({ page, ...pageClassification(page) }));
+  const articlePages = classifiedPages.filter((item) => item.article);
+  const informationalPages = classifiedPages.filter((item) => item.informational);
+  const blufPages = classifiedPages.filter((item) => item.article || item.help || item.research);
+  const faqIntentPages = classifiedPages.filter((item) => item.faq);
+  const ymylExpertPages = classifiedPages.filter((item) => item.article && item.ymyl);
+  const researchPages = classifiedPages.filter((item) => item.informational || item.research);
   const siteHtml = sitePages.map((page) => page.html).join("\n");
   const localGeoPages: LocalPageHtml[] = [...sitePages, ...localPages];
   const localGeoHtml = localGeoPages.map((page) => page.html).join("\n");
@@ -1502,16 +1661,37 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const schemaTypes = jsonLd.blocks.flatMap(flattenSchemaTypes);
   const localGeoSchemaTypes = localGeoJsonLd.blocks.flatMap(flattenSchemaTypes);
   const sameAs = sameAsUrls(jsonLd.blocks);
+  const visibleOfficialProfiles = [...new Set(
+    $("a[href]").toArray()
+      .map((element) => String($(element).attr("href") ?? ""))
+      .filter((href) => /^https?:\/\//i.test(href))
+      .filter((href) => /linkedin\.com|facebook\.com|instagram\.com|youtube\.com|x\.com|twitter\.com|crunchbase\.com|wikidata\.org/i.test(href))
+  )];
   const faqDomCount = $("details, .faq, [class*='faq'], [id*='faq']").length;
   const questionCount = (bodyText.match(/\?/g) ?? []).length + $("h2,h3").toArray().filter((el) => /\?|\b(what|how|why|when|where|who|can|does|is|are)\b/i.test($(el).text())).length;
   const links = $("a[href]").toArray().map((el) => String($(el).attr("href") ?? "")).filter((href) => /^https?:/i.test(href) && !sameOrigin(url, href));
-  const hiddenWords = $("[style*='display:none'],[hidden],[aria-hidden='true']").toArray().reduce((sum, el) => sum + wordCount($(el).text()), 0);
+  const hiddenPrimaryEvidence = sitePages.map(hiddenPrimaryContentEvidence);
+  const hiddenPrimaryFailures = hiddenPrimaryEvidence.filter((item) => item.hiddenWords >= 100 && item.hiddenRatio >= 0.2);
   const dataPointCount = (bodyText.match(/\b\d+(?:\.\d+)?%|\b\d{4}\b|\b\d+(?:,\d{3})+\b/g) ?? []).length;
   const localBusinessObjects = localEntityObjectsFromJsonLd(localGeoJsonLd.blocks);
   const localOrganizationObjects = organizationObjectsFromJsonLd(localGeoJsonLd.blocks);
   const localMicrodataRdfa = microdataRdfaLocalSignals(localGeo$);
   const localMapSignals = mapsCoordinateSignals(localGeo$, localGeoHtml);
   const localEvidence = localGeoEvidence(localGeoPages);
+  const localTargetPages = localGeoPages.filter((page) => {
+    const page$ = cheerio.load(page.html);
+    const text = page$("body").text().replace(/\s+/g, " ").trim();
+    const pageUrl = page.url ?? "";
+    const titleAndHeading = `${page$("title").first().text()} ${page$("h1").first().text()}`;
+    const localSeoTarget = /\/(?:locations?|branches?|stores?|clinics?|offices?|near-me)(?:\/|$)/i.test(pageUrl)
+      || /\b(?:near me|our (?:location|branch|office|clinic|store)|(?:branch|office|clinic|store|services?) in [A-Z][A-Za-z]+|serving [A-Z][A-Za-z]+|local service area)\b/.test(`${titleAndHeading} ${text.slice(0, 1200)}`);
+    const conversionLocation = page$("address,a[href^='tel:'],iframe[src*='google.com/maps'],iframe[src*='maps.google']").length > 0
+      || visibleNapSignal(text);
+    return localSeoTarget && conversionLocation;
+  });
+  const localGeoApplicable = localBusinessObjects.length > 0
+    && localTargetPages.length > 0
+    && visibleAddressSignal(localGeoBodyText);
   const productObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /Product/i.test(type)));
   const faqObjects = findObjects(jsonLd.blocks, (record) => flattenSchemaTypes(record).some((type) => /FAQPage/i.test(type)));
   const robotsText = robots?.text ?? "";
@@ -1534,19 +1714,41 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const renderedResult = await renderedWordCount(normalizedUrl);
   const renderedWords = renderedResult.words;
   const renderedSchemaCount = renderedResult.schemaCount;
-  const oaiChallengeDetected = oaiPage ? challengeDetected(oaiPage.response.status, oaiPage.text) : true;
-  const oaiHtmlLength = oaiPage?.text.length ?? 0;
-  const oaiHasHtml = oaiPage ? htmlContentExists(oaiPage.text) : false;
+  const oaiAgents = [
+    { name: "GPTBot", page: gptBotPage },
+    { name: "OAI-SearchBot", page: oaiPage },
+    { name: "ChatGPT-User", page: chatgptUserPage }
+  ];
+  const oaiAgentResults = oaiAgents.map(({ name, page }) => ({
+    name,
+    status: page?.response.status ?? 0,
+    htmlLength: page?.text.length ?? 0,
+    challengeDetected: page ? challengeDetected(page.response.status, page.text) : false,
+    accessible: Boolean(page && page.response.status === 200 && htmlContentExists(page.text) && !challengeDetected(page.response.status, page.text))
+  }));
+  const conclusiveOaiAgentResults = oaiAgentResults.filter((agent) => agent.status > 0);
+  const blockedOaiAgentResults = conclusiveOaiAgentResults.filter((agent) =>
+    agent.status === 401 || agent.status === 403 || agent.challengeDetected
+  );
+  const inconclusiveOaiAgentResults = oaiAgentResults.filter((agent) =>
+    agent.status === 0 || (!agent.accessible && agent.status !== 401 && agent.status !== 403 && !agent.challengeDetected)
+  );
   const oaiWafDebug = {
-    pass: false,
-    status: oaiPage?.response.status ?? 0,
-    htmlLength: oaiHtmlLength,
-    challengeDetected: oaiChallengeDetected
+    pass: conclusiveOaiAgentResults.length === oaiAgentResults.length
+      && blockedOaiAgentResults.length === 0
+      && conclusiveOaiAgentResults.every((agent) => agent.accessible),
+    agents: oaiAgentResults,
+    robotsAllowed: {
+      GPTBot: robotGroupAllows(robotsText, "GPTBot"),
+      OAI_SearchBot: robotGroupAllows(robotsText, "OAI-SearchBot"),
+      ChatGPT_User: robotGroupAllows(robotsText, "ChatGPT-User")
+    }
   };
-  const oaiNotChallenged = Boolean(oaiPage && oaiPage.response.status === 200 && oaiHasHtml && !oaiChallengeDetected);
-  oaiWafDebug.pass = oaiNotChallenged;
+  const oaiNotChallenged = oaiWafDebug.pass;
   const paywallRatio = browserWords ? oaiWords / browserWords : 0;
-  const paywallStatus = paywallRatio >= 0.8 ? "green" : paywallRatio >= 0.5 ? "amber" : "red";
+  const browserPaywallDetected = paywallDetected(browserPage?.text ?? pageHtml);
+  const oaiPaywallDetected = paywallDetected(oaiPage?.text ?? "");
+  const explicitPaywallDetected = browserPaywallDetected || oaiPaywallDetected;
   const sitemapAndPageUrls = [...new Set([...crawled.sitemapUrls, ...extraSitemapUrls, ...sitePages.map((page) => page.url ?? "").filter(Boolean)])];
   const alternativesSignals = alternativesPageDetection(sitePages, sitemapAndPageUrls);
   const useCaseSignals = useCasePageDetection(sitePages, sitemapAndPageUrls);
@@ -1558,18 +1760,23 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     ...directTrustCandidates
   ]);
   const geminiWaf = geminiWafEvidence(googleExtendedPage);
-  const serverHtmlLength = serverPage?.text.length ?? 0;
-  const ipAccessible = Boolean(serverPage && serverPage.response.status === 200 && htmlContentExists(serverPage.text));
   const ipRangeEvidence = {
-    pass: ipAccessible,
-    advisory: !geminiWaf.pass,
-    note: !geminiWaf.pass
-      ? "Manual verification recommended because Google-Extended WAF check failed; true Google IP range testing is not possible server-side."
-      : "Server-side fetch returned accessible HTML from this audit server perspective.",
-    status: serverPage?.response.status ?? 0,
-    htmlLength: serverHtmlLength
+    skipped: true,
+    googleIpVerified: false,
+    ipBasedTestPerformed: false,
+    reason: "Unable to verify Google IP access from current crawl environment."
   };
   const napEvidence = napConsistency(localGeoPages);
+  const googleBusinessProfileUrls = localGeo$("a[href]").toArray()
+    .map((element) => String(localGeo$(element).attr("href") ?? ""))
+    .filter((href) => /google\.(?:com|co\.[a-z]{2})\/maps|maps\.app\.goo\.gl|g\.page\//i.test(href));
+  const physicalLocationExists = visibleAddressSignal(localGeoBodyText);
+  const gbpVerificationAvailable = false;
+  const napGbpApplicable = localBusinessObjects.length > 0
+    && physicalLocationExists
+    && localTargetPages.length > 0
+    && googleBusinessProfileUrls.length > 0
+    && gbpVerificationAvailable;
   const consentEvidence = cookieConsentEvidence(pageHtml);
   const rawSchemaCount = schemaScriptCount(pageHtml);
   const schemaInjectionEvidence = renderedSchemaCount === null
@@ -1619,6 +1826,19 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   const pageText = (page: LocalPageHtml) => cheerio.load(page.html)("body").text().replace(/\s+/g, " ").trim();
   const failingPages = (predicate: (page: LocalPageHtml) => boolean) => sitePages.filter(predicate);
   const affectedPagesFor = (check: GeoAeoCheckResult) => {
+    try {
+      const parsed = JSON.parse(check.evidence) as Record<string, unknown>;
+      const affectedPages = Array.isArray(parsed.affectedPages) ? parsed.affectedPages : [];
+      const urls = affectedPages.flatMap((item) => {
+        if (typeof item === "string") return item ? [item] : [];
+        if (!item || typeof item !== "object") return [];
+        const href = String((item as Record<string, unknown>).url ?? "").trim();
+        return href ? [href] : [];
+      });
+      if (urls.length) return { affectedPages: urls.length, sampleUrls: urls.slice(0, 3) };
+    } catch {
+      // Legacy evidence is normalized below before report output.
+    }
     const domain = () => check.passed ? [] : sitePages;
     const pageFailures = (() => {
       switch (check.id) {
@@ -1651,9 +1871,43 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   addCheck(result, 9, llms?.response.ok === true && /^#|\n[-*]\s|\[[^\]]+\]\([^)]+\)/m.test(llms.text), "llms.txt markdown scan");
   addCheck(result, 10, llms?.response.ok === true && wordCount(llms.text) >= 200, `${wordCount(llms?.text ?? "")} words`);
   addCheck(result, 11, llms?.response.ok === true && ["about", "service", "contact", "policy"].filter((term) => llms.text.toLowerCase().includes(term)).length >= 2, "llms.txt completeness scan");
-  addCheck(result, 12, sameAs.length >= 4, `${sameAs.length} sameAs URLs`);
-  addCheck(result, 13, sameAs.some((href) => /linkedin\.com/i.test(href)), "sameAs social scan");
-  addCheck(result, 14, sameAs.some((href) => /crunchbase\.com|wikidata\.org/i.test(href)), "sameAs authority scan");
+  const verifiedProfilesMissingFromSchema = visibleOfficialProfiles.filter((href) => !sameAs.includes(href));
+  if (!sameAs.length && !visibleOfficialProfiles.length) {
+    addSkippedCheck(result, 12, "sameAs is optional and no verified official profiles were detected");
+  } else {
+    addCheck(
+      result,
+      12,
+      sameAs.length > 0,
+      JSON.stringify({
+        scope: "domain-level",
+        pagesCrawled: sitePages.length,
+        pagesChecked: 1,
+        pagesPassed: sameAs.length > 0 ? 1 : 0,
+        pagesFailed: sameAs.length > 0 ? 0 : 1,
+        passRate: sameAs.length > 0 ? 100 : 0,
+        affectedPages: sameAs.length > 0 ? [] : [{ url: normalizedUrl, issueCount: 1 }],
+        sameAsUrls: sameAs,
+        verifiedOfficialProfiles: visibleOfficialProfiles,
+        missingVerifiedProfiles: verifiedProfilesMissingFromSchema
+      }),
+      {
+        warning: true,
+        priorityScore: 20,
+        recommendation: "Optional entity reinforcement: add only verified official profile URLs to Organization sameAs."
+      }
+    );
+  }
+  if (sameAs.some((href) => /linkedin\.com/i.test(href))) {
+    addCheck(result, 13, true, JSON.stringify({ pagesCrawled: sitePages.length, pagesChecked: 1, pagesFailed: 0, linkedinFound: true }));
+  } else {
+    addSkippedCheck(result, 13, "LinkedIn is optional; no verified official LinkedIn profile was detected in Organization sameAs");
+  }
+  if (sameAs.some((href) => /crunchbase\.com|wikidata\.org/i.test(href))) {
+    addCheck(result, 14, true, JSON.stringify({ pagesCrawled: sitePages.length, pagesChecked: 1, pagesFailed: 0, authorityProfileFound: true }));
+  } else {
+    addSkippedCheck(result, 14, "Crunchbase and Wikidata are optional; no verified profile was detected and no profile should be created only for this check");
+  }
   addCheck(result, 15, (
     !localBusinessObjects.length &&
     !localOrganizationObjects.length &&
@@ -1673,45 +1927,142 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     (!localMicrodataRdfa.name || localGeoLowerBody.includes(localMicrodataRdfa.name.toLowerCase().trim()))
   ) || visibleNapSignal(localGeoBodyText), "NAP consistency scan");
   addCheck(result, 16, jsonLd.errors.length === 0 && schemaTypes.length > 0, `${jsonLd.errors.length} JSON-LD errors`);
-  addCheck(result, 17, faqDomCount > 0 || questionCount >= 3, `${faqDomCount} FAQ elements, ${questionCount} questions`);
-  addCheck(result, 18, hasSchemaType(jsonLd.blocks, /FAQPage/), schemaTypes.join(", ") || "none");
-  addCheck(result, 19, !faqObjects.length || faqObjects.some((record) => Array.isArray(record.mainEntity) && record.mainEntity.length >= 2), "FAQ mainEntity scan");
-  addCheck(result, 20, /\b(in short|bottom line|summary|answer:|tl;dr)\b/i.test(bodyText) || $("p").first().text().length >= 80, "answer-first content scan");
-  addCheck(result, 21, questionCount >= 3, `${questionCount} question structures`);
-  addCheck(result, 22, /author|byline|written by|reviewed by/i.test(pageHtml), "byline scan");
-  addCheck(result, 23, $("a[href*='/author/'],a[href*='/team/'],a[href*='/about']").length > 0, "bio link scan");
-  addCheck(result, 24, /\b(certified|credential|licensed|award|degree|accredited|partner)\b/i.test(bodyText), "credential language scan");
-  addCheck(result, 25, /\b(we tested|our experience|case study|results|client|customer|first-hand|hands-on)\b/i.test(bodyText), "experience language scan");
-  addCheck(result, 26, /dateModified|last updated|updated on|last-modified/i.test(pageHtml), "updated date scan");
-  addCheck(result, 27, links.length >= 2, `${links.length} outbound links`);
-  addCheck(
-    result,
-    28,
-    localBusinessObjects.length > 0 ||
-      localMicrodataRdfa.hasLocalEntity ||
-      schemaHasAddressAndPhone(localOrganizationObjects) ||
-      visibleNapSignal(localGeoBodyText) ||
-      localMapSignals.hasMapsEmbed,
-    localEvidence.schemaSource ? `${localEvidence.schemaSource}: local entity/location signal` : localGeoSchemaTypes.join(", ") || "none"
-  );
-  addCheck(result, 29, jsonLdHasProperty(localBusinessObjects, "latitude") || localMicrodataRdfa.hasLatitude || localMapSignals.hasLatitude, localEvidence.latitudeSource ? `${localEvidence.latitudeSource}${localEvidence.mapsSource ? " / maps iframe" : ""}: latitude signal` : "latitude schema/maps scan");
-  addCheck(result, 30, jsonLdHasProperty(localBusinessObjects, "longitude") || localMicrodataRdfa.hasLongitude || localMapSignals.hasLongitude, localEvidence.longitudeSource ? `${localEvidence.longitudeSource}${localEvidence.mapsSource ? " / maps iframe" : ""}: longitude signal` : "longitude schema/maps scan");
-  addCheck(
-    result,
-    31,
-    jsonLdHasProperty(localBusinessObjects, "areaServed") ||
-      jsonLdHasProperty(localBusinessObjects, "serviceArea") ||
-      jsonLdHasProperty(localBusinessObjects, "addressLocality") ||
-      jsonLdHasProperty(localBusinessObjects, "addressRegion") ||
-      schemaHasLocation(localOrganizationObjects) ||
-      localMicrodataRdfa.hasAreaServed ||
-      visibleAreaServedSignal(localGeoBodyText) ||
-      visibleAddressSignal(localGeoBodyText),
-    localEvidence.areaServedSource ? `${localEvidence.areaServedSource}: area served/location signal` : "areaServed text/schema scan"
-  );
-  addCheck(result, 32, wordCount(bodyText) >= 100, `${wordCount(bodyText)} visible raw HTML words`);
-  addCheck(result, 33, hiddenWords < 100, `${hiddenWords} hidden words`);
-  addCheck(result, 34, dataPointCount >= 5, `${dataPointCount} data points`);
+  if (!faqIntentPages.length) {
+    addSkippedCheck(result, 17, "No FAQ intent page was detected");
+    addSkippedCheck(result, 18, "No visible FAQ intent was detected, so FAQPage schema is not required");
+    addSkippedCheck(result, 19, "No FAQPage schema or applicable FAQ page was detected");
+  } else {
+    const faqSectionFailures = faqIntentPages.filter(({ page$ }) => page$("details,.faq,[id*='faq' i],[class*='faq' i]").length === 0);
+    addCheck(result, 17, faqSectionFailures.length === 0, geoPageEvidence(sitePages.length, faqIntentPages.map((item) => item.page), faqSectionFailures.map((item) => item.page), "FAQ-intent page has no visible FAQ section"));
+    const faqSchemaFailures = faqIntentPages.filter(({ page$ }) => {
+      const parsed = parseJsonLd(page$);
+      const visibleFaq = page$("details,.faq,[id*='faq' i],[class*='faq' i]").length > 0;
+      return visibleFaq && !hasSchemaType(parsed.blocks, /FAQPage/);
+    });
+    addCheck(result, 18, faqSchemaFailures.length === 0, geoPageEvidence(sitePages.length, faqIntentPages.map((item) => item.page), faqSchemaFailures.map((item) => item.page), "Visible FAQs exist without matching FAQPage schema"));
+    const faqCompletenessFailures = faqIntentPages.filter(({ page$ }) => {
+      const objects = findObjects(parseJsonLd(page$).blocks, (record) => flattenSchemaTypes(record).some((type) => /FAQPage/i.test(type)));
+      return objects.length > 0 && !objects.some((record) => Array.isArray(record.mainEntity) && record.mainEntity.length >= 2);
+    });
+    addCheck(result, 19, faqCompletenessFailures.length === 0, geoPageEvidence(sitePages.length, faqIntentPages.map((item) => item.page), faqCompletenessFailures.map((item) => item.page), "FAQPage mainEntity is incomplete"));
+  }
+  if (!blufPages.length) {
+    addNotApplicableCheck(result, 20, "BLUF is advisory and no article, guide, help, or research page was detected");
+  } else {
+    const blufFailures = blufPages.filter(({ page$ }) => !/\b(in short|bottom line|summary|answer:|tl;dr)\b/i.test(page$("body").text()) && page$("main p,article p").first().text().trim().length < 80);
+    addCheck(result, 20, blufFailures.length === 0, geoPageEvidence(sitePages.length, blufPages.map((item) => item.page), blufFailures.map((item) => item.page), "Informational page does not provide a concise answer-first introduction"), {
+      warning: true,
+      priorityScore: 15,
+      recommendation: "Add a concise answer-first summary where it improves clarity; keep this advisory for informational content."
+    });
+  }
+  if (!informationalPages.length) {
+    addNotApplicableCheck(result, 21, "Question-based structure is advisory and no blog, guide, FAQ, or help page was detected");
+  } else {
+    const questionStructureFailures = informationalPages.filter(({ page$ }) =>
+      page$("h2,h3").toArray().filter((element) => /\?|\b(what|how|why|when|where|who|can|does|is|are)\b/i.test(page$(element).text())).length < 1
+    );
+    addCheck(result, 21, questionStructureFailures.length === 0, geoPageEvidence(sitePages.length, informationalPages.map((item) => item.page), questionStructureFailures.map((item) => item.page), "Informational page has no question-led heading structure"), {
+      warning: true,
+      priorityScore: 15,
+      recommendation: "Use question-based headings only where they match real reader intent on blog, guide, FAQ, or help pages."
+    });
+  }
+  if (!articlePages.length) {
+    addNotApplicableCheck(result, 22, "Author byline checks run only on article or blog pages");
+    addNotApplicableCheck(result, 23, "Author bio checks run only on article or blog pages");
+    addNotApplicableCheck(result, 26, "Visible updated-date checks run only on article or blog pages");
+  } else {
+    const bylineFailures = articlePages.filter(({ page }) => !/author|byline|written by|reviewed by/i.test(page.html));
+    addCheck(result, 22, bylineFailures.length === 0, geoPageEvidence(sitePages.length, articlePages.map((item) => item.page), bylineFailures.map((item) => item.page), "Article page has no visible author byline"));
+    const bioFailures = articlePages.filter(({ page$ }) => page$("a[href*='/author/'],a[href*='/team/'],a[href*='/about'],.author-bio,[class*='author' i]").length === 0);
+    addCheck(result, 23, bioFailures.length === 0, geoPageEvidence(sitePages.length, articlePages.map((item) => item.page), bioFailures.map((item) => item.page), "Article author has no visible bio or profile link"));
+    const updatedFailures = articlePages.filter(({ page }) => !/dateModified|last updated|updated on|last-modified/i.test(page.html));
+    addCheck(result, 26, updatedFailures.length === 0, geoPageEvidence(sitePages.length, articlePages.map((item) => item.page), updatedFailures.map((item) => item.page), "Article page has no visible updated date"));
+  }
+  if (!ymylExpertPages.length) {
+    addNotApplicableCheck(result, 24, "Credentials and certifications are checked only for YMYL or expert-authored content");
+  } else {
+    const credentialFailures = ymylExpertPages.filter(({ text }) => !/\b(certified|credential|licensed|award|degree|accredited|specialist|expert)\b/i.test(text));
+    addCheck(result, 24, credentialFailures.length === 0, geoPageEvidence(sitePages.length, ymylExpertPages.map((item) => item.page), credentialFailures.map((item) => item.page), "YMYL article provides no visible author credential or expertise signal"));
+  }
+  if (!informationalPages.length) {
+    addSkippedCheck(result, 25, "First-hand experience language is advisory and no informational content page was detected");
+  } else {
+    const experienceFailures = informationalPages.filter(({ text }) => !/\b(we tested|our experience|case study|results|client|customer|first-hand|hands-on)\b/i.test(text));
+    addCheck(result, 25, experienceFailures.length === 0, geoPageEvidence(sitePages.length, informationalPages.map((item) => item.page), experienceFailures.map((item) => item.page), "No first-hand experience language was detected"), {
+      warning: true,
+      priorityScore: 10,
+      recommendation: "Add first-hand observations, methodology, examples, or outcomes only when they are genuine and relevant."
+    });
+  }
+  if (!researchPages.length) {
+    addSkippedCheck(result, 27, "Outbound authority links are checked only on informational or research-style content");
+  } else {
+    const authorityLinkFailures = researchPages.filter(({ page$, page }) => {
+      const pageUrl = new URL(page.url ?? normalizedUrl);
+      return page$("a[href]").toArray().filter((element) => {
+        const href = String(page$(element).attr("href") ?? "");
+        return /^https?:/i.test(href) && !sameOrigin(pageUrl, href);
+      }).length < 1;
+    });
+    addCheck(result, 27, authorityLinkFailures.length === 0, geoPageEvidence(sitePages.length, researchPages.map((item) => item.page), authorityLinkFailures.map((item) => item.page), "Informational page cites no external authority source"));
+  }
+  if (!localTargetPages.length) {
+    addNotApplicableCheck(result, 28, "No conversion-relevant local SEO or physical-location page was detected");
+  } else {
+    const localEntityFound = localBusinessObjects.length > 0 || localMicrodataRdfa.hasLocalEntity;
+    addCheck(
+      result,
+      28,
+      localEntityFound,
+      geoPageEvidence(sitePages.length, localTargetPages, localEntityFound ? [] : localTargetPages, "Local SEO page has no applicable LocalBusiness entity schema")
+    );
+  }
+  if (!localGeoApplicable) {
+    addNotApplicableCheck(result, 29, "LocalBusiness geo checks are not applicable without LocalBusiness schema and a conversion-relevant local SEO page");
+    addNotApplicableCheck(result, 30, "LocalBusiness geo checks are not applicable without LocalBusiness schema and a conversion-relevant local SEO page");
+    addNotApplicableCheck(result, 31, "areaServed is not applicable without LocalBusiness schema and a visible physical service area");
+  } else {
+    addCheck(result, 29, jsonLdHasProperty(localBusinessObjects, "latitude") || localMicrodataRdfa.hasLatitude || localMapSignals.hasLatitude, geoPageEvidence(sitePages.length, localTargetPages, (jsonLdHasProperty(localBusinessObjects, "latitude") || localMicrodataRdfa.hasLatitude || localMapSignals.hasLatitude) ? [] : localTargetPages, "Applicable local page has no latitude signal"), { severity: "MINOR" });
+    addCheck(result, 30, jsonLdHasProperty(localBusinessObjects, "longitude") || localMicrodataRdfa.hasLongitude || localMapSignals.hasLongitude, geoPageEvidence(sitePages.length, localTargetPages, (jsonLdHasProperty(localBusinessObjects, "longitude") || localMicrodataRdfa.hasLongitude || localMapSignals.hasLongitude) ? [] : localTargetPages, "Applicable local page has no longitude signal"), { severity: "MINOR" });
+    const hasAreaServed = jsonLdHasProperty(localBusinessObjects, "areaServed")
+      || jsonLdHasProperty(localBusinessObjects, "serviceArea")
+      || localMicrodataRdfa.hasAreaServed
+      || visibleAreaServedSignal(localGeoBodyText);
+    addCheck(result, 31, hasAreaServed, geoPageEvidence(sitePages.length, localTargetPages, hasAreaServed ? [] : localTargetPages, "Applicable local service page has no areaServed signal"), { severity: "MINOR" });
+  }
+  addCheck(result, 32, wordCount(bodyText) >= 100, JSON.stringify({ pagesCrawled: sitePages.length, pagesChecked: 1, pagesFailed: wordCount(bodyText) >= 100 ? 0 : 1, affectedPages: wordCount(bodyText) >= 100 ? [] : [{ url: normalizedUrl, issueCount: 1 }], rawHtmlWords: wordCount(bodyText) }), {
+    recommendation: "Ensure primary content is available in the initial HTML response or server-rendered markup."
+  });
+  const hiddenPrimaryPagesChecked = hiddenPrimaryEvidence.filter((item) => item.primaryContainerFound).length;
+  if (!hiddenPrimaryPagesChecked) {
+    addSkippedCheck(result, 33, "Insufficient evidence: no main, article, or role=main container was detected for reliable hidden-primary-content analysis");
+  } else {
+    addCheck(result, 33, hiddenPrimaryFailures.length === 0, JSON.stringify({
+      pagesCrawled: sitePages.length,
+      pagesChecked: hiddenPrimaryPagesChecked,
+      pagesFailed: hiddenPrimaryFailures.length,
+      affectedPages: hiddenPrimaryFailures.map((item) => ({
+        url: item.url,
+        issueCount: 1,
+        sampleEvidence: `Important primary content is hidden (${item.hiddenWords} words; ${Math.round(item.hiddenRatio * 100)}% of primary content)`
+      })),
+      samples: hiddenPrimaryFailures.slice(0, 3)
+    }), {
+      recommendation: "Keep important primary content visible in the initial page experience. Hidden menus, dialogs, accordions, and interface controls are excluded from this check."
+    });
+  }
+  if (!informationalPages.length) {
+    addSkippedCheck(result, 34, "Data point density is advisory and no informational content page was detected");
+  } else {
+    const dataPointFailures = informationalPages.filter(({ text }) => (text.match(/\b\d+(?:\.\d+)?%|\b\d{4}\b|\b\d+(?:,\d{3})+\b/g) ?? []).length < 3);
+    addCheck(result, 34, dataPointFailures.length === 0, geoPageEvidence(sitePages.length, informationalPages.map((item) => item.page), dataPointFailures.map((item) => item.page), "Informational page has low measurable fact density"), {
+      warning: true,
+      priorityScore: 20,
+      recommendation: "Add factual details, numbers, examples, comparisons, or entity-rich statements where relevant."
+    });
+  }
   addCheck(result, 35, !faqObjects.length || questionCount >= 2, "FAQ schema-DOM consistency scan");
   addCheck(result, 36, !productObjects.length || productObjects.some((record) => {
     const productName = typeof record.name === "string" ? record.name.toLowerCase() : "";
@@ -1721,11 +2072,47 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
   addCheck(result, 38, robotGroupAllows(robotsText, "OAI-SearchBot"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
   addCheck(result, 39, robotGroupAllows(robotsText, "ChatGPT-User"), robots?.response.status ? `robots.txt ${robots.response.status}` : "robots.txt unavailable");
   addCheck(result, 40, robotGroupAllows(robotsText, "OAI-SearchBot") && robotGroupAllows(robotsText, "ChatGPT-User"), robotGroupFor(robotsText, "GPTBot") ? "GPTBot group checked against OAI agents" : "No explicit GPTBot group");
-  addCheck(result, 41, oaiNotChallenged, JSON.stringify(oaiWafDebug));
-  addCheck(result, 42, paywallStatus !== "red", JSON.stringify({ anonWords: browserWords, oaiWords, ratio: Number(paywallRatio.toFixed(2)), status: paywallStatus }));
-  addCheck(result, 49, alternativesSignals.score > 0, JSON.stringify(alternativesSignals));
-  addCheck(result, 50, useCaseSignals.score > 0, JSON.stringify(useCaseSignals));
-  addCheck(result, 52, productFieldScore.score >= 6, `${productFieldScore.present}/${productFieldScore.total} Product schema fields present (${productFieldScore.percent}%); score ${productFieldScore.score}/10`);
+  if (inconclusiveOaiAgentResults.length > 0 && blockedOaiAgentResults.length === 0) {
+    addSkippedCheck(result, 41, JSON.stringify({ ...oaiWafDebug, skipped: true, reason: "Insufficient evidence: one or more OAI agent responses were unavailable or inconclusive" }));
+  } else {
+    addCheck(result, 41, oaiNotChallenged, JSON.stringify(oaiWafDebug), {
+      recommendation: "Remove the observed WAF, CAPTCHA, or bot challenge for the affected OAI agent on public pages."
+    });
+  }
+  if (!browserPage && !oaiPage && !pageHtml) {
+    addSkippedCheck(result, 42, "Insufficient evidence: no anonymous page response was available for paywall detection");
+  } else {
+    addCheck(result, 42, !explicitPaywallDetected, JSON.stringify({
+      pagesCrawled: sitePages.length,
+      pagesChecked: 1,
+      pagesFailed: explicitPaywallDetected ? 1 : 0,
+      affectedPages: explicitPaywallDetected ? [{ url: normalizedUrl, issueCount: 1, sampleEvidence: "Explicit login, subscription, registration, membership, or hidden-content wall detected" }] : [],
+      browserPaywallDetected,
+      oaiPaywallDetected,
+      browserTextSample: visibleBodyText(browserPage?.text ?? pageHtml).slice(0, 240),
+      oaiTextSample: visibleBodyText(oaiPage?.text ?? "").slice(0, 240),
+      anonWords: browserWords,
+      oaiWords,
+      ratio: browserWords ? Number(paywallRatio.toFixed(2)) : null
+    }), {
+      recommendation: "Make the affected citable content visible without requiring login, subscription, membership, or registration."
+    });
+  }
+  if (alternativesSignals.score > 0) {
+    addCheck(result, 49, true, JSON.stringify(alternativesSignals));
+  } else {
+    addInformationalCheck(result, 49, JSON.stringify(alternativesSignals), "Create comparison or alternatives pages to increase citation coverage.");
+  }
+  if (useCaseSignals.score > 0) {
+    addCheck(result, 50, true, JSON.stringify(useCaseSignals));
+  } else {
+    addInformationalCheck(result, 50, JSON.stringify(useCaseSignals), "Create use-case pages targeting specific audiences, industries, or scenarios.");
+  }
+  if (!productObjects.length) {
+    addNotApplicableCheck(result, 52, "Product schema completeness is not applicable because no Product schema was detected");
+  } else {
+    addCheck(result, 52, productFieldScore.score >= 6, `${productFieldScore.present}/${productFieldScore.total} Product schema fields present (${productFieldScore.percent}%); score ${productFieldScore.score}/10`);
+  }
   addCheck(result, 54, !reviewDiversitySignal.suspiciousPerfect, reviewDiversitySignal.reviewCount ? `rating ${reviewDiversitySignal.ratingValue}, reviewCount ${reviewDiversitySignal.reviewCount}` : "No suspicious aggregateRating detected");
   addCheck(result, 55, merchantTrust.score > 0, JSON.stringify(merchantTrust));
   addCheck(result, 65, !nosnippet, nosnippet ? "nosnippet/max-snippet/data-nosnippet found" : "No nosnippet restrictions found");
@@ -1735,26 +2122,134 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
     const renderedRatio = ssrRatio ?? 0;
     addCheck(result, 66, renderedRatio >= 0.6, JSON.stringify({ score: renderedRatio >= 0.8 ? 10 : renderedRatio >= 0.6 ? 5 : 0, skipped: false, ratio: Number(renderedRatio.toFixed(2)), oaiWords, renderedWords }));
   }
-  addCheck(result, 67, robotGroupAllows(robotsText, "Google-Extended"), JSON.stringify({ pass: robotGroupAllows(robotsText, "Google-Extended"), raw: robotGroupFor(robotsText, "Google-Extended") || "No explicit Google-Extended group" }));
-  addCheck(result, 68, geminiWaf.pass, JSON.stringify(geminiWaf));
-  addCheck(result, 69, ipRangeEvidence.pass, JSON.stringify(ipRangeEvidence));
-  addCheck(result, 70, napEvidence.pass, JSON.stringify(napEvidence));
-  addCheck(result, 71, consentEvidence.pass, JSON.stringify(consentEvidence));
+  const googleExtendedRobotsAllowed = robotGroupAllows(robotsText, "Google-Extended");
+  if (!geminiWaf.conclusive) {
+    addSkippedCheck(result, 67, JSON.stringify({
+      skipped: true,
+      robotsAllowed: googleExtendedRobotsAllowed,
+      status: geminiWaf.status,
+      reason: "Unable to verify Google-Extended HTTP access from the current crawl response"
+    }));
+    addSkippedCheck(result, 68, JSON.stringify({
+      ...geminiWaf,
+      skipped: true,
+      reason: "No conclusive Google-Extended WAF or challenge response was observed"
+    }));
+  } else {
+    const googleExtendedAccessible = googleExtendedRobotsAllowed && geminiWaf.pass;
+    addCheck(result, 67, googleExtendedAccessible, JSON.stringify({
+      pass: googleExtendedAccessible,
+      robotsAllowed: googleExtendedRobotsAllowed,
+      status: geminiWaf.status,
+      challengeDetected: geminiWaf.challengeDetected,
+      raw: robotGroupFor(robotsText, "Google-Extended") || "No explicit Google-Extended group; wildcard/default access applies"
+    }), {
+      recommendation: googleExtendedRobotsAllowed
+        ? "Remove the observed WAF, CAPTCHA, or bot block preventing Google-Extended from receiving the public page."
+        : "Remove the Google-Extended robots.txt block from public pages intended for Gemini discovery."
+    });
+    addCheck(result, 68, googleExtendedAccessible, JSON.stringify({
+      ...geminiWaf,
+      robotsAllowed: googleExtendedRobotsAllowed,
+      pass: googleExtendedAccessible
+    }), {
+      recommendation: "Remove the observed WAF, CAPTCHA, or bot challenge for Google-Extended on the affected public page."
+    });
+  }
+  addSkippedCheck(result, 69, JSON.stringify(ipRangeEvidence));
+  if (!napGbpApplicable) {
+    addNotApplicableCheck(result, 70, JSON.stringify({
+      notApplicable: true,
+      localBusinessSchema: localBusinessObjects.length > 0,
+      physicalLocationExists,
+      localSeoIntent: localTargetPages.length > 0,
+      googleBusinessProfileDetected: googleBusinessProfileUrls.length > 0,
+      googleBusinessProfileVerificationAvailable: gbpVerificationAvailable,
+      reason: "Google Business Profile comparison is not applicable because verified GBP data is unavailable or the page lacks required local-business signals."
+    }));
+  } else {
+    addCheck(result, 70, napEvidence.pass, JSON.stringify(napEvidence), {
+      recommendation: "Correct the proven name, address, or phone mismatch between the verified Google Business Profile and the affected local-business page."
+    });
+  }
+  addCheck(result, 71, consentEvidence.pass, JSON.stringify(consentEvidence), {
+    recommendation: "Keep primary page content available in the initial HTML instead of replacing it with a cookie-consent interstitial."
+  });
   if ("skipped" in schemaInjectionEvidence && schemaInjectionEvidence.skipped) {
     addSkippedCheck(result, 72, JSON.stringify(schemaInjectionEvidence));
   } else {
     addCheck(result, 72, Boolean(schemaInjectionEvidence.pass), JSON.stringify(schemaInjectionEvidence));
   }
   addCheck(result, 73, robotGroupAllows(robotsText, "GoogleOther"), JSON.stringify({ pass: robotGroupAllows(robotsText, "GoogleOther") }));
-  addCheck(result, 74, speakable.pass, JSON.stringify(speakable));
-  addCheck(result, 75, stockPhoto.score >= 5, JSON.stringify(stockPhoto));
-  addCheck(result, 76, ocrLegibility.score >= 5, JSON.stringify(ocrLegibility));
-  addCheck(result, 77, videoSchema.score >= 5, JSON.stringify(videoSchema));
+  if ("skipped" in speakable && speakable.skipped) {
+    addNotApplicableCheck(result, 74, JSON.stringify(speakable));
+  } else {
+    addCheck(result, 74, speakable.pass, JSON.stringify(speakable));
+  }
+  if (!images.length) {
+    addNotApplicableCheck(result, 75, JSON.stringify({ skipped: true, reason: "No images were detected for stock-photo analysis" }));
+    addNotApplicableCheck(result, 76, JSON.stringify({ skipped: true, reason: "No images were detected for image-text legibility analysis" }));
+  } else {
+    addCheck(result, 75, stockPhoto.score >= 5, JSON.stringify(stockPhoto), {
+      warning: true,
+      severity: "ADVISORY",
+      priorityScore: 15,
+      recommendation: "Use original imagery where it materially strengthens trust; stock imagery alone is not a citation blocker."
+    });
+    addCheck(result, 76, ocrLegibility.score >= 5, JSON.stringify(ocrLegibility), {
+      recommendation: "Add meaningful alt text or nearby HTML text for images that communicate important facts."
+    });
+  }
+  if (!videoSchema.videosFound) {
+    addNotApplicableCheck(result, 77, JSON.stringify({ ...videoSchema, skipped: true, reason: "No embedded video was detected" }));
+  } else {
+    addCheck(result, 77, videoSchema.score >= 5, JSON.stringify(videoSchema));
+  }
   if ("skipped" in transcriptAlignment && transcriptAlignment.skipped) {
-    addSkippedCheck(result, 78, JSON.stringify(transcriptAlignment));
+    if (transcriptAlignment.reason === "No video content detected") {
+      addNotApplicableCheck(result, 78, JSON.stringify({ ...transcriptAlignment, notApplicable: true }));
+    } else {
+      addSkippedCheck(result, 78, JSON.stringify(transcriptAlignment));
+    }
   } else {
     const transcriptScore = transcriptAlignment.score ?? 0;
     addCheck(result, 78, transcriptScore >= 5, JSON.stringify(transcriptAlignment));
+  }
+
+  for (const check of result) {
+    if (check.passed || check.skipped) continue;
+    if (check.scope === "page" && !measurablePageContent) {
+      check.passed = true;
+      check.skipped = true;
+      check.warning = undefined;
+      check.evidence = "Insufficient evidence: no measurable page body was retrieved";
+      continue;
+    }
+    const affected = affectedPagesFor(check);
+    if (affected.affectedPages === 0 || affected.sampleUrls.length === 0) {
+      check.passed = true;
+      check.skipped = true;
+      check.warning = undefined;
+      check.evidence = "Insufficient measurable evidence or no affected URL was available";
+      continue;
+    }
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(check.evidence) as Record<string, unknown>;
+    } catch {
+      parsed = { observedEvidence: check.evidence };
+    }
+    const pagesChecked = Number(parsed.pagesChecked);
+    const pagesFailed = Number(parsed.pagesFailed);
+    check.evidence = JSON.stringify({
+      ...parsed,
+      pagesCrawled: Number.isFinite(Number(parsed.pagesCrawled)) ? Number(parsed.pagesCrawled) : sitePages.length,
+      pagesChecked: Number.isFinite(pagesChecked) && pagesChecked > 0 ? pagesChecked : check.scope === "domain" ? 1 : sitePages.length,
+      pagesFailed: Number.isFinite(pagesFailed) && pagesFailed > 0 ? pagesFailed : affected.affectedPages,
+      affectedPages: Array.isArray(parsed.affectedPages) && parsed.affectedPages.length
+        ? parsed.affectedPages
+        : affected.sampleUrls.map((href) => ({ url: href, issueCount: 1 }))
+    });
   }
 
   const pageScore = scoreByScope(result, "page");
@@ -1768,7 +2263,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
         name: check.name,
         severity: check.severity,
         evidence: check.evidence,
-        recommendation: CITATION_RECOMMENDATIONS[check.id] ?? "Review this failed citation-readiness signal on key pages.",
+        recommendation: check.recommendation ?? CITATION_RECOMMENDATIONS[check.id] ?? "Review the measured evidence for this citation-readiness check on the affected pages.",
         affectedPages: affected.affectedPages,
         sampleUrls: affected.sampleUrls
       };
@@ -1781,7 +2276,7 @@ export async function runGeoAeoAudit(inputUrl: string, html?: string): Promise<G
       reason: check.evidence
     }));
   const categories = categorySummaries(result, citationFailedDetails, citationSkippedDetails);
-  const rawScore = scoreParameterOutcomes(result, 0);
+  const rawScore = scoreGeoChecks(result);
   const blockerFailed = false;
   const score = rawScore;
   const grade = gradeFor(score);

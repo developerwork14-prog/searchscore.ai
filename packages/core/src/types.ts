@@ -4,7 +4,7 @@ export type ImpactLevel = "High" | "Medium" | "Low";
 export type Sentiment = "Positive" | "Neutral" | "Negative";
 export type RiskLevel = "Low" | "Medium" | "High" | "Critical";
 export type GeoAeoGrade = "A" | "B" | "C" | "D" | "F";
-export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR";
+export type GeoAeoSeverity = "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
 export type GeoAeoScope = "page" | "domain";
 
 export interface ReportInput {
@@ -111,8 +111,17 @@ export interface PublicTechnicalCheck {
   weight: number;
   severity: PublicTechnicalSeverity;
   passed: boolean;
+  skipped?: boolean;
   warning?: boolean;
+  informational?: boolean;
+  opportunity?: string;
   evidence: string;
+  issueSummary?: string;
+  whatIsWrong?: string;
+  businessImpact?: string;
+  validationSummary?: string[];
+  recommendation?: string;
+  recommendationDetails?: Partial<SeoIssueRecommendation>;
   scope: PublicTechnicalScope;
 }
 
@@ -122,6 +131,7 @@ export interface GeoAeoCategorySummary {
   passedChecks: number;
   failedChecks: number;
   warningChecks: number;
+  skippedChecks: number;
   score: number;
   status: TechnicalCategoryStatus;
   failedCheckDetails?: {
@@ -149,6 +159,11 @@ export interface GeoAeoCheckResult {
   passed: boolean;
   evidence: string;
   skipped?: boolean;
+  notApplicable?: boolean;
+  warning?: boolean;
+  priorityScore?: number;
+  recommendation?: string;
+  whatIsWrong?: string;
 }
 
 export interface GeoAeoOpportunityCounts {
@@ -181,7 +196,10 @@ export interface IndexabilityCheckResult {
   maxScore: number;
   passed: boolean;
   skipped: boolean;
+  notApplicable?: boolean;
   warning?: boolean;
+  priorityScore?: number;
+  recommendation?: string;
   score: number;
   evidence: Record<string, unknown>;
 }
@@ -204,7 +222,7 @@ export interface IndexabilityAuditResult {
   checks: IndexabilityCheckResult[];
 }
 
-export type StructuredDataSeverity = "Critical" | "High" | "Medium" | "Low";
+export type StructuredDataSeverity = "Critical" | "High" | "Medium" | "Low" | "Advisory";
 
 export interface StructuredDataCheckResult {
   id: number;
@@ -217,6 +235,9 @@ export interface StructuredDataCheckResult {
   warning: boolean;
   score: number;
   evidence: Record<string, unknown>;
+  priorityScore?: number;
+  recommendation?: string;
+  whatIsWrong?: string;
 }
 
 export interface StructuredDataCategorySummary {
@@ -298,6 +319,8 @@ export interface OnPageSeoCheckResult {
   passed: boolean;
   skipped: boolean;
   warning: boolean;
+  informational?: boolean;
+  opportunity?: string;
   score: number;
   evidence: Record<string, unknown>;
   recommendation: SeoIssueRecommendation;
@@ -333,6 +356,8 @@ export interface ImageSeoCheckResult {
   passed: boolean;
   skipped: boolean;
   warning: boolean;
+  informational?: boolean;
+  opportunity?: string;
   score: number;
   evidence: Record<string, unknown>;
 }
@@ -365,7 +390,10 @@ export interface EeatCheckResult {
   weight: number;
   passed: boolean;
   skipped: boolean;
+  notApplicable?: boolean;
   warning: boolean;
+  priorityScore?: number;
+  recommendation?: string;
   score: number;
   evidence: Record<string, unknown>;
 }
@@ -388,7 +416,7 @@ export interface EeatAuditResult {
   checks: EeatCheckResult[];
 }
 
-export type TrustSignalsSeverity = "Critical" | "High" | "Medium" | "Low";
+export type TrustSignalsSeverity = "Critical" | "High" | "Medium" | "Low" | "Advisory";
 
 export interface TrustSignalsCheckResult {
   id: number;
@@ -398,7 +426,10 @@ export interface TrustSignalsCheckResult {
   weight: number;
   passed: boolean;
   skipped: boolean;
+  notApplicable?: boolean;
   warning: boolean;
+  priorityScore?: number;
+  recommendation?: string;
   score: number;
   evidence: Record<string, unknown>;
 }

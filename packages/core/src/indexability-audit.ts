@@ -16,7 +16,10 @@ export interface IndexabilityCheckDefinition {
 export interface IndexabilityCheckResult extends IndexabilityCheckDefinition {
   passed: boolean;
   skipped: boolean;
+  notApplicable?: boolean;
   warning?: boolean;
+  priorityScore?: number;
+  recommendation?: string;
   score: number;
   evidence: Record<string, unknown>;
 }
@@ -124,6 +127,20 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper:
   return results;
 }
 
+async function settleWithin<T>(promise: Promise<T>, ms: number, fallback: T) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -187,6 +204,7 @@ async function httpToHttpsEvidence(url: URL) {
   httpUrl.protocol = "http:";
   const result = await fetchText(httpUrl.toString(), 5000, { redirect: "manual" }).catch(() => null);
   const location = result?.response.headers.get("location") ?? "";
+  if (!result) return { skipped: true, reason: "HTTP-to-HTTPS redirect could not be verified from the current crawl environment" };
   return {
     pass: Boolean(result && [301, 302, 307, 308].includes(result.response.status) && /^https:/i.test(location)),
     status: result?.response.status ?? 0,
@@ -213,7 +231,7 @@ function parameterUrlEvidence(url: URL, canonicalUrl: string) {
 
 function paginationEvidence($: cheerio.CheerioAPI, canonicalUrl: string) {
   const paginationDetected = $("a[href*='page='],a[href*='/page/'],link[rel='next' i],link[rel='prev' i]").length > 0;
-  if (!paginationDetected) return { skipped: true, reason: "Pagination not detected" };
+  if (!paginationDetected) return { skipped: true, notApplicable: true, reason: "Pagination not detected" };
   const next = $("link[rel='next' i]").attr("href") ?? "";
   const prev = $("link[rel='prev' i]").attr("href") ?? "";
   return { pass: Boolean(next || prev || canonicalUrl), paginationDetected, next, prev, canonicalUrl };
@@ -221,7 +239,7 @@ function paginationEvidence($: cheerio.CheerioAPI, canonicalUrl: string) {
 
 function hreflangEvidence($: cheerio.CheerioAPI) {
   const alternates = $("link[rel='alternate' i][hreflang]").toArray();
-  if (!alternates.length) return { skipped: true, reason: "Multilingual hreflang not detected" };
+  if (!alternates.length) return { skipped: true, notApplicable: true, reason: "Multilingual hreflang not detected" };
   const values = alternates.map((el) => ($(el).attr("hreflang") ?? "").toLowerCase()).filter(Boolean);
   const hrefs = alternates.map((el) => $(el).attr("href") ?? "").filter(Boolean);
   const hasXDefault = values.includes("x-default");
@@ -250,14 +268,33 @@ function backButtonHijackEvidence(html: string) {
   return { pass: scriptsFound.length === 0 || loopSignals.length === 0, warning: scriptsFound.length > 0 && loopSignals.length === 0, scriptsFound: [...new Set(scriptsFound)], loopSignals };
 }
 
-function hiddenContentEvidence($: cheerio.CheerioAPI) {
-  const excluded = "nav,header,footer,[role='navigation'],[aria-modal='true'],[class*='modal' i],[class*='menu' i],[class*='accordion' i],[class*='tab' i]";
+function hiddenContentEvidence($: cheerio.CheerioAPI, pageUrl: string) {
+  const primary = $("main,article,[role='main']").first();
+  if (!primary.length) {
+    return { skipped: true, reason: "Insufficient evidence to determine hidden-content usage." };
+  }
+  const excluded = "nav,header,footer,details,dialog,[role='navigation'],[aria-modal='true'],[class*='modal' i],[class*='menu' i],[class*='accordion' i],[class*='tab' i],[class*='carousel' i],[class*='slider' i],[class*='cookie' i],[class*='consent' i]";
   let hiddenWords = 0;
-  $("[hidden],[style*='display:none' i],[style*='visibility:hidden' i],[style*='opacity:0' i]").each((_, el) => {
+  const samples: string[] = [];
+  primary.find("[hidden],[aria-hidden='true'],[style*='display:none' i],[style*='display: none' i],[style*='visibility:hidden' i],[style*='visibility: hidden' i]").each((_, el) => {
     if ($(el).closest(excluded).length) return;
-    hiddenWords += wordCount($(el).text());
+    const text = $(el).text().replace(/\s+/g, " ").trim();
+    hiddenWords += wordCount(text);
+    if (text && samples.length < 3) samples.push(text.slice(0, 180));
   });
-  return { pass: hiddenWords < 100, warning: hiddenWords >= 100 && hiddenWords < 200, hiddenWords, threshold: 100 };
+  const primaryWords = wordCount(primary.text());
+  const hiddenRatio = primaryWords ? hiddenWords / primaryWords : 0;
+  const failed = hiddenWords >= 100 && hiddenRatio >= 0.2;
+  return {
+    pass: !failed,
+    pagesCrawled: 1,
+    pagesChecked: 1,
+    pagesFailed: failed ? 1 : 0,
+    affectedPages: failed ? [{ url: pageUrl, issueCount: 1 }] : [],
+    hiddenWords,
+    hiddenRatio: Number(hiddenRatio.toFixed(2)),
+    samples
+  };
 }
 
 async function soft404Evidence(url: URL) {
@@ -273,17 +310,28 @@ async function soft404Evidence(url: URL) {
 }
 
 function infiniteScrollEvidence(html: string, $: cheerio.CheerioAPI, pagination: { skipped?: boolean; pass?: boolean }) {
-  const signalPatterns = [
-    /IntersectionObserver/i,
-    /infinite[-_\s]?scroll|endless[-_\s]?scroll|jscroll|ias\.|infiniteScroll\(/i,
-    /load[-_\s]?more|ajax(?:url|load|pagination)|fetch\([^)]*(?:page|offset|cursor)|XMLHttpRequest/i,
-    /addEventListener\(\s*["']scroll["']|onscroll\s*=|\.on\(\s*["']scroll["']/i,
-    /(?:scroll|viewport)[\s\S]{0,160}(?:appendChild|insertAdjacentHTML|loadMore|nextPage|page\s*\+\+|offset\s*\+=|cursor)/i
-  ];
-  const hasInfiniteSignal = signalPatterns.some((pattern) => pattern.test(html));
-  if (!hasInfiniteSignal) return { skipped: true, reason: "No infinite-scroll or auto-loading content behavior detected" };
+  const explicitLibrarySignal = /infinite[-_\s]?scroll|endless[-_\s]?scroll|jscroll|ias\.|infiniteScroll\(/i.test(html);
+  const observerAppendSignal = /IntersectionObserver[\s\S]{0,1200}(?:appendChild|insertAdjacentHTML|loadMore|nextPage|page\s*\+\+|offset\s*\+=|cursor)/i.test(html);
+  const scrollAppendSignal = /(?:addEventListener\(\s*["']scroll["']|onscroll\s*=|\.on\(\s*["']scroll["'])[\s\S]{0,1200}(?:appendChild|insertAdjacentHTML|loadMore|nextPage|page\s*\+\+|offset\s*\+=|cursor)/i.test(html);
+  const listingItemCount = $("article,[class*='post-card' i],[class*='article-card' i],[class*='product-card' i],[class*='listing-item' i]").length;
+  const visibleLoadMore = listingItemCount >= 2 && $("button,a").toArray().some((element) => {
+    const node = $(element);
+    const href = (node.attr("href") ?? "").trim();
+    const nonCrawlableControl = element.tagName?.toLowerCase() === "button"
+      || !href
+      || href === "#"
+      || /^javascript:/i.test(href);
+    return nonCrawlableControl && /\b(?:load|show|view)\s+more\b/i.test(node.text());
+  });
+  const hasInfiniteSignal = explicitLibrarySignal || observerAppendSignal || scrollAppendSignal || visibleLoadMore;
+  if (!hasInfiniteSignal) return { skipped: true, notApplicable: true, reason: "No infinite-scroll or auto-loading content behavior detected" };
   const hasPagination = !pagination.skipped || $("a[href*='page='],a[href*='?p='],a[href*='/page/'],a[rel='next' i],a[rel='prev' i],link[rel='next' i],link[rel='prev' i],[class*='pagination' i] a[href]").length > 0;
-  return { pass: hasPagination, infiniteScrollDetected: hasInfiniteSignal, paginationDetected: hasPagination };
+  return {
+    pass: hasPagination,
+    infiniteScrollDetected: hasInfiniteSignal,
+    paginationDetected: hasPagination,
+    signals: { explicitLibrarySignal, observerAppendSignal, scrollAppendSignal, visibleLoadMore, listingItemCount }
+  };
 }
 
 async function searchIndexEvidence(engine: "google" | "bing", hostname: string) {
@@ -330,7 +378,15 @@ function resultFor(id: number, evidence: Record<string, unknown>): IndexabilityC
   const skipped = Boolean(evidence.skipped);
   const passed = skipped ? true : Boolean(evidence.pass);
   const warning = !skipped && !passed && Boolean(evidence.warning);
-  return { ...definition, passed, skipped, warning: warning || undefined, score: skipped ? 0 : passed ? 1 : 0, evidence };
+  return {
+    ...definition,
+    passed,
+    skipped,
+    ...(evidence.notApplicable ? { notApplicable: true } : {}),
+    warning: warning || undefined,
+    score: skipped ? 0 : passed ? 1 : 0,
+    evidence
+  };
 }
 
 export async function runIndexabilityAudit(inputUrl: string, html?: string): Promise<IndexabilityAuditResult> {
@@ -343,7 +399,13 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
   const canonicalUrl = canonicalHref(pageHtml, normalizedUrl, serverPage.response);
   const canonicalTarget = canonicalUrl ? await fetchText(canonicalUrl, 3000).catch(() => null) : null;
   const secondCanonicalUrl = canonicalTarget ? canonicalHref(canonicalTarget.text, canonicalUrl, canonicalTarget.response) : "";
-  const sitemapUrls = await fetchSitemapUrls(url.origin, 2500, SITEMAP_INDEXABILITY_SAMPLE_LIMIT).then((result) => result.urls.slice(0, SITEMAP_INDEXABILITY_SAMPLE_LIMIT)).catch(() => []);
+  const sitemapUrls = await settleWithin(
+    fetchSitemapUrls(url.origin, 2500, SITEMAP_INDEXABILITY_SAMPLE_LIMIT)
+      .then((result) => result.urls.slice(0, SITEMAP_INDEXABILITY_SAMPLE_LIMIT))
+      .catch(() => []),
+    8000,
+    []
+  );
   const sitemapSamples = await mapWithConcurrency(sitemapUrls, SITEMAP_INDEXABILITY_CONCURRENCY, async (sampleUrl) => {
     const page = await fetchText(sampleUrl, 1800).catch(() => null);
     const sampleCanonical = page ? canonicalHref(page.text, sampleUrl, page.response) : "";
@@ -371,7 +433,11 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
     resultFor(6, { pass: sitemapSamples.every((sample) => !sample.noindex && !sample.canonicalNoindex), checked: sitemapSamples.length, noindexedUrls: sitemapSamples.filter((sample) => sample.noindex || sample.canonicalNoindex).slice(0, 10) }),
     resultFor(7, { pass: Boolean(canonicalUrl && comparableUrl(canonicalUrl) === comparableUrl(normalizedUrl)), canonicalUrl, pageUrl: normalizedUrl }),
     resultFor(8, { pass: /^https:\/\//i.test(canonicalUrl), canonicalUrl }),
-    resultFor(9, { pass: canonicalTarget?.response.status === 200, canonicalUrl, status: canonicalTarget?.response.status ?? 0 }),
+    resultFor(9, !canonicalUrl
+      ? { skipped: true, notApplicable: true, reason: "No canonical target was declared" }
+      : !canonicalTarget
+        ? { skipped: true, reason: "Unable to verify the canonical target response from the current crawl environment", canonicalUrl }
+        : { pass: canonicalTarget.response.status === 200, canonicalUrl, status: canonicalTarget.response.status }),
     resultFor(10, { pass: !canonicalUrl || !secondCanonicalUrl || comparableUrl(secondCanonicalUrl) === comparableUrl(canonicalUrl), chain: [normalizedUrl, canonicalUrl, secondCanonicalUrl].filter(Boolean), maxDepth: 1 }),
     resultFor(12, { pass: !/nosnippet/i.test(robotsDirectives(pageHtml, serverPage.response)), directives: robotsDirectives(pageHtml, serverPage.response) }),
     resultFor(13, { pass: maxSnippetValue(pageHtml, serverPage.response) === null || maxSnippetValue(pageHtml, serverPage.response) === -1 || (maxSnippetValue(pageHtml, serverPage.response) ?? 0) >= 50, value: maxSnippetValue(pageHtml, serverPage.response), lowThreshold: 50 }),
@@ -385,10 +451,35 @@ export async function runIndexabilityAudit(inputUrl: string, html?: string): Pro
     resultFor(21, gatingEvidence($, bodyText)),
     resultFor(22, consentEvidence($, bodyText)),
     resultFor(23, backButtonHijackEvidence(pageHtml)),
-    resultFor(24, hiddenContentEvidence($)),
+    resultFor(24, hiddenContentEvidence($, normalizedUrl)),
     resultFor(25, soft404),
     resultFor(26, infiniteScrollEvidence(pageHtml, $, pagination))
   ];
+  for (const check of checks) {
+    if (check.passed || check.skipped) continue;
+    const pagesChecked = Number(check.evidence.pagesChecked);
+    const pagesFailed = Number(check.evidence.pagesFailed);
+    const affectedPages = Array.isArray(check.evidence.affectedPages) ? check.evidence.affectedPages : [];
+    if (!(pagesChecked > 0 && pagesFailed > 0 && affectedPages.some((page) =>
+      page && typeof page === "object" && typeof (page as Record<string, unknown>).url === "string"
+    ))) {
+      check.evidence = {
+        ...check.evidence,
+        pagesCrawled: 1,
+        pagesChecked: 1,
+        pagesFailed: 1,
+        affectedPages: [{ url: normalizedUrl, issueCount: 1 }]
+      };
+    }
+  }
+  const hiddenCheck = checks.find((check) => check.id === 24);
+  if (hiddenCheck) {
+    hiddenCheck.recommendation = "Keep important primary content visible in the initial page experience. Hidden navigation, dialogs, accordions, and interface controls are excluded.";
+  }
+  const infiniteScrollCheck = checks.find((check) => check.id === 26);
+  if (infiniteScrollCheck) {
+    infiniteScrollCheck.recommendation = "When content is loaded automatically during scrolling, provide crawlable pagination links to the same items.";
+  }
   const categories = categorySummaries(checks);
   const scorable = checks.filter((check) => !check.skipped);
   const score = scoreParameterOutcomes(checks, 0);

@@ -149,6 +149,7 @@ function fallbackGeoAeoAudit(reason: string): GeoAeoAuditResult {
     passedChecks: 0,
     failedChecks: 0,
     warningChecks: 0,
+    skippedChecks: 0,
     score: 0,
     status: "Skipped",
     skippedCheckDetails: [{ id: 0, name: `${categoryName} unavailable`, reason }]
@@ -407,16 +408,18 @@ function technicalCategorySummaries(audit: TechnicalAuditResult): TechnicalCateg
     .filter((categoryName) => categories.has(categoryName))
     .map((categoryName) => {
       const checks = categories.get(categoryName) ?? [];
-      const failedChecks = checks.filter((check) => !check.passed && !check.warning).length;
-      const warningChecks = checks.filter((check) => check.warning).length;
+      const scorableChecks = checks.filter((check) => !check.skipped && check.severity !== "ADVISORY" && check.weight > 0);
+      const failedChecks = scorableChecks.filter((check) => !check.passed && !check.warning).length;
+      const warningChecks = checks.filter((check) => !check.skipped && (check.warning || check.severity === "ADVISORY")).length;
 
       return {
         categoryName,
         totalChecks: checks.length,
-        passedChecks: checks.filter((check) => check.passed && !check.warning).length,
+        passedChecks: checks.filter((check) => !check.skipped && check.passed && !check.warning).length,
         failedChecks,
         warningChecks,
-        score: scoreParameterOutcomes(checks, 0),
+        skippedChecks: checks.filter((check) => check.skipped).length,
+        score: scoreParameterOutcomes(scorableChecks, 100),
         status: categoryStatusWithWarnings(failedChecks, warningChecks)
       };
     });
@@ -523,12 +526,18 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     maxSitemapFiles: 100,
     followInternalLinks: true
   });
-  const technicalAuditPromise = siteCrawlPromise.then((crawl) => withAuditTimeout(
-    runTechnicalAudit(normalizedUrl, crawl),
-    120000,
+  const technicalAuditPromise = siteCrawlPromise.then((crawl) => {
+    const technicalSample = {
+      ...crawl,
+      pages: crawl.pages.slice(0, 50)
+    };
+    return withAuditTimeout(
+    runTechnicalAudit(normalizedUrl, technicalSample),
+    90000,
     fallbackTechnicalAudit("Technical audit timed out"),
     "Technical audit"
-  ));
+  );
+  });
   const geoAeoAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
     runGeoAeoAudit(normalizedUrl, html),
     45000,
@@ -541,8 +550,8 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     fallbackIndexabilityAudit("Indexability audit timed out"),
     "Indexability audit"
   ));
-  const structuredDataAuditPromise = htmlContentPromise.then((html) => withAuditTimeout(
-    runStructuredDataAudit(normalizedUrl, html),
+  const structuredDataAuditPromise = Promise.all([htmlContentPromise, siteCrawlPromise]).then(([html, crawl]) => withAuditTimeout(
+    runStructuredDataAudit(normalizedUrl, html, crawl),
     30000,
     fallbackStructuredDataAudit("Structured data audit timed out"),
     "Structured data audit"

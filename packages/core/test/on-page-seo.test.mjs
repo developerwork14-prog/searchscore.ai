@@ -134,6 +134,8 @@ const check = (name) => evidenceAudit.checks.find((item) => item.name === name);
 const sampleEvidence = (name) => check(name).recommendation.rawEvidence.affectedPages[0].sampleEvidence;
 
 assert.deepEqual(sampleEvidence("Heading Hierarchy No Skips").headingSequence, ["H1", "H3", "H4"]);
+assert.equal(check("Heading Hierarchy No Skips").informational, true);
+assert.match(check("Heading Hierarchy No Skips").opportunity, /Optional improvement/);
 assert.equal(sampleEvidence("Heading Hierarchy No Skips").problem, "Skipped H2 between H1 and H3");
 assert.equal(check("Heading Hierarchy No Skips").recommendation.whatIsWrong, "Heading levels skip an intermediate level within primary page content.");
 assert.doesNotMatch(check("Heading Hierarchy No Skips").recommendation.whatIsWrong, /H1 → H3 → H4|Skipped H2/);
@@ -149,6 +151,7 @@ assert.doesNotMatch(check("Heading Capitalization Consistent").recommendation.wh
 
 assert.equal(sampleEvidence("H1 Length 20-70 Characters").h1, "Blogs");
 assert.equal(sampleEvidence("H1 Length 20-70 Characters").length, 5);
+assert.equal(check("H1 Length 20-70 Characters").informational, true);
 assert.equal(sampleEvidence("H1 Length 20-70 Characters").recommendedRange, "20-70");
 assert.deepEqual(check("H1 Length 20-70 Characters").recommendation.affectedPages, ["https://example.com/evidence"]);
 assert.doesNotMatch(check("H1 Length 20-70 Characters").recommendation.whatIsWrong, /"Blogs"|5 characters/);

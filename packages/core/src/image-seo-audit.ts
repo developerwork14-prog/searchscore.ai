@@ -24,19 +24,24 @@ const CHECKS: CheckDefinition[] = [
   [1, "Alt Text", "Meaningful Images Have Alt Text", 4.38, "High"],
   [2, "Image Format & Performance", "WebP/AVIF >=70%", 3.26, "Medium"],
   [3, "Image Format & Performance", "LCP Image Preloaded", 3.8, "High"],
-  [4, "Image Format & Performance", "<picture> with WebP+Fallback", 2.17, "Medium"],
+  [4, "Image Format & Performance", "<picture> with WebP+Fallback", 0, "Low"],
   [5, "Image Format & Performance", "Stable Image URLs", 2.17, "Medium"],
-  [6, "Image Format & Performance", "Native Lazy Loading (Not JS)", 3.26, "High"],
-  [7, "Image Format & Performance", "Responsive srcset+sizes", 2.17, "Medium"],
-  [8, "Image Format & Performance", "Descriptive File Names", 2.17, "Low"],
+  [6, "Image Format & Performance", "Native Lazy Loading (Not JS)", 0, "Low"],
+  [7, "Image Format & Performance", "Responsive srcset+sizes", 0, "Low"],
+  [8, "Image Format & Performance", "Descriptive File Names", 0, "Low"],
   [9, "Content & Accessibility", "OCR-HTML Data Parity", 3.8, "Medium"],
   [10, "Content & Accessibility", "No Key Data as Image-Only", 3.8, "High"],
   [11, "Content & Accessibility", "No Images Blocking Text", 2.72, "High"],
-  [12, "Schema & Markup", "SVG <title>+<desc>", 2.17, "Medium"],
-  [13, "Schema & Markup", "ImageObject Schema", 2.17, "Medium"]
+  [12, "Schema & Markup", "SVG <title>+<desc>", 0, "Low"],
+  [13, "Schema & Markup", "ImageObject Schema", 0, "Low"]
 ].map(([id, category, name, weight, severity]) => ({ id, category, name, weight, severity })) as CheckDefinition[];
 
 const CATEGORY_ORDER = [...new Set(CHECKS.map((check) => check.category))];
+const ADVISORY_CHECK_IDS = new Set([4, 6, 7, 8, 12, 13]);
+
+function advisoryOpportunity(name: string) {
+  return `Optional image optimization: improve ${name.toLowerCase()} where it benefits performance, accessibility, or image understanding.`;
+}
 const RASTER_EXTENSIONS = /\.(?:jpe?g|png|gif|webp|avif)(?:[?#]|$)/i;
 
 function clamp(value: number, min = 0, max = 100) {
@@ -70,6 +75,9 @@ function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boole
   const warning = !skipped && !passed && Boolean(state.warning);
   return {
     ...def,
+    ...(ADVISORY_CHECK_IDS.has(def.id) && !passed && !skipped
+      ? { informational: true, opportunity: advisoryOpportunity(def.name) }
+      : {}),
     recommendation: imageSeoRecommendation(def.name, def.severity, state.evidence ?? {}),
     passed,
     skipped,
@@ -82,7 +90,7 @@ function result(def: CheckDefinition, state: { passed?: boolean; skipped?: boole
 function summarize(checks: ImageSeoCheckResult[]): ImageSeoCategorySummary[] {
   return CATEGORY_ORDER.map((categoryName) => {
     const categoryChecks = checks.filter((check) => check.category === categoryName);
-    const scorable = categoryChecks.filter((check) => !check.skipped);
+    const scorable = categoryChecks.filter((check) => !check.skipped && !check.informational && check.weight !== 0);
     const failed = scorable.filter((check) => !check.passed && !check.warning);
     const warningChecks = scorable.filter((check) => check.warning).length;
     const skippedChecks = categoryChecks.filter((check) => check.skipped).length;
@@ -608,11 +616,22 @@ export async function runImageSeoAudit(inputUrl: string, html?: string, siteCraw
     }
     const evidence = aggregateImageCheck(crawlForAggregation, check.id);
     const outcome = outcomeForEvidence(evidence);
-    const severity = boundedSeverity(check.severity, outcome.severity);
-    return { ...check, severity, passed: outcome.passed, skipped: outcome.skipped, warning: outcome.warning, score: outcome.passed ? 1 : 0, evidence, recommendation: imageSeoRecommendation(check.name, severity, evidence) };
+    const advisory = ADVISORY_CHECK_IDS.has(check.id);
+    const severity = advisory ? check.severity : boundedSeverity(check.severity, outcome.severity);
+    return {
+      ...check,
+      severity,
+      passed: outcome.passed,
+      skipped: outcome.skipped,
+      warning: advisory && !outcome.passed && !outcome.skipped ? true : outcome.warning,
+      informational: advisory && !outcome.passed && !outcome.skipped ? true : undefined,
+      opportunity: advisory && !outcome.passed && !outcome.skipped ? advisoryOpportunity(check.name) : undefined,
+      score: outcome.passed ? 1 : 0,
+      evidence,
+      recommendation: imageSeoRecommendation(check.name, severity, evidence)
+    };
   }) : results.map((check) => ({ ...check, recommendation: imageSeoRecommendation(check.name, check.severity, check.evidence) }));
   const categories = summarize(siteWideResults);
-  const scorable = siteWideResults.filter((check) => !check.skipped);
   const score = scoreParameterOutcomes(siteWideResults);
   return { score, checkedAt: new Date().toISOString(), categories, checks: siteWideResults };
 }
