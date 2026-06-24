@@ -4,6 +4,7 @@ import { z } from "zod";
 import { reportStore } from "@/lib/server/report-store";
 import { createdPublicReportView } from "@/lib/server/report-views";
 import { BUSINESS_EMAIL_MESSAGE, isBusinessEmail } from "@/lib/business-email";
+import { loadServerEnv } from "@/lib/server/env";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -16,6 +17,7 @@ const reportInputSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    loadServerEnv();
     const input = reportInputSchema.parse(await request.json());
     const report = await generateVisibilityReport(input, new URL(request.url).origin);
     await reportStore.save(report);

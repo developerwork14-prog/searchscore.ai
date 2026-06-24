@@ -535,6 +535,20 @@ export interface PublicTechnicalAudit {
   }[];
 }
 
+export interface CoreWebVitalsSnapshot {
+  website: string;
+  performanceScore?: number;
+  mobileLcp?: number;
+  desktopLcp?: number;
+  cls?: number;
+  inp?: number;
+  ttfb?: number;
+  fcp?: number;
+  speedIndex?: number;
+  tbt?: number;
+  checkedAt: string;
+}
+
 export interface RiskAssessment {
   level: RiskLevel;
   factors: string[];
@@ -556,6 +570,7 @@ export interface AiVisibilityReport {
   technicalCategorySummaries: TechnicalCategorySummary[];
   technicalChecks: PublicTechnicalCheck[];
   technicalCategoryDebug?: PublicTechnicalAudit["category_debug"];
+  coreWebVitals?: CoreWebVitalsSnapshot;
   geoAeoAudit: GeoAeoAuditResult;
   indexabilityAudit?: IndexabilityAuditResult;
   structuredDataAudit?: StructuredDataAuditResult;
@@ -620,6 +635,7 @@ export interface StructuredAiVisibilityReport {
   };
   technical_categories: TechnicalCategorySummary[];
   technical_audit: PublicTechnicalAudit;
+  core_web_vitals?: CoreWebVitalsSnapshot;
   geo_aeo_audit: PublicGeoAeoAudit;
   indexability_audit: PublicIndexabilityAudit;
   structured_data_audit: PublicStructuredDataAudit;

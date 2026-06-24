@@ -3,6 +3,7 @@ export * from "./report-generator.js";
 export * from "./playground.js";
 export * from "./exporters.js";
 export * from "./technical-audit.js";
+export * from "./pagespeed-insights.js";
 export { runEeatAudit } from "./eeat-audit.js";
 export * from "./chatgpt-citation-audit.js";
 export * from "./gemini-citation-audit.js";

@@ -659,6 +659,7 @@ export async function generateVisibilityReport(input: ReportInput, origin = "htt
     technicalCategorySummaries: technicalCategorySummaries(technicalAudit),
     technicalChecks: technicalAudit.checks,
     technicalCategoryDebug: technicalAudit.categoryDebug,
+    coreWebVitals: technicalAudit.pageSpeed,
     geoAeoAudit,
     indexabilityAudit,
     structuredDataAudit,

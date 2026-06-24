@@ -252,6 +252,22 @@ function statusLabel(score: number) {
   return "at risk";
 }
 
+function formatMs(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return "N/A";
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`;
+  return `${Math.round(value)}ms`;
+}
+
+function formatDecimal(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return "N/A";
+  return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatScore(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) return "N/A";
+  return `${Math.round(value)}%`;
+}
+
 function scoreTone(score: number) {
   if (score >= 90) return "#1F9D55";
   if (score < 60) return "#DC2626";
@@ -395,6 +411,35 @@ function MiniGauge({ name, sub, score, platform }: { name: string; sub: string; 
         <text x="58" y="64" textAnchor="middle" className={styles.miniGaugeText}>{score}%</text>
       </svg>
     </div>
+  );
+}
+
+function CoreWebVitalsPanel({ vitals }: { vitals?: StructuredAiVisibilityReport["core_web_vitals"] }) {
+  const items = [
+    { label: "Mobile LCP", value: formatMs(vitals?.mobileLcp), meta: "Target <= 2.5s" },
+    { label: "Desktop LCP", value: formatMs(vitals?.desktopLcp), meta: "Target <= 2.5s" },
+    { label: "CLS", value: formatDecimal(vitals?.cls), meta: "Target <= 0.1" },
+    { label: "INP", value: formatMs(vitals?.inp), meta: "Target <= 200ms" },
+    { label: "TTFB", value: formatMs(vitals?.ttfb), meta: "Target <= 800ms" },
+    { label: "Performance Score", value: formatScore(vitals?.performanceScore), meta: "Good >= 90" }
+  ];
+
+  return (
+    <section className={styles.coreVitals}>
+      <div className={styles.sectionHead}>
+        <h2>Core Web Vitals</h2>
+        <p>{vitals ? `Measured by PageSpeed Insights · ${formatAuditDate(vitals.checkedAt)}` : "PageSpeed Insights data unavailable."}</p>
+      </div>
+      <div className={styles.coreVitalsGrid}>
+        {items.map((item) => (
+          <div key={item.label} className={styles.coreVitalItem}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <small>{item.meta}</small>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1201,21 +1246,41 @@ function skippedItemsFor(category: CategoryLike, checks: CheckLike[]): DetailIte
   return [...checkItems, ...detailItems];
 }
 
+const STRUCTURED_PARENT_CHECKS: Record<string, string[]> = {
+  "Organization Schema": ["Organization Schema Present"],
+  "LocalBusiness Schema": ["LocalBusiness Schema Present with Valid @type"],
+  "Article Schema": ["Article: headline"],
+  "Person Schema": ["Person Schema on Bio Pages"],
+  "FAQ & HowTo Schema": ["FAQPage When FAQ in DOM", "HowTo on Step-by-Step"]
+};
+
 function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
+  const [openIssues, setOpenIssues] = useState<Set<string>>(() => new Set());
+  const [dependentChecksOpen, setDependentChecksOpen] = useState(false);
   const skipped = category.status === "Skipped" || category.skippedChecks === category.totalChecks;
   const score = skipped ? null : clampScore(category.score);
   const status = (skipped ? "Skipped" : ["Passed", "Minor Attention", "Needs Attention", "Skipped"].includes(category.status) ? category.status : statusFor(score ?? 0, skipped)) as Status;
   const checks = checksForCategory(tab, category);
-  const issues = issueItemsFor(category, checks);
+  const rawIssues = issueItemsFor(category, checks);
+  const structuredDataCategory = tab.label === "Structured data";
+  const parentCheckNames = structuredDataCategory ? STRUCTURED_PARENT_CHECKS[category.categoryName] ?? [] : [];
+  const failedParentChecks = parentCheckNames.filter((name) => rawIssues.some((issue) => issue.name === name));
+  const parentSchemaMissing = failedParentChecks.length > 0;
+  const issues = parentSchemaMissing
+    ? rawIssues.filter((issue) => failedParentChecks.includes(issue.name))
+    : rawIssues;
+  const dependentChecks = parentSchemaMissing
+    ? checks.filter((check) => !failedParentChecks.includes(check.name ?? ""))
+    : [];
   const passed = passedItemsFor(checks);
   const opportunities = opportunityItemsFor(checks);
   const rawSkippedItems = skippedItemsFor(category, checks);
-  const structuredDataCategory = tab.label === "Structured data";
   const skippedItems = structuredDataCategory ? [] : rawSkippedItems;
   const informationalOnly = checks.length > 0 && checks.every((check) => check.informational);
   const allSkippedChecksAreNotApplicable = checks.some((check) => check.skipped)
     && checks.filter((check) => check.skipped).every((check) => check.notApplicable);
   const passedCount = Math.max(0, (category.passedChecks ?? passed.length) - opportunities.length);
+  const applicableCheckCount = parentSchemaMissing ? failedParentChecks.length : checks.length;
   const skippedCount = skippedItems.length;
   const issueCountLabel = issues.length;
   const limitedCoverage = !skipped && skippedCount > 0;
@@ -1231,7 +1296,9 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
       <summary>
         <div className={styles.auditRowMain}>
           <h3>{category.categoryName}</h3>
-          <span>{category.totalChecks} checks</span>
+          <span>{parentSchemaMissing
+            ? `${applicableCheckCount} applicable check${applicableCheckCount === 1 ? "" : "s"} · ${dependentChecks.length} dependent checks`
+            : `${category.totalChecks} checks`}</span>
         </div>
         <div className={styles.auditRowStats}>
           {!informationalOnly ? <span className={styles.passCount}>{passedCount} passed</span> : null}
@@ -1268,13 +1335,23 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
               <ul className={styles.checkList}>
                 {issues.map((issue) => (
                   <li className={styles.issueDropdownItem} key={`${category.categoryName}-${issue.name}-${issue.meta ?? "issue"}`}>
-                    <details className={styles.issueDropdown}>
-                      <summary>
+                    <div className={`${styles.issueDropdown} ${openIssues.has(issue.name) ? styles.issueDropdownOpen : ""}`}>
+                      <button
+                        type="button"
+                        className={styles.issueDropdownToggle}
+                        aria-expanded={openIssues.has(issue.name)}
+                        onClick={() => setOpenIssues((current) => {
+                          const next = new Set(current);
+                          if (next.has(issue.name)) next.delete(issue.name);
+                          else next.add(issue.name);
+                          return next;
+                        })}
+                      >
                         <b>!</b>
                         <strong>{issue.name}</strong>
-                        <i>View details</i>
-                      </summary>
-                      <div className={styles.issueDropdownBody}>
+                        <i>{openIssues.has(issue.name) ? "Hide details" : "View details"}</i>
+                      </button>
+                      {openIssues.has(issue.name) ? <div className={styles.issueDropdownBody}>
                       {(issue.issue || issue.summary) ? <small>{issue.issue || issue.summary}</small> : null}
                       {issue.brokenLinkEvidence?.length ? (
                         <small className={styles.evidenceText}>
@@ -1307,8 +1384,8 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                           <ol>{issue.fixes.map((step) => <li key={step}>{step}</li>)}</ol>
                         </small>
                       ) : null}
-                      </div>
-                    </details>
+                      </div> : null}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1358,6 +1435,26 @@ function AuditRow({ category, tab }: { category: CategoryLike; tab: TabInfo }) {
                   ))}
                 </ul>
               </>
+            ) : null}
+            {parentSchemaMissing ? (
+              <div className={styles.dependentChecks}>
+                <button
+                  type="button"
+                  aria-expanded={dependentChecksOpen}
+                  onClick={() => setDependentChecksOpen((open) => !open)}
+                >
+                  <span>{dependentChecks.length} properties will be checked once schema is added</span>
+                  <i>{dependentChecksOpen ? "Hide" : "Show"}</i>
+                </button>
+                {dependentChecksOpen ? (
+                  <div>
+                    <p>These parameters are not counted as current issues.</p>
+                    <ul>
+                      {dependentChecks.map((check) => <li key={`${category.categoryName}-${check.name}-dependent`}>{check.name}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
@@ -1664,6 +1761,8 @@ export default function ReportPage() {
             <footer><button className={styles.primary} onClick={reviewPriority}>Review {priority.label} issues -&gt;</button>{nextPriority ? <span>P2: {nextPriority.label} is next at {nextPriority.score}%.</span> : null}</footer>
           </article>
         </section>
+
+        <CoreWebVitalsPanel vitals={report.core_web_vitals} />
 
         <section className={styles.chartGrid}>
           <article className={styles.card}><div className={styles.cardTitle}><h2>Visibility profile</h2></div><RadarChart axes={radarAxes} /></article>

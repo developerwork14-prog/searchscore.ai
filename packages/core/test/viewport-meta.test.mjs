@@ -5,7 +5,10 @@ import {
   crawlabilityRecommendation,
   dedupeBrokenLinkEvidence,
   excludedBrokenLinkHref,
+  hasImagePreloadHint,
   isBrokenLinkStatus,
+  isModernLcpImageUrl,
+  isPermanentRedirectStatus,
   linkElementsByRel,
   linkHrefByRel,
   metaContentByName,
@@ -90,6 +93,25 @@ for (const item of cases) {
   assert.equal(linkElementsByRel($, "preload").length, 2);
 }
 
+{
+  const hrefPreload = cheerio.load('<link rel="preload" as="image" href="/hero.webp">');
+  const srcsetPreload = cheerio.load('<link rel="preload" as="image" imageSrcSet="/hero-640.png 640w, /hero-1280.png 1280w" fetchPriority="high">');
+  const missingSource = cheerio.load('<link rel="preload" as="image">');
+  const wrongAs = cheerio.load('<link rel="preload" as="script" href="/app.js">');
+
+  assert.equal(hasImagePreloadHint(hrefPreload), true, "href image preload is valid");
+  assert.equal(hasImagePreloadHint(srcsetPreload), true, "imageSrcSet image preload is valid");
+  assert.equal(hasImagePreloadHint(missingSource), false, "image preload requires href or imageSrcSet");
+  assert.equal(hasImagePreloadHint(wrongAs), false, "preload must be as=image");
+}
+
+assert.equal(isModernLcpImageUrl("/Group1000001631.png"), false);
+assert.equal(isModernLcpImageUrl("/hero.jpg"), false);
+assert.equal(isModernLcpImageUrl("/hero.jpeg"), false);
+assert.equal(isModernLcpImageUrl("/hero.gif"), false);
+assert.equal(isModernLcpImageUrl("/hero.webp"), true);
+assert.equal(isModernLcpImageUrl("/hero.avif?width=1200"), true);
+
 assert.equal(robotsTxtStatusPass(200), true);
 assert.equal(robotsTxtStatusPass(301), true);
 assert.equal(robotsTxtStatusPass(403), false);
@@ -115,6 +137,12 @@ for (const status of [404, 410, 500, 502, 503, 504, "DNS Error", "Connection Err
 }
 for (const status of [200, 301, 302, 307, 308, 400, 401, 403, 429, 501, 505, 599]) {
   assert.equal(isBrokenLinkStatus(status), false, `${status} is not classified as broken`);
+}
+for (const status of [301, 308]) {
+  assert.equal(isPermanentRedirectStatus(status), true, `${status} is classified as permanent`);
+}
+for (const status of [200, 302, 303, 307, 404, undefined]) {
+  assert.equal(isPermanentRedirectStatus(status), false, `${status} is not classified as permanent`);
 }
 for (const href of ["/cdn-cgi/trace", "/wp-admin/", "/wp-content/image.png", "/blog/wp-content/image.png", "/wp-json/posts", "mailto:test@example.com", "tel:+15551234567", "javascript:void(0)", "#contact"]) {
   assert.equal(excludedBrokenLinkHref(href), true, `${href} is excluded`);

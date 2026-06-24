@@ -3,6 +3,7 @@ import tls from "node:tls";
 import { crawlSite, type SiteCrawlResult } from "./site-crawler.js";
 import { isLikelyDecorativeImage } from "./image-alt-utils.js";
 import { scoreParameterOutcomes } from "./audit-outcome.js";
+import { fetchPageSpeedInsights, pageSpeedSnapshot, type PageSpeedMetrics, type PageSpeedSnapshot } from "./pagespeed-insights.js";
 
 export type TechnicalSeverity = "PASS" | "BLOCKER" | "MAJOR" | "MINOR" | "ADVISORY";
 export type TechnicalGrade = "A" | "B" | "C" | "D" | "F";
@@ -127,9 +128,12 @@ export interface TechnicalAuditResult {
   grade: TechnicalGrade;
   blockerFailed: boolean;
   checkedAt: string;
+  pageSpeed?: PageSpeedSnapshot;
   checks: TechnicalCheckResult[];
   categoryDebug?: TechnicalCategoryDebug[];
 }
+
+const PERMANENT_REDIRECT_STATUSES = new Set([301, 308]);
 
 const CHECKS: CheckDefinition[] = [
   [1, "HTTP & Server Health", "Page returns HTTP 200", 10, "BLOCKER"],
@@ -401,25 +405,7 @@ interface AssetSample extends AssetReference {
   text?: string;
 }
 
-interface LabVitals {
-  fcp?: number;
-  lcp?: number;
-  inp?: number;
-  cls?: number;
-  ttfb?: number;
-  speedIndex?: number;
-  tbt?: number;
-  tti?: number;
-  performanceScore?: number;
-  tapTargetsPass?: boolean;
-  lcpElementFound?: boolean;
-  lcpLazyLoadedPass?: boolean;
-  modernImagePass?: boolean;
-  optimizedImagePass?: boolean;
-  unusedJsSavingsBytes?: number;
-  unusedCssSavingsBytes?: number;
-  thirdPartyBlockingTime?: number;
-}
+type LabVitals = PageSpeedMetrics;
 
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -469,6 +455,22 @@ export function linkHrefByRel($: cheerio.CheerioAPI, rel: string) {
   return el ? ($(el).attr("href") ?? "").trim() : "";
 }
 
+function linkAttr($: cheerio.CheerioAPI, el: Parameters<cheerio.CheerioAPI>[0], ...names: string[]) {
+  return names.map((name) => ($(el).attr(name) ?? "").trim()).find(Boolean) ?? "";
+}
+
+export function hasImagePreloadHint($: cheerio.CheerioAPI) {
+  return linkElementsByRel($, "preload").some((el) => {
+    const as = ($(el).attr("as") ?? "").trim().toLowerCase();
+    if (as !== "image") return false;
+    return Boolean(linkAttr($, el, "href") || linkAttr($, el, "imagesrcset", "imageSrcSet"));
+  });
+}
+
+export function isModernLcpImageUrl(value: string) {
+  return /\.(webp|avif)(?:[?#].*)?$/i.test(value);
+}
+
 function passRate<T>(items: T[], predicate: (item: T) => boolean) {
   const total = items.length;
   const passed = items.filter(predicate).length;
@@ -501,56 +503,8 @@ function absolute(url: URL, href: string) {
   }
 }
 
-function apiKey(...names: string[]) {
-  return names.map((name) => process.env[name]).find(Boolean);
-}
-
-async function fetchPageSpeedInsights(url: string, strategy: "mobile" | "desktop" = "mobile"): Promise<LabVitals | null> {
-  const key = apiKey("PAGESPEED_API_KEY", "GOOGLE_API_KEY");
-  if (!key) return null;
-  const endpoint = new URL("https://www.googleapis.com/pagespeedonline/v5/runPagespeed");
-  endpoint.searchParams.set("url", url);
-  endpoint.searchParams.set("strategy", strategy);
-  endpoint.searchParams.set("category", "performance");
-  endpoint.searchParams.set("key", key);
-
-  try {
-    const response = await fetch(endpoint, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) return null;
-    const data = await response.json() as {
-      lighthouseResult?: {
-        categories?: { performance?: { score?: number } };
-        audits?: Record<string, { numericValue?: number; score?: number; displayValue?: string; details?: { overallSavingsBytes?: number } }>;
-      };
-    };
-    const audits = data.lighthouseResult?.audits ?? {};
-    return {
-      fcp: audits["first-contentful-paint"]?.numericValue,
-      lcp: audits["largest-contentful-paint"]?.numericValue,
-      cls: audits["cumulative-layout-shift"]?.numericValue,
-      ttfb: audits["server-response-time"]?.numericValue,
-      speedIndex: audits["speed-index"]?.numericValue,
-      tbt: audits["total-blocking-time"]?.numericValue,
-      tti: audits.interactive?.numericValue,
-      performanceScore: data.lighthouseResult?.categories?.performance?.score !== undefined
-        ? Math.round(data.lighthouseResult.categories.performance.score * 100)
-        : undefined,
-      tapTargetsPass: audits["tap-targets"]?.score === undefined ? undefined : audits["tap-targets"]?.score === 1,
-      lcpElementFound: audits["largest-contentful-paint-element"] === undefined ? undefined : audits["largest-contentful-paint-element"]?.score !== 0,
-      lcpLazyLoadedPass: audits["lcp-lazy-loaded"]?.score === undefined ? undefined : audits["lcp-lazy-loaded"]?.score === 1,
-      modernImagePass: audits["uses-webp-images"]?.score === undefined ? undefined : audits["uses-webp-images"]?.score === 1,
-      optimizedImagePass: audits["uses-optimized-images"]?.score === undefined ? undefined : audits["uses-optimized-images"]?.score === 1,
-      unusedJsSavingsBytes: audits["unused-javascript"]?.details?.overallSavingsBytes,
-      unusedCssSavingsBytes: audits["unused-css-rules"]?.details?.overallSavingsBytes,
-      thirdPartyBlockingTime: audits["third-party-summary"]?.numericValue
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function fetchCrux(url: string): Promise<LabVitals | null> {
-  const key = apiKey("CRUX_API_KEY", "GOOGLE_API_KEY");
+  const key = process.env.CRUX_API_KEY ?? process.env.GOOGLE_API_KEY;
   if (!key) return null;
   try {
     const response = await fetch(`https://chromeuxreport.googleapis.com/v1/records:queryRecord?key=${key}`, {
@@ -570,7 +524,8 @@ async function fetchCrux(url: string): Promise<LabVitals | null> {
       lcp: metrics.largest_contentful_paint?.percentiles?.p75,
       inp: metrics.interaction_to_next_paint?.percentiles?.p75,
       cls: metrics.cumulative_layout_shift?.percentiles?.p75,
-      ttfb: metrics.experimental_time_to_first_byte?.percentiles?.p75
+      ttfb: metrics.experimental_time_to_first_byte?.percentiles?.p75,
+      checkedAt: new Date().toISOString()
     };
   } catch {
     return null;
@@ -777,8 +732,8 @@ async function safeFetch(url: string, init: RequestInit = {}, timeoutMs = 2200) 
   const headers = { "user-agent": "AIVisibilityAnalyzer/1.0", ...(init.headers as Record<string, string> | undefined) };
   try {
     return await fetch(url, {
-      ...init,
       redirect: "follow",
+      ...init,
       signal: controller.signal,
       headers
     });
@@ -1149,6 +1104,52 @@ function comparableCanonicalUrl(value: string) {
   } catch {
     return value.replace(/\/$/, "");
   }
+}
+
+export function isPermanentRedirectStatus(status?: number) {
+  return PERMANENT_REDIRECT_STATUSES.has(status ?? 0);
+}
+
+function oppositeTrailingSlashUrl(value: string) {
+  const parsed = new URL(value);
+  if (parsed.pathname === "/") return "";
+  parsed.pathname = parsed.pathname.endsWith("/")
+    ? parsed.pathname.replace(/\/+$/, "")
+    : `${parsed.pathname}/`;
+  return parsed.toString();
+}
+
+async function trailingSlashVariantRedirect(url: string, timeoutMs = 1800) {
+  const variantUrl = oppositeTrailingSlashUrl(url);
+  if (!variantUrl) {
+    return {
+      url,
+      variantUrl: "",
+      status: 0,
+      location: "",
+      targetUrl: "",
+      passed: true,
+      reason: "Root URL has no opposite trailing-slash variant"
+    };
+  }
+
+  const response = await safeFetch(variantUrl, { method: "GET", redirect: "manual" }, timeoutMs);
+  const status = response?.status ?? 0;
+  const location = response?.headers.get("location") ?? "";
+  const targetUrl = location ? new URL(location, variantUrl).toString() : "";
+  const passed = isPermanentRedirectStatus(status) && comparableCanonicalUrl(targetUrl) === comparableCanonicalUrl(url);
+
+  return {
+    url,
+    variantUrl,
+    status,
+    location,
+    targetUrl,
+    passed,
+    reason: passed
+      ? `Opposite variant returns permanent redirect ${status} to canonical URL`
+      : `Opposite variant status ${status || "missing"}${targetUrl ? ` to ${targetUrl}` : ""}`
+  };
 }
 
 function contentSimilarity(leftHtml: string, rightHtml: string) {
@@ -2435,26 +2436,24 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   const desktopLcp = desktopPsi?.lcp;
   const inp = crux?.inp ?? psi?.inp;
   const cls = crux?.cls ?? psi?.cls;
-  const ttfb = crux?.ttfb ?? psi?.ttfb ?? page.responseTimeMs;
+  const ttfb = crux?.ttfb ?? psi?.ttfb;
+  const observedTtfb = ttfb ?? page.responseTimeMs;
   const desktopScore = desktopPsi?.performanceScore;
   const mobileScore = psi?.performanceScore;
+  const performanceSnapshot = pageSpeedSnapshot(page.finalUrl, psi, desktopPsi);
+  const psiUnavailableEvidence = JSON.stringify({ reason: "PageSpeed Insights data unavailable." });
+  const performanceScoreWarning = (score?: number) => score !== undefined && score >= 70 && score < 90;
   const tapTargetsPass = psi?.tapTargetsPass;
   const firstImgSrc = firstImg.attr("src") ?? firstImg.attr("data-src") ?? "";
   const firstImgUrl = firstImgSrc ? absolute(new URL(page.finalUrl), firstImgSrc) : "";
   const lcpAssetSample = firstImgUrl ? headerAssetSamples.find((asset) => asset.url === firstImgUrl) : undefined;
   const lcpAssetBytes = lcpAssetSample ? contentLengthBytes(lcpAssetSample.headers) : 0;
   const lcpModernFormat = firstImgSrc
-    ? /\.(webp|avif)(?:[?#].*)?$/i.test(firstImgSrc) || psi?.modernImagePass === true
+    ? isModernLcpImageUrl(firstImgSrc)
     : psi?.modernImagePass ?? imageAggregate.modernRate >= 0.7;
-  const lcpPreloaded = somePage((p) => {
-    const root = new URL(p.finalUrl);
-    const preloadUrls = linkElementsByRel(p.$, "preload")
-      .filter((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")
-      .map((el) => absolute(root, p.$(el).attr("href") ?? ""));
-    return firstImgUrl ? preloadUrls.includes(firstImgUrl) : preloadUrls.length > 0;
-  });
+  const lcpPreloaded = somePage((p) => hasImagePreloadHint(p.$));
   const lcpElementFound = psi?.lcpElementFound ?? Boolean(firstImg.length || page.$("main h1,h1,main video,video[poster]").length);
-  const lcpPhaseBreakdownAvailable = [psi?.ttfb, psi?.fcp, psi?.lcp].filter((value) => value !== undefined).length >= 2 || page.responseTimeMs > 0;
+  const lcpPhaseBreakdownAvailable = psi?.lcp !== undefined && [psi.ttfb, psi.fcp].some((value) => value !== undefined);
   const scriptRefs = pages.flatMap((p) => p.$("script[src]").toArray().map((el) => {
     const script = p.$(el);
     const src = absolute(new URL(p.finalUrl), script.attr("src") ?? "");
@@ -2832,7 +2831,31 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   const underscoreRate = pagePassRate((p) => !new URL(p.finalUrl).pathname.includes("_"));
   const urlLengthRate = pagePassRate((p) => p.finalUrl.length <= 115);
   const lowercasePathRate = pagePassRate((p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase());
-  const slashConsistencyRate = pagePassRate((p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/"));
+  const trailingSlashRedirects = await Promise.all(pages.map((p) => trailingSlashVariantRedirect(p.finalUrl)));
+  const slashConsistencyRate = passRate(trailingSlashRedirects, (item) => item.passed);
+  const slashConsistencyEvidence = JSON.stringify({
+    scope: "page-level-site-wide",
+    pagesCrawled: pages.length,
+    pagesChecked: slashConsistencyRate.total,
+    pagesPassed: slashConsistencyRate.passed,
+    pagesFailed: slashConsistencyRate.total - slashConsistencyRate.passed,
+    passRate: slashConsistencyRate.percent,
+    affectedPages: trailingSlashRedirects
+      .filter((item) => !item.passed)
+      .slice(0, 10)
+      .map((item) => ({ url: item.url, issueCount: 1, sampleEvidence: item.reason })),
+    sampleEvidence: trailingSlashRedirects
+      .filter((item) => !item.passed)
+      .slice(0, 10)
+      .map((item) => ({
+        url: item.url,
+        variantUrl: item.variantUrl,
+        status: item.status,
+        location: item.location,
+        targetUrl: item.targetUrl,
+        issue: item.reason
+      }))
+  });
   add(39, hiddenContentRate.rate >= 0.9, pageRateEvidence(hiddenContentRate, "avoid large hidden-content blocks", (p) => p.$("[style*='display:none'],[hidden]").toArray().reduce((sum, el) => sum + wordCount(p.$(el).text()), 0) < 100));
   if (infiniteScrollAudit.detected) {
     add(40, infiniteScrollAudit.pass, infiniteScrollAudit.evidence, { severity: "ADVISORY", weight: 0, warning: !infiniteScrollAudit.pass });
@@ -2841,21 +2864,21 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   add(42, underscoreRate.rate >= 0.95, pageRateEvidence(underscoreRate, "avoid underscores in URL paths", (p) => !new URL(p.finalUrl).pathname.includes("_")));
   add(43, urlLengthRate.rate >= 0.9, pageRateEvidence(urlLengthRate, "have URLs <= 115 characters", (p) => p.finalUrl.length <= 115));
   add(44, lowercasePathRate.rate >= 0.95, pageRateEvidence(lowercasePathRate, "use lowercase URL paths", (p) => new URL(p.finalUrl).pathname === new URL(p.finalUrl).pathname.toLowerCase()));
-  add(45, slashConsistencyRate.rate >= 0.9, pageRateEvidence(slashConsistencyRate, "follow the dominant trailing-slash pattern", (p) => new URL(p.finalUrl).pathname.endsWith("/") === new URL(page.finalUrl).pathname.endsWith("/")));
-  add(46, lcp !== undefined && lcp < 2500, lcp !== undefined ? JSON.stringify({ metric: "LCP", measuredValue: Math.round(lcp), unit: "ms", threshold: 2500, source: crux?.lcp ? "CrUX" : "PageSpeed Insights" }) : JSON.stringify({ reason: "LCP measurement unavailable" }), { skipped: lcp === undefined });
-  add(47, inp !== undefined && inp < 200, inp !== undefined ? JSON.stringify({ metric: "INP", measuredValue: Math.round(inp), unit: "ms", threshold: 200, source: crux?.inp ? "CrUX" : "PageSpeed Insights" }) : JSON.stringify({ reason: "INP measurement unavailable" }), { skipped: inp === undefined });
-  add(48, cls !== undefined && cls < 0.1, cls !== undefined ? JSON.stringify({ metric: "CLS", measuredValue: cls, threshold: 0.1, source: crux?.cls ? "CrUX" : "PageSpeed Insights" }) : JSON.stringify({ reason: "CLS measurement unavailable" }), { skipped: cls === undefined });
-  add(49, ttfb < 800, JSON.stringify({ metric: "TTFB", measuredValue: Math.round(ttfb), unit: "ms", threshold: 800, source: crux?.ttfb || psi?.ttfb ? "CrUX/PageSpeed Insights" : "Measured server response" }));
+  add(45, slashConsistencyRate.rate >= 0.9, slashConsistencyEvidence);
+  add(46, lcp !== undefined && lcp <= 2500, lcp !== undefined ? JSON.stringify({ metric: "LCP", measuredValue: Math.round(lcp), unit: "ms", threshold: 2500, source: crux?.lcp !== undefined ? "CrUX" : "PageSpeed Insights" }) : psiUnavailableEvidence, { skipped: lcp === undefined });
+  add(47, inp !== undefined && inp <= 200, inp !== undefined ? JSON.stringify({ metric: "INP", measuredValue: Math.round(inp), unit: "ms", threshold: 200, source: crux?.inp !== undefined ? "CrUX" : "PageSpeed Insights" }) : psiUnavailableEvidence, { skipped: inp === undefined });
+  add(48, cls !== undefined && cls <= 0.1, cls !== undefined ? JSON.stringify({ metric: "CLS", measuredValue: cls, threshold: 0.1, source: crux?.cls !== undefined ? "CrUX" : "PageSpeed Insights" }) : psiUnavailableEvidence, { skipped: cls === undefined });
+  add(49, ttfb !== undefined && ttfb <= 800, ttfb !== undefined ? JSON.stringify({ metric: "TTFB", measuredValue: Math.round(ttfb), unit: "ms", threshold: 800, source: crux?.ttfb !== undefined ? "CrUX" : "PageSpeed Insights" }) : psiUnavailableEvidence, { skipped: ttfb === undefined });
   add(50, pageImages.every((item) => item.missingDimensions === 0), imageEvidence(`${pageImages.reduce((sum, item) => sum + item.missingDimensions, 0)} images missing dimensions`, missingDimensionImageSamples));
   add(51, !firstImgLazy, "first image loading attribute");
   add(52, !/@font-face/i.test(page.html) || /font-display\s*:\s*swap/i.test(page.html), "font-face CSS scanned");
   add(53, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
   add(54, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
-  add(55, somePage((p) => linkElementsByRel(p.$, "preload").some((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")), pageCountEvidence);
-  add(56, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
+  add(55, somePage((p) => hasImagePreloadHint(p.$)), pageCountEvidence);
+  add(56, mobileScore !== undefined && mobileScore >= 90, mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : psiUnavailableEvidence, { skipped: mobileScore === undefined, warning: performanceScoreWarning(mobileScore) });
   add(57, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(58, viewportDebug.passed, viewportDebugEvidence);
-  add(59, mobileScore !== undefined ? mobileScore >= 60 : page.responseTimeMs < 2500 && viewport.includes("width=device-width"), mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Local PSI fallback");
+  add(59, mobileScore !== undefined && mobileScore >= 90, mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : psiUnavailableEvidence, { skipped: mobileScore === undefined, warning: performanceScoreWarning(mobileScore) });
   add(60, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(61, imageAggregate.altRate >= 0.9, imageEvidence(`${imageAggregate.altPresent}/${imageAggregate.nonDecorativeCount} non-decorative images have alt text (${Math.round(imageAggregate.altRate * 100)}%)`, missingAltImageSamples));
   add(62, imageAggregate.chartDetailedRate >= 0.3, imageAggregate.chartCount ? `${imageAggregate.chartDetailedAlt}/${imageAggregate.chartCount} chart/data images have descriptive alt text (${Math.round(imageAggregate.chartDetailedRate * 100)}%)` : "No chart/data/infographic images detected");
@@ -2885,7 +2908,7 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   add(72, /gzip|br/i.test(page.headers.get("content-encoding") ?? ""), page.headers.get("content-encoding") ?? "missing");
   add(73, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
   add(74, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
-  add(75, somePage((p) => linkElementsByRel(p.$, "preload").some((el) => (p.$(el).attr("as") ?? "").trim().toLowerCase() === "image")), pageCountEvidence);
+  add(75, somePage((p) => hasImagePreloadHint(p.$)), pageCountEvidence);
   const modernImagePageRate = passRate(pageImages, (item) => item.modernRatio >= 0.7);
   const jsonLdPageRate = passRate(pageLd, (item) => item.blocks.length > 0);
   const jsonLdFailures = pageLd.filter((item) => item.errors.length > 0);
@@ -3078,21 +3101,21 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   if (renderedContentEvidence) add(140, renderedContentMatches, renderedContentEvidence);
   add(141, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found", { severity: "ADVISORY", weight: 0, warning: !indexNowPassed });
   add(142, slashRedirectStatus === 0 || slashRedirectStatus === 301 || slashRedirectStatus === 308 || caseVariantStatus === 0 || caseVariantStatus === 301 || caseVariantStatus === 308 || caseVariantStatus === 404, `Slash variant status ${slashRedirectStatus || "missing"}, case variant status ${caseVariantStatus || "missing"}`);
-  add(143, lcp !== undefined && lcp < 2500, lcp !== undefined ? JSON.stringify({ metric: "LCP mobile p75", measuredValue: Math.round(lcp), unit: "ms", threshold: 2500 }) : JSON.stringify({ reason: "Mobile LCP measurement unavailable" }), { skipped: lcp === undefined });
-  add(144, lcp !== undefined && lcp < 1800, lcp !== undefined ? JSON.stringify({ metric: "LCP competitive", measuredValue: Math.round(lcp), unit: "ms", threshold: 1800 }) : JSON.stringify({ reason: "Mobile LCP measurement unavailable" }), { skipped: lcp === undefined });
-  add(145, desktopLcp !== undefined && desktopLcp < 2500, desktopLcp !== undefined ? JSON.stringify({ metric: "LCP desktop", measuredValue: Math.round(desktopLcp), unit: "ms", threshold: 2500 }) : JSON.stringify({ reason: "Desktop LCP measurement unavailable" }), { skipped: desktopLcp === undefined });
+  add(143, lcp !== undefined && lcp <= 2500, lcp !== undefined ? JSON.stringify({ metric: "LCP mobile", measuredValue: Math.round(lcp), unit: "ms", threshold: 2500 }) : psiUnavailableEvidence, { skipped: lcp === undefined });
+  add(144, lcp !== undefined && lcp <= 1800, lcp !== undefined ? JSON.stringify({ metric: "LCP competitive", measuredValue: Math.round(lcp), unit: "ms", threshold: 1800 }) : psiUnavailableEvidence, { skipped: lcp === undefined });
+  add(145, desktopLcp !== undefined && desktopLcp <= 2500, desktopLcp !== undefined ? JSON.stringify({ metric: "LCP desktop", measuredValue: Math.round(desktopLcp), unit: "ms", threshold: 2500 }) : psiUnavailableEvidence, { skipped: desktopLcp === undefined });
   add(146, lcpElementFound, psi?.lcpElementFound !== undefined ? "PageSpeed LCP element audit available" : firstImgUrl || h1 || "No clear LCP candidate found");
   add(147, lcpPreloaded, lcpPreloaded ? "LCP/image preload hint detected" : "No matching image preload hint detected");
   add(148, psi?.lcpLazyLoadedPass ?? !firstImgLazy, psi?.lcpLazyLoadedPass !== undefined ? `PageSpeed lcp-lazy-loaded ${psi.lcpLazyLoadedPass ? "passed" : "failed"}` : "First image loading attribute checked");
   add(149, lcpModernFormat, firstImgSrc ? `LCP candidate ${firstImgSrc}` : `${Math.round(imageAggregate.modernRate * 100)}% images use WebP/AVIF`);
   add(150, lcpAssetBytes > 0 && lcpAssetBytes < 200000, lcpAssetBytes ? `${Math.round(lcpAssetBytes / 1024)}KB LCP candidate` : "LCP asset size unavailable", { skipped: lcpAssetBytes === 0 });
-  add(151, lcpPhaseBreakdownAvailable, psi?.lcp !== undefined ? "PageSpeed LCP phase metrics available" : "LCP phase metrics unavailable", { skipped: psi?.lcp === undefined });
-  add(152, inp !== undefined && inp < 200, inp !== undefined ? JSON.stringify({ metric: "INP p75", measuredValue: Math.round(inp), unit: "ms", threshold: 200 }) : JSON.stringify({ reason: "INP measurement unavailable" }), { skipped: inp === undefined });
+  add(151, lcpPhaseBreakdownAvailable, lcpPhaseBreakdownAvailable ? "PageSpeed LCP phase metrics available" : psiUnavailableEvidence, { skipped: !lcpPhaseBreakdownAvailable });
+  add(152, inp !== undefined && inp <= 200, inp !== undefined ? JSON.stringify({ metric: "INP p75", measuredValue: Math.round(inp), unit: "ms", threshold: 200 }) : psiUnavailableEvidence, { skipped: inp === undefined });
   add(153, inp !== undefined && inp < 150, inp !== undefined ? JSON.stringify({ metric: "INP competitive", measuredValue: Math.round(inp), unit: "ms", threshold: 150 }) : JSON.stringify({ reason: "INP measurement unavailable" }), { skipped: inp === undefined });
   add(154, psi?.tbt !== undefined && psi.tbt < 200, psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms total blocking time` : "Long-task measurement unavailable", { skipped: psi?.tbt === undefined });
   add(155, taskYieldingSignals || (psi?.tbt !== undefined && psi.tbt < 200), taskYieldingSignals ? "Task yielding pattern detected" : psi?.tbt !== undefined ? `${Math.round(psi.tbt)}ms total blocking time` : "Task-yielding runtime evidence unavailable", { skipped: psi?.tbt === undefined && !taskYieldingSignals });
   add(156, thirdPartyScripts.length === 0 || deferredThirdPartyPercent >= 80, `${deferredThirdPartyCount}/${thirdPartyScripts.length} third-party scripts deferred (${deferredThirdPartyPercent}%)`);
-  add(157, cls !== undefined && cls < 0.1, cls !== undefined ? JSON.stringify({ metric: "CLS p75", measuredValue: cls, threshold: 0.1 }) : JSON.stringify({ reason: "CLS measurement unavailable" }), { skipped: cls === undefined });
+  add(157, cls !== undefined && cls <= 0.1, cls !== undefined ? JSON.stringify({ metric: "CLS p75", measuredValue: cls, threshold: 0.1 }) : psiUnavailableEvidence, { skipped: cls === undefined });
   add(158, cls !== undefined && contentAreaClsStable, cls !== undefined ? `${cls} via API` : "Content-area CLS measurement unavailable", { skipped: cls === undefined });
   add(159, allImagesDimensionsRate >= 0.9, imageEvidence(`${imageAggregate.dimensionsPresent}/${imageAggregate.count} images have width and height (${Math.round(allImagesDimensionsRate * 100)}%)`, missingDimensionImageSamples));
   add(160, reservedAdSlots, adLikeElements.length ? `${adLikeElements.length} ad-like slots checked` : "No ad-like slots detected");
@@ -3101,11 +3124,11 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   add(163, fcp !== undefined && fcp < 1800, fcp !== undefined ? JSON.stringify({ metric: "FCP mobile", measuredValue: Math.round(fcp), unit: "ms", threshold: 1800 }) : JSON.stringify({ reason: "FCP measurement unavailable" }), { skipped: fcp === undefined });
   add(164, everyPage((p) => p.$("head script[src]:not([async]):not([defer]):not([type='module'])").length === 0), pageCountEvidence);
   add(165, everyPage((p) => p.$("head style").text().trim().length > 0), pageCountEvidence);
-  add(166, ttfb < 800, JSON.stringify({ metric: "TTFB", measuredValue: Math.round(ttfb), unit: "ms", threshold: 800, source: crux?.ttfb || psi?.ttfb ? "CrUX/PageSpeed Insights" : "Measured server response" }));
+  add(166, ttfb !== undefined && ttfb <= 800, ttfb !== undefined ? JSON.stringify({ metric: "TTFB", measuredValue: Math.round(ttfb), unit: "ms", threshold: 800, source: crux?.ttfb !== undefined ? "CrUX" : "PageSpeed Insights" }) : psiUnavailableEvidence, { skipped: ttfb === undefined });
   add(167, Math.max(...ttfbSamples) - Math.min(...ttfbSamples) < 300, `${Math.round(Math.max(...ttfbSamples) - Math.min(...ttfbSamples))}ms TTFB variance`);
   add(168, Boolean(cdnEvidence), cdnEvidence || "No CDN/cache header signal detected");
-  add(169, mobileScore !== undefined && mobileScore >= 60, mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : "Mobile PageSpeed score unavailable", { skipped: mobileScore === undefined });
-  add(170, desktopScore !== undefined && desktopScore >= 80, desktopScore !== undefined ? `${desktopScore} via PageSpeed Insights` : "Desktop PageSpeed score unavailable", { skipped: desktopScore === undefined });
+  add(169, mobileScore !== undefined && mobileScore >= 90, mobileScore !== undefined ? `${mobileScore} via PageSpeed Insights` : psiUnavailableEvidence, { skipped: mobileScore === undefined, warning: performanceScoreWarning(mobileScore) });
+  add(170, desktopScore !== undefined && desktopScore >= 90, desktopScore !== undefined ? `${desktopScore} via PageSpeed Insights` : psiUnavailableEvidence, { skipped: desktopScore === undefined, warning: performanceScoreWarning(desktopScore) });
   add(171, tapTargetsPass !== undefined ? tapTargetsPass : viewport.includes("width=device-width"), tapTargetsPass !== undefined ? `PageSpeed tap-targets ${tapTargetsPass ? "passed" : "failed"}` : "Local tap-target fallback");
   add(172, !intrusiveInterstitials, intrusiveInterstitials ? "Interstitial/overlay pattern detected" : "No intrusive interstitial pattern detected");
   add(173, psi?.unusedJsSavingsBytes !== undefined && totalJsBytes > 0 ? unusedJsPercent < 20 : totalJsBytes < 500000, psi?.unusedJsSavingsBytes !== undefined && totalJsBytes > 0 ? `${unusedJsPercent}% JS savings estimated` : `${Math.round(totalJsBytes / 1024)}KB sampled JS`);
@@ -3204,7 +3227,7 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
   add(229, aiTxtPassed || llmsPassed, llmsPassed && !aiTxtPassed ? "ai.txt is optional because llms.txt passed" : `Status ${aiTxt?.response.status ?? "missing"}`, { severity: "ADVISORY", weight: 0, warning: !aiTxtPassed && !llmsPassed });
   add(230, llmsPassed, `Status ${llms?.response.status ?? "missing"}, ${llmsWordStats.words} words, ${llmsWordStats.sections} sections`);
   add(231, apiUrls.length === 0 || corsValues.length > 0, apiUrls.length === 0 ? "No public API found" : corsValues.length ? `CORS header: ${corsValues[0]}` : `${apiUrls.length} public API endpoints found without CORS header`);
-  add(232, medianTtfb < 800, `${Math.round(medianTtfb)}ms median TTFB${medianTtfb < 200 ? " (competitive)" : ""}`);
+  add(232, observedTtfb <= 800, `${Math.round(observedTtfb)}ms TTFB${observedTtfb < 200 ? " (competitive)" : ""}`);
   add(233, aiCrawlerOk, aiCrawlerEvidence);
   if (renderedContentEvidence) add(234, renderedContentMatches, renderedContentEvidence);
   add(235, indexNowPassed, indexNowCandidates.length ? `${indexNowResponses.filter((item) => item.response?.status === 200).length}/${indexNowCandidates.length} IndexNow key files reachable` : "No IndexNow key location found", { severity: "ADVISORY", weight: 0, warning: !indexNowPassed });
@@ -3250,10 +3273,10 @@ export async function runTechnicalAudit(inputUrl: string, siteCrawl?: SiteCrawlR
     }
   });
 
-  return scoreChecks(results);
+  return scoreChecks(results, performanceSnapshot);
 }
 
-function scoreChecks(checks: TechnicalCheckResult[]): TechnicalAuditResult {
+function scoreChecks(checks: TechnicalCheckResult[], pageSpeed?: PageSpeedSnapshot): TechnicalAuditResult {
   const outcomeScore = (scope: TechnicalScope) => {
     const scoped = checks.filter((check) => check.scope === scope && !check.skipped && check.severity !== "ADVISORY" && check.weight > 0);
     return scoreParameterOutcomes(scoped, 0);
@@ -3292,6 +3315,7 @@ function scoreChecks(checks: TechnicalCheckResult[]): TechnicalAuditResult {
     grade: gradeForScore(score),
     blockerFailed,
     checkedAt: new Date().toISOString(),
+    pageSpeed,
     checks,
     categoryDebug
   };

@@ -1,5 +1,6 @@
 import { MongoClient } from "mongodb";
-import type { AiVisibilityReport } from "@aiva/core";
+import type { AiVisibilityReport, CoreWebVitalsSnapshot } from "@aiva/core";
+import { loadServerEnv } from "./env";
 
 interface StrategyLead {
   reportId: string;
@@ -34,6 +35,7 @@ const memoryLeads = globalThis.aivaMemoryLeads ??= [];
 const memorySubscriptions = globalThis.aivaInsightSubscriptions ??= [];
 
 function mongoClient() {
+  loadServerEnv();
   const uri = process.env.MONGODB_URI;
   if (!uri) return null;
   if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
@@ -110,6 +112,13 @@ export const reportStore = {
         report,
         { upsert: true }
       );
+      if (report.coreWebVitals) {
+        await db.collection<CoreWebVitalsSnapshot>("core_web_vitals").updateOne(
+          { website: report.coreWebVitals.website },
+          { $set: report.coreWebVitals },
+          { upsert: true }
+        );
+      }
     } catch (error) {
       console.error("MongoDB report save failed; using memory fallback", error);
       memoryReports.set(report.id, report);

@@ -582,6 +582,49 @@
   grid-template-columns: 360px 1fr;
 }
 
+.coreVitals {
+  margin: 24px 0;
+}
+
+.coreVitalsGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.coreVitalItem {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 16px;
+}
+
+.coreVitalItem span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.coreVitalItem strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.coreVitalItem small {
+  display: block;
+  margin-top: 8px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .chartGrid .card,
 .cardTitle + .engineGrid {
   padding: 22px;
@@ -1307,28 +1350,27 @@
   padding: 0;
 }
 
-.issueDropdown summary {
+.issueDropdownToggle {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 42px;
+  border: 0;
+  background: transparent;
   padding: 9px 10px;
   cursor: pointer;
-  list-style: none;
+  text-align: left;
 }
 
-.issueDropdown summary::-webkit-details-marker {
-  display: none;
-}
-
-.issueDropdown summary strong {
+.issueDropdownToggle strong {
   color: #111;
   font-size: 13px;
   line-height: 1.35;
 }
 
-.issueDropdown summary > i {
+.issueDropdownToggle > i {
   color: #8A6D1F;
   font-size: 11px;
   font-style: normal;
@@ -1336,18 +1378,9 @@
   white-space: nowrap;
 }
 
-.issueDropdown[open] summary {
+.issueDropdownOpen .issueDropdownToggle {
   border-bottom: 1px solid var(--border);
   background: #FFF9ED;
-}
-
-.issueDropdown[open] summary > i {
-  font-size: 0;
-}
-
-.issueDropdown[open] summary > i::after {
-  content: "Hide details";
-  font-size: 11px;
 }
 
 .issueDropdownBody {
@@ -1364,12 +1397,31 @@
   background: #fff;
 }
 
-.dependentChecks summary {
+.dependentChecks > button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: transparent;
   padding: 10px 12px;
   color: #111;
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+  text-align: left;
+}
+
+.dependentChecks > button i {
+  color: #8A6D1F;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.dependentChecks > div {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 
 .dependentChecks p {
@@ -2076,6 +2128,7 @@
   .engineGrid,
   .priorityList,
   .checkColumns,
+  .coreVitalsGrid,
   .auditSummaryGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2118,6 +2171,7 @@
   .engineGrid,
   .priorityList,
   .checkColumns,
+  .coreVitalsGrid,
   .auditSummaryGrid,
   .cta ul,
   .strategyPills {

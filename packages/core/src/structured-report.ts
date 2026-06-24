@@ -232,6 +232,7 @@ export function toStructuredAiVisibilityReport(report: AiVisibilityReport): Stru
     },
     technical_categories: report.technicalCategorySummaries ?? [],
     technical_audit: technicalAudit,
+    core_web_vitals: report.coreWebVitals,
     geo_aeo_audit: geoAeoAudit,
     indexability_audit: indexabilityAudit,
     structured_data_audit: structuredDataAudit,
